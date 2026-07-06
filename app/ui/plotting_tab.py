@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QTextEdit, QVBoxLayout, QWidget
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 from app.core.plotting import create_curve_figure
+from app.ui.style import action_button, apply_help
 
 
 class PlottingTab(QWidget):
@@ -11,11 +12,26 @@ class PlottingTab(QWidget):
         super().__init__()
         self.main_window = main_window
         self.plot_type = QComboBox()
-        self.plot_type.addItems(["linear", "semilog", "loglog", "guinier", "kratky", "porod", "invariant", "local_slope"])
+        self.plot_type.addItems(["linear", "semilog", "loglog", "guinier", "kratky", "porod", "invariant", "invariant_contribution", "local_slope"])
+        apply_help(
+            self.plot_type,
+            tooltip="选择绘图坐标。",
+            status_tip="Guinier、Kratky、Porod、q³I 贡献谱等图会使用对应变换，并自动过滤不适合取对数的数据点。",
+        )
         self.show_error = QCheckBox("显示误差棒")
-        self.show_error.setChecked(True)
+        self.show_error.setChecked(self.main_window.settings.show_error_bars)
+        apply_help(
+            self.show_error,
+            tooltip="切换误差棒。",
+            status_tip="仅当曲线包含 error/sigma 列时显示误差棒；不会修改曲线数据。",
+        )
 
-        plot_button = QPushButton("绘制当前曲线")
+        plot_button = action_button(
+            "绘制当前曲线",
+            role="primary",
+            tooltip="刷新当前图。",
+            status_tip="主操作：按所选图类型绘制当前曲线，并在下方显示绘图警告。",
+        )
         plot_button.clicked.connect(self.refresh)
 
         self.figure, _ = create_curve_figure([])
@@ -32,6 +48,8 @@ class PlottingTab(QWidget):
         controls.addStretch(1)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
         layout.addLayout(controls)
         layout.addWidget(self.canvas, 1)
         layout.addWidget(self.messages)

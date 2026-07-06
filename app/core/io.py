@@ -58,6 +58,8 @@ def load_curve(
 ) -> CurveData:
     file_path = Path(path)
     df = read_table(file_path)
+    if isinstance(error_column, str) and not error_column.strip():
+        error_column = None
     q = pd.to_numeric(_column_to_series(df, q_column), errors="coerce").to_numpy()
     intensity = pd.to_numeric(_column_to_series(df, intensity_column), errors="coerce").to_numpy()
 

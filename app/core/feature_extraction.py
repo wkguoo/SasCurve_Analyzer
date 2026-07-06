@@ -6,6 +6,7 @@ import numpy as np
 from scipy.signal import find_peaks, peak_widths
 
 from app.core.data_model import AnalysisResult, CurveData
+from app.core.method_warnings import peak_warnings, warning_to_dict, warning_to_text
 
 
 def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: float | None = None) -> AnalysisResult:
@@ -13,7 +14,11 @@ def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: 
     mask = np.isfinite(curve.q) & np.isfinite(curve.intensity) & (curve.q >= q_min) & (curve.q <= q_max)
     q = curve.q[mask]
     intensity = curve.intensity[mask]
-    warnings = ["d = 2*pi/q* is a characteristic length or correlation distance, not a particle diameter."]
+    if q.size > 1:
+        order = np.argsort(q)
+        q = q[order]
+        intensity = intensity[order]
+    warnings: list[str] = []
     peaks, properties = find_peaks(intensity, prominence=prominence)
     peak_results: list[dict] = []
 
@@ -40,12 +45,15 @@ def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: 
     else:
         warnings.append("No peak was detected in the selected q range.")
 
+    method_warnings = peak_warnings()
+
     return AnalysisResult.create(
         curve=curve,
         analysis_type="peak_detection",
         q_range=q_range,
         parameters={"signal": "I(q)", "prominence": prominence},
         results={"peaks": peak_results, "peak_count": len(peak_results)},
-        warnings=warnings,
+        warnings=[*warnings, *(warning_to_text(warning) for warning in method_warnings)],
+        structured_warnings=[warning_to_dict(warning) for warning in method_warnings],
     )
 

@@ -7,8 +7,18 @@ from typing import Any
 
 import pandas as pd
 
+from app.core.analysis_schema import (
+    EXPORT_TABLE_CORRELATION_FUNCTION,
+    EXPORT_TABLE_FIT_CURVES,
+    EXPORT_TABLE_GUINIER_CANDIDATES,
+    EXPORT_TABLE_PEAKS,
+    EXPORT_TABLE_POWER_LAW_CANDIDATES,
+    EXPORT_TABLE_PR_DISTRIBUTION,
+    scalar_result_items,
+)
 from app.core.data_model import AnalysisResult, ComparisonResult, CurveData
 from app.core.plotting import create_curve_figure
+from app.core.report import generate_markdown_report
 
 
 def _json_default(value: Any):
@@ -46,6 +56,7 @@ def export_analysis_csv(results: list[AnalysisResult], path: str | Path) -> Path
             "q_min": result.q_range[0],
             "q_max": result.q_range[1],
             "warnings": " | ".join(result.warnings),
+            "structured_warnings": json.dumps(result.structured_warnings, ensure_ascii=False, default=_json_default),
         }
         for key, value in result.results.items():
             if isinstance(value, (str, int, float, bool)) or value is None:
@@ -105,4 +116,101 @@ def export_feature_table(curves: list[CurveData], analyses: list[AnalysisResult]
     target.parent.mkdir(parents=True, exist_ok=True)
     build_feature_table(curves, analyses).to_csv(target, index=False)
     return target
+
+
+def _analysis_summary_rows(analyses: list[AnalysisResult]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for result in analyses:
+        row = {
+            "analysis_id": result.analysis_id,
+            "curve_id": result.curve_id,
+            "analysis_type": result.analysis_type,
+            "q_min": result.q_range[0],
+            "q_max": result.q_range[1],
+            "warnings": " | ".join(result.warnings),
+        }
+        row.update(scalar_result_items(result.results))
+        row["assumptions"] = " | ".join(result.results.get("assumptions", []))
+        row["interpretation_limits"] = " | ".join(result.results.get("interpretation_limits", []))
+        rows.append(row)
+    return rows
+
+
+def _table_rows(analyses: list[AnalysisResult], table_name: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for result in analyses:
+        tables = result.results.get("export_tables", {})
+        table = tables.get(table_name)
+        if table is None:
+            if table_name == EXPORT_TABLE_PEAKS:
+                table = result.results.get("peaks") or result.results.get("indexed_peaks")
+            elif table_name == EXPORT_TABLE_PR_DISTRIBUTION and "r" in result.results and "P(r)" in result.results:
+                table = [{"r": r, "P(r)": p} for r, p in zip(result.results["r"], result.results["P(r)"])]
+            elif table_name == EXPORT_TABLE_CORRELATION_FUNCTION and "r" in result.results and "correlation" in result.results:
+                table = [{"r": r, "correlation": c} for r, c in zip(result.results["r"], result.results["correlation"])]
+        if table is None:
+            continue
+        if isinstance(table, dict):
+            table = [table]
+        for item in table:
+            if not isinstance(item, dict):
+                item = {"value": item}
+            row = {
+                "analysis_id": result.analysis_id,
+                "curve_id": result.curve_id,
+                "analysis_type": result.analysis_type,
+            }
+            row.update(item)
+            rows.append(row)
+    return rows
+
+
+def export_analysis_bundle(
+    curves: list[CurveData],
+    analyses: list[AnalysisResult],
+    folder: str | Path,
+    *,
+    project_name: str = "sas_curve_analyzer",
+    history=None,
+    formal_records=None,
+) -> dict[str, Path]:
+    target = Path(folder)
+    target.mkdir(parents=True, exist_ok=True)
+    outputs: dict[str, Path] = {}
+
+    full_json = target / "analysis_full.json"
+    full_json.write_text(json.dumps([asdict(result) for result in analyses], ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+    outputs["analysis_full"] = full_json
+
+    summary_csv = target / "analysis_summary.csv"
+    pd.DataFrame(_analysis_summary_rows(analyses)).to_csv(summary_csv, index=False)
+    outputs["analysis_summary"] = summary_csv
+
+    feature_csv = export_feature_table(curves, analyses, target / "feature_table.csv")
+    outputs["feature_table"] = feature_csv
+
+    table_specs = {
+        "fit_curves": EXPORT_TABLE_FIT_CURVES,
+        "peaks": EXPORT_TABLE_PEAKS,
+        "guinier_candidates": EXPORT_TABLE_GUINIER_CANDIDATES,
+        "power_law_candidates": EXPORT_TABLE_POWER_LAW_CANDIDATES,
+        "pr_distribution": EXPORT_TABLE_PR_DISTRIBUTION,
+        "correlation_function": EXPORT_TABLE_CORRELATION_FUNCTION,
+    }
+    for file_stem, table_name in table_specs.items():
+        rows = _table_rows(analyses, table_name)
+        path = target / f"{file_stem}.csv"
+        pd.DataFrame(rows).to_csv(path, index=False)
+        outputs[file_stem] = path
+
+    report_path = generate_markdown_report(
+        target / "report.md",
+        project_name=project_name,
+        curves=curves,
+        analyses=analyses,
+        history=list(history or []),
+        formal_records=list(formal_records or []),
+    )
+    outputs["report"] = report_path
+    return outputs
 

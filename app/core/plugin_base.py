@@ -59,12 +59,22 @@ class FunctionAnalysisPlugin(AnalysisPlugin):
 
 
 def get_builtin_plugins() -> dict[str, AnalysisPlugin]:
+    from app.core.deep_scan import run_deep_scan
     from app.core.feature_extraction import detect_peaks
+    from app.core.fractal_analysis import fractal_analysis
+    from app.core.invariant_analysis import invariant_with_extrapolation
+    from app.core.lamellar_analysis import lamellar_analysis
     from app.core.model_free import guinier_analysis, invariant_measured, power_law_analysis
+    from app.core.porod_analysis import porod_deep_analysis
 
     return {
         "guinier": FunctionAnalysisPlugin(name="guinier", version="0.1.0", description="Guinier linear fit adapter.", function=guinier_analysis),
         "power_law": FunctionAnalysisPlugin(name="power_law", version="0.1.0", description="Power-law log-log fit adapter.", function=power_law_analysis),
         "peak_detection": FunctionAnalysisPlugin(name="peak_detection", version="0.1.0", description="Peak detection adapter.", function=detect_peaks),
         "invariant": FunctionAnalysisPlugin(name="invariant", version="0.1.0", description="Finite q-range invariant adapter.", function=invariant_measured),
+        "deep_scan": FunctionAnalysisPlugin(name="deep_scan", version="0.1.0", description="Automatic model-free deep scan adapter.", function=run_deep_scan),
+        "fractal": FunctionAnalysisPlugin(name="fractal", version="0.1.0", description="Fractal candidate analysis adapter.", function=fractal_analysis),
+        "lamellar": FunctionAnalysisPlugin(name="lamellar", version="0.1.0", description="Lamellar peak indexing adapter.", function=lamellar_analysis),
+        "invariant_deep": FunctionAnalysisPlugin(name="invariant_deep", version="0.1.0", description="Invariant with optional extrapolation adapter.", function=invariant_with_extrapolation),
+        "porod_deep": FunctionAnalysisPlugin(name="porod_deep", version="0.1.0", description="Porod plateau and surface-candidate adapter.", function=porod_deep_analysis),
     }

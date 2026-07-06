@@ -1,156 +1,130 @@
-# 阶段一方法说明
+# Method Notes
 
-本软件阶段一只处理已经完成绝对强度校准的一维 SAS 曲线。软件不进行强度校正、背景扣除、透过率校正、厚度校正、曝光时间归一化、绝对强度标定或二维图像积分。
+This document describes the numerical methods and interpretation boundaries used by `sas_curve_analyzer`.
 
-## 数据导入
+## Input Assumptions
 
-输入文件至少需要两列：
+The software operates on one-dimensional small-angle scattering curves that have already been reduced and calibrated outside this application. It does not perform intensity correction, background subtraction, transmission correction, thickness correction, exposure-time normalization, absolute calibration, or 2D detector integration.
 
-- `q`：散射矢量。
-- `I(q)`：散射强度。
+Each input curve should contain q and I(q). Error or sigma columns are optional. Missing error data are accepted; analysis functions that can use uncertainty fall back to ordinary least squares when no valid error column is available.
 
-可选列：
+## Data Validation
 
-- `error` 或 `sigma`：强度误差。
+Validation checks:
 
-导入时会生成 `CurveData` 对象，包含曲线 ID、名称、q、强度、误差、单位、来源文件、元数据、创建时间、父曲线 ID 和处理历史。
+- Monotonic q ordering.
+- Duplicate q values.
+- NaN q or intensity values.
+- Negative or zero intensity values.
+- NaN, negative, or zero error values.
 
-## 数据质量检查
+Validation reports warnings only. The software does not edit imported experimental files.
 
-阶段一检查以下内容：
+## q Unit Conversion
 
-- q 是否单调递增。
-- q 是否存在重复值。
-- q 是否存在 NaN。
-- I(q) 是否存在 NaN、负值或零值。
-- error 是否存在 NaN、负值或零值。
+Supported q unit conversion:
 
-检查只给出警告，不自动修改数据。
+- `A^-1` to `nm^-1`: q is multiplied by 10.
+- `nm^-1` to `A^-1`: q is multiplied by 0.1.
 
-## q 单位转换
+Intensity units are not converted or scaled by q unit conversion. Conversion creates a new `CurveData` object and records curve-level processing history plus project-level operation history in the GUI.
 
-支持以下转换：
+## Plotting
 
-- `A^-1` 到 `nm^-1`：q 乘以 10。
-- `nm^-1` 到 `A^-1`：q 乘以 0.1。
+Supported plot types include linear, semilog, loglog, Guinier, Kratky, Porod, invariant, q^3I invariant-contribution, and local slope plots.
 
-强度单位不自动转换，也不自动缩放。
+Semilog, loglog, and Guinier plots filter `I(q) <= 0` before applying logarithms. Loglog, Guinier, and q^3I invariant-contribution plots filter `q <= 0` where the transform requires positive q. Filtering returns warnings rather than raising numerical runtime warnings.
 
-## 基础绘图
+When error bars are shown on log-intensity plots, the propagated error is `sigma_lnI = sigma_I / I`. Invalid propagated errors are hidden and reported as warnings.
 
-支持三种图：
+## Guinier Analysis
 
-- 线性图：`I(q)` vs `q`。
-- 半对数图：`ln I(q)` vs `q`。
-- 双对数图：`ln I(q)` vs `ln q`。
-
-半对数图会排除 `I(q) <= 0` 的点。双对数图会排除 `I(q) <= 0` 或 `q <= 0` 的点，并返回警告。
-
-如果存在强度误差列，线性图直接显示强度误差棒；半对数图和双对数图使用一阶误差传播 `sigma_lnI = sigma_I / I` 显示纵向误差棒。
-
-## 阶段二无模型分析
-
-阶段二加入的分析都属于曲线特征提取和无模型初步分析，不做复杂结构模型拟合。
-
-### Guinier 分析
-
-在用户指定 q 区间内，对 `ln I(q)` 与 `q^2` 做线性拟合：
+Guinier analysis fits:
 
 ```text
 ln I(q) = ln I(0) - Rg^2 q^2 / 3
 ```
 
-计算：
+Outputs include Rg, I(0), slope, intercept, R2, adjusted R2, reduced chi-square, residuals, standardized residuals when available, fit point count, and qRg range.
 
-- `Rg = sqrt(-3 * slope)`；
-- `I(0) = exp(intercept)`；
-- `R²`、adjusted `R²`；
-- 残差；
-- 如果有 error，则使用 `sigma_lnI = sigma_I / I` 做加权拟合。
+Important limits:
 
-如果 slope 非负，则不输出有效 `Rg`。如果 `qRg_max > 1.3`，会提示 Guinier 区间可能偏高。
+- The selected q interval must be physically appropriate.
+- A non-negative slope does not give a valid Rg.
+- High `qRg_max` indicates the interval may be outside the usual Guinier limit.
+- Good R2 alone does not prove the chosen interval is physically valid.
 
-### Power-law / Porod 斜率
+## Power-Law Slope
 
-在用户指定 q 区间内，对 `ln I(q)` 与 `ln q` 做线性拟合：
+Power-law analysis fits:
 
 ```text
-I(q) proportional to q^-alpha
-alpha = -slope
+ln I(q) = ln prefactor - alpha ln q
 ```
 
-输出 `alpha`、slope、intercept、prefactor、`R²` 和残差。软件只给出谨慎提示，不把 alpha 自动解释为唯一结构结论。
+The output exponent `alpha` is descriptive. It can suggest Porod-like, mass-fractal-like, or surface-fractal-like behavior, but it does not uniquely determine structure without material context and q-range justification.
 
-### 局部斜率
+## Local Slope
 
-局部斜率定义为：
+Local slope is computed as:
 
 ```text
 alpha(q) = -d ln I / d ln q
 ```
 
-当前使用数值差分计算，可用于辅助判断 power-law 区间。平台候选区间只作为提示。
+It is useful for checking whether a power-law interval is stable. Plateau candidates are hints for inspection, not automatic model selection.
 
-### 峰识别
+## Peak Detection
 
-当前使用 `scipy.signal.find_peaks` 在 `I(q)` 信号中寻找峰。输出峰位、峰强、FWHM、峰面积和：
+Peak detection uses the 1D intensity curve and reports peak q, peak intensity, FWHM, area, and:
 
 ```text
 d = 2*pi/q*
 ```
 
-该 d 值是特征尺度或相关距离，不等同于颗粒直径。
+This d value is a characteristic length or correlation distance. It is not automatically a particle diameter.
 
-### 有限 q 范围散射不变量
+## Finite q-Range Invariant
 
-当前计算：
+The measured invariant is:
 
 ```text
 Q_measured = integral(q^2 I(q) dq)
 ```
 
-这是有限实测 q 范围积分，不是严格的 `0` 到无穷不变量。软件不做低 q 或高 q 外推，也不自动计算体积分数或比表面积。
+It is a finite measured q-range integral. The software does not apply low-q or high-q extrapolation and does not convert the value to volume fraction.
 
-### Kratky 与 Porod 图形指标
-
-- Kratky 图：`q^2 I(q)` vs `q`，输出最大值位置和对应特征尺度。
-- Porod 图：`q^4 I(q)` vs `q`，输出指定高 q 区间的平台均值、标准差和相对波动系数。
-
-Porod 平台指标不能在未知散射对比度和相结构前提下自动解释为绝对比表面积。
-
-## 阶段三批量比较、记录与导出
-
-### 重复曲线平均
-
-如果多条重复曲线 q 网格一致，软件逐点平均：
+For scale contribution, the information-budget analysis uses:
 
 ```text
-I_mean(q) = mean(I_i(q))
+Q_measured = integral(q^3 I(q) d ln q)
 ```
 
-如果 q 网格不一致，第一版使用共同重叠 q 范围上的线性插值。插值和平均都会生成新曲线，不覆盖原始曲线。
+It reports q^3I versus ln q, cumulative Q, Q10/Q50/Q90 q positions, `d_Q50 = 2*pi/q_Q50`, dominant q/d scale, normalized contribution entropy, low/mid/high contribution fractions, and selected-range observable d limits. These outputs describe where measured invariant signal sits inside the selected finite q range; they are not a substitute for extrapolated total invariant analysis.
 
-如果每条曲线都有 error，软件计算合成 measurement error，并同时保留重复曲线之间的标准差概念。当前平均曲线的 `error` 使用 measurement error 与 replicate std 的合成值。
+## Kratky And Porod Metrics
 
-### 曲线比较
+Kratky metrics are descriptive values from `q^2 I(q)`. Porod metrics are descriptive statistics from `q^4 I(q)`.
 
-支持：
+Porod plateau metrics should not be interpreted as absolute specific surface area without contrast, phase, and high-q plateau assumptions.
 
-- `difference`: `I_B(q) - I_A(q)`；
-- `ratio`: `I_B(q) / I_A(q)`；
-- `relative_difference`: `(I_B(q) - I_A(q)) / I_A(q)`。
+## Method Warnings
 
-当分母为 0 或接近 0 时，相关点会被排除并返回 warning。
+Analysis results include both legacy text warnings and `structured_warnings`. Structured warnings contain:
 
-### 归一化显示
+- `warning_code`
+- `severity`
+- `message`
+- `suggested_action`
+- `related_analysis_id`
 
-支持 `I/Imax`、`I/I(q_ref)`、`I/area` 和 `I/Q_measured`。归一化默认只用于显示或形状比较，不作为新的物理校正。
+The GUI and exported reports can display warning codes alongside the human-readable messages. Warnings are part of the analysis result and are saved with the project and JSON exports.
 
-### 记录与导出
+## Records And Traceability
 
-阶段三加入：
+The application distinguishes:
 
-- `HistoryRecord`：记录导入、转换、平均、分析、比较和导出等操作。
-- `FormalRecord`：把曲线、分析结果、比较结果或图标记为正式记录。
-- `feature_table.csv`：汇总每条曲线已有的基础特征和分析结果。
-- Markdown 报告：记录项目名、导出时间、软件版本、样品/曲线、分析方法、q 区间、关键结果、warning、图像路径和正式记录。
+- `CurveData.processing_history`: provenance of derived curve objects.
+- `ProjectState.history_records`: project-level operation log for import, unit conversion, analysis, group creation, averaging, comparison, export, project save, and formal-record actions.
+
+Formal records can point to curves, analysis results, comparison results, or reserved figure entries.

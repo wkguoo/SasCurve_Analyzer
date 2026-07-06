@@ -24,21 +24,21 @@ def test_invalid_q_i_transform_warnings() -> None:
     assert transform_curve(curve, "lnI").warnings
 
 
-def test_pr_placeholder_interface() -> None:
-    curve = CurveData.create(name="curve", q=[0.1, 0.2], intensity=[10, 5])
-    result = compute_pr(curve, (0.1, 0.2), dmax=50.0)
-    assert result.results["experimental"] is True
-    assert result.warnings
+def test_pr_interface_returns_reliability_metadata() -> None:
+    q = np.linspace(0.02, 0.2, 20)
+    curve = CurveData.create(name="curve", q=q, intensity=np.exp(-q))
+    result = compute_pr(curve, (float(q.min()), float(q.max())), dmax=50.0)
+    assert result.analysis_type == "pr"
+    assert "reliability_label" in result.results
+    assert result.results["export_tables"]["pr_distribution"]
 
 
-def test_correlation_placeholder_raises_clear_error() -> None:
-    curve = CurveData.create(name="curve", q=[0.1, 0.2], intensity=[10, 5])
-    try:
-        compute_correlation_function(curve, (0.1, 0.2), {})
-    except NotImplementedError as exc:
-        assert "reserved" in str(exc)
-    else:
-        raise AssertionError("Expected NotImplementedError")
+def test_correlation_interface_returns_candidate_result() -> None:
+    q = np.linspace(0.02, 0.2, 20)
+    curve = CurveData.create(name="curve", q=q, intensity=np.exp(-q))
+    result = compute_correlation_function(curve, (float(q.min()), float(q.max())), {"r_points": 25, "r_max": 50.0})
+    assert result.analysis_type == "correlation_function"
+    assert result.results["export_tables"]["correlation_function"]
 
 
 def test_builtin_plugin_compatibility_layer() -> None:

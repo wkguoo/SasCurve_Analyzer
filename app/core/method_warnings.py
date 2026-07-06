@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import asdict
 
 import numpy as np
 
@@ -12,6 +13,14 @@ class MethodWarning:
     message: str
     suggested_action: str
     related_analysis_id: str | None = None
+
+
+def warning_to_dict(warning: MethodWarning) -> dict:
+    return asdict(warning)
+
+
+def warning_to_text(warning: MethodWarning) -> str:
+    return f"[{warning.severity}] {warning.warning_code}: {warning.message} Suggested action: {warning.suggested_action}"
 
 
 def guinier_warnings(*, qrg_max=None, fit_points=None, slope=None, r_squared=None, q_range_width=None, related_analysis_id=None) -> list[MethodWarning]:

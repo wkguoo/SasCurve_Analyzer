@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.core.analysis_schema import scalar_result_items
 from app.core.data_model import AnalysisResult, CurveData, FormalRecord, HistoryRecord, utc_now_iso
 
 
@@ -40,13 +41,32 @@ def generate_markdown_report(
     lines.append("## Analysis Results")
     for result in analyses:
         lines.extend([f"### {result.analysis_type}", f"- analysis_id: `{result.analysis_id}`", f"- curve_id: `{result.curve_id}`", f"- q_range: {result.q_range}", "- key results:"])
-        for key, value in result.results.items():
-            if isinstance(value, (str, int, float, bool)) or value is None:
-                lines.append(f"  - {key}: {value}")
+        for key, value in scalar_result_items(result.results).items():
+            lines.append(f"  - {key}: {value}")
+        assumptions = result.results.get("assumptions", [])
+        if assumptions:
+            lines.append("- assumptions / 前提条件:")
+            for assumption in assumptions:
+                lines.append(f"  - {assumption}")
+        limits = result.results.get("interpretation_limits", [])
+        if limits:
+            lines.append("- interpretation limits / 解释边界:")
+            for limit in limits:
+                lines.append(f"  - {limit}")
+        export_tables = result.results.get("export_tables", {})
+        if export_tables:
+            lines.append("- export tables / 可展开导出表:")
+            for table_name, rows in export_tables.items():
+                count = len(rows) if hasattr(rows, "__len__") else 1
+                lines.append(f"  - {table_name}: {count} rows")
         if result.warnings:
             lines.append("- warnings:")
             for warning in result.warnings:
                 lines.append(f"  - {warning}")
+        if result.structured_warnings:
+            lines.append("- structured warnings:")
+            for warning in result.structured_warnings:
+                lines.append(f"  - {warning.get('warning_code')}: {warning.get('message')}")
         lines.append("")
 
     lines.append("## Processing History")

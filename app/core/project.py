@@ -62,7 +62,7 @@ def save_project(project: ProjectState, folder: str | Path) -> Path:
 
     curve_payloads = []
     for curve in project.curves:
-        curve_file = curves_folder / f"{curve.curve_id}.csv"
+        curve_file = curves_folder / f"{curve.curve_id}.json"
         data = {"q": curve.q.tolist(), "I": curve.intensity.tolist(), "error": None if curve.error is None else curve.error.tolist()}
         curve_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         payload = asdict(curve)

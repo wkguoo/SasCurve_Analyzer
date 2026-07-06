@@ -30,17 +30,21 @@ def create_curve_figure(
         error = curve.error
         mask = np.isfinite(q) & np.isfinite(intensity)
 
-        if plot_type in {"semilog", "loglog"}:
+        if plot_type in {"semilog", "loglog", "guinier"}:
             invalid_i = mask & (intensity <= 0)
             if np.any(invalid_i):
-                warnings.append(f"{curve.name}: excluded {int(np.sum(invalid_i))} points with I(q) <= 0.")
+                suffix = " for Guinier plot." if plot_type == "guinier" else "."
+                warnings.append(f"{curve.name}: excluded {int(np.sum(invalid_i))} points with I(q) <= 0{suffix}")
             mask &= intensity > 0
 
-        if plot_type == "loglog":
+        if plot_type in {"loglog", "guinier", "invariant_contribution"}:
             invalid_q = mask & (q <= 0)
             if np.any(invalid_q):
-                warnings.append(f"{curve.name}: excluded {int(np.sum(invalid_q))} points with q <= 0.")
+                suffix = " for Guinier plot." if plot_type == "guinier" else "."
+                warnings.append(f"{curve.name}: excluded {int(np.sum(invalid_q))} points with q <= 0{suffix}")
             mask &= q > 0
+        if not np.any(mask):
+            warnings.append(f"{curve.name}: no valid points remain for {plot_type} plot.")
 
         x = q[mask]
         y = intensity[mask]
@@ -69,18 +73,23 @@ def create_curve_figure(
             if yerr is not None:
                 yerr = yerr / y
         elif plot_type == "guinier":
-            valid = x > 0
-            x_plot = x[valid] ** 2
-            y_plot = np.log(y[valid])
+            x_plot = x**2
+            y_plot = np.log(y)
             y_label = f"ln I(q) ({curve.intensity_unit})"
             x_label = f"q^2 ({curve.q_unit})^2"
-            yerr = None if yerr is None else yerr[valid] / y[valid]
+            yerr = None if yerr is None else yerr / y
         elif plot_type in {"kratky", "invariant"}:
             x_plot = x
             y_plot = x**2 * y
             y_label = f"q^2 I(q) ({curve.q_unit})^2 {curve.intensity_unit}"
             x_label = f"q ({curve.q_unit})"
             yerr = None if yerr is None else (x**2) * yerr
+        elif plot_type == "invariant_contribution":
+            x_plot = np.log(x)
+            y_plot = x**3 * y
+            y_label = f"q^3 I(q) ({curve.q_unit})^3 {curve.intensity_unit}"
+            x_label = f"ln q ({curve.q_unit})"
+            yerr = None if yerr is None else (x**3) * yerr
         elif plot_type == "porod":
             x_plot = x
             y_plot = x**4 * y

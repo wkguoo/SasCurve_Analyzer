@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QFileDialog, QPushButton, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QTextEdit, QVBoxLayout, QWidget
 
 from app.core.analysis_templates import AnalysisTemplate, apply_template, load_template, save_template
+from app.ui.style import action_button
 
 
 class TemplatesTab(QWidget):
@@ -12,16 +13,33 @@ class TemplatesTab(QWidget):
         super().__init__()
         self.main_window = main_window
         self.template = AnalysisTemplate.create("default_model_free")
-        save_button = QPushButton("保存默认模板")
+        save_button = action_button(
+            "保存默认模板",
+            role="secondary",
+            tooltip="保存当前模板。",
+            status_tip="把默认无模型分析模板保存为 JSON，方便跨项目复用。",
+        )
         save_button.clicked.connect(self.save_default_template)
-        load_button = QPushButton("加载模板")
+        load_button = action_button(
+            "加载模板",
+            role="secondary",
+            tooltip="加载模板 JSON。",
+            status_tip="从 JSON 文件读取分析模板，之后可应用到当前项目曲线。",
+        )
         load_button.clicked.connect(self.load_template)
-        apply_button = QPushButton("应用模板到全部曲线")
+        apply_button = action_button(
+            "应用模板到全部曲线",
+            role="success",
+            tooltip="批量应用模板。",
+            status_tip="重要：对项目内全部曲线运行模板分析，并写入分析结果和历史记录。",
+        )
         apply_button.clicked.connect(self.apply_to_all)
         self.output = QTextEdit()
         self.output.setReadOnly(True)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
         layout.addWidget(save_button)
         layout.addWidget(load_button)
         layout.addWidget(apply_button)

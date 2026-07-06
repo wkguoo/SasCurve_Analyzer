@@ -1,10 +1,10 @@
-# 高级方法与边界说明
+# Advanced Methods And Reserved Interfaces
 
-本文件对应阶段四。高级功能默认以“可选、可解释、可关闭、可追溯”的方式实现。
+Advanced interfaces in `sas_curve_analyzer` are designed to be optional, explicit, traceable, and conservative. They are not automatic structure-identification tools.
 
-## Method Warnings
+## Structured Method Warnings
 
-方法警告使用结构化对象记录：
+Method warnings are represented as structured objects with:
 
 - `warning_code`
 - `severity`
@@ -12,38 +12,49 @@
 - `suggested_action`
 - `related_analysis_id`
 
-这些 warning 不是错误本身，而是提醒用户检查适用前提，避免把数学拟合或曲线特征过度解释为材料结构结论。
+These warnings are attached to `AnalysisResult.structured_warnings` and exported with JSON reports. They are intended to make method limitations visible in the GUI, project history, and exported reports.
 
-## P(r)
+## Experimental P(r) Interface
 
-当前 `compute_pr` 是 experimental placeholder，不是成熟的间接傅里叶变换实现。
+The current P(r) interface is experimental. It is not a validated indirect Fourier transform implementation.
 
-适用边界：
+The interface exists so future validated algorithms can share the same analysis-result structure. Current output should not be used for formal size-distribution or pair-distance conclusions.
 
-- 更适合孤立散射体或稀溶液体系。
-- 连续多相材料、强相互作用体系、明显结构因子影响的曲线需要谨慎。
-- `Dmax` 高度依赖 q 范围和正则化。
+Typical P(r) interpretation requires careful q-range coverage, background quality, Dmax selection, regularization control, and physical assumptions about the scattering system.
 
-当前输出零值 `P(r)` 占位数组、`Dmax` 和 warning，用于后续接入成熟算法时保持统一接口。
+## Reserved Correlation-Function Interface
 
-## Correlation Function
+The correlation-function entry point is reserved and raises a clear `NotImplementedError`.
 
-`compute_correlation_function` 当前明确抛出 `NotImplementedError`。
+Correlation-function analysis can be useful for lamellar, quasi-lamellar, or two-phase systems, but automatic extraction of long period, interface thickness, or domain parameters requires explicit structural assumptions and often low-q or high-q extrapolation.
 
-相关函数分析常用于层状、准层状或两相结构，但通常需要低 q 和高 q 外推。自动提取长周期、界面厚度等参数必须有明确结构前提，不应对任意材料体系自动解释。
+## Reserved Extrapolation Interfaces
 
-## Extrapolation
+Low-q and high-q extrapolation interfaces exist but are disabled by default.
 
-低 q 和高 q 外推接口存在，但默认 `disabled`。
+Reserved method names include:
 
-可选方法名称预留：
+- Low q: `Guinier`, `constant`, `disabled`
+- High q: `Porod q^-4`, `power-law`, `disabled`
 
-- low q: `Guinier`、`constant`、`disabled`
-- high q: `Porod q^-4`、`power-law`、`disabled`
+Measured-range invariant calculations do not use extrapolation by default. Any future extrapolation path must report method warnings and record parameters.
 
-启用外推时必须产生 warning。有限 q 不变量默认仍使用 measured q range。
+## Porod And Invariant Boundaries
 
-## Porod And Invariant
+Porod plateau metrics and finite q-range invariant values are descriptive unless the user supplies the external physical assumptions needed for quantitative interpretation.
 
-Porod 平台和 invariant 都不应在缺少散射对比度、相组成、q 范围和外推假设时自动转化为绝对比表面积或体积分数。
+The software does not automatically calculate:
 
+- Absolute specific surface area.
+- Phase volume fraction.
+- Scattering contrast.
+- q = 0 or q = infinity extrapolated invariant.
+
+## Plugin Interface
+
+The plugin base classes support analysis extensions that return `AnalysisResult`. Plugin implementations should:
+
+- Keep numerical logic in `app/core`.
+- Return text and structured warnings where method assumptions matter.
+- Avoid silently modifying input curves.
+- Add tests that cover expected outputs and failure modes.

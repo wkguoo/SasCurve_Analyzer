@@ -32,3 +32,10 @@ def test_import_without_error_column(tmp_path: Path) -> None:
     assert curve.error is None
     assert curve.q.size == 2
 
+
+def test_blank_error_column_is_treated_as_missing(tmp_path: Path) -> None:
+    csv_path = tmp_path / "curve.csv"
+    csv_path.write_text("q,I\n0.1,10\n0.2,5\n", encoding="utf-8")
+    curve = load_curve(csv_path, q_column="q", intensity_column="I", error_column="")
+    assert curve.error is None
+

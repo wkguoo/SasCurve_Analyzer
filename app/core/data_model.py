@@ -117,6 +117,7 @@ class AnalysisResult:
     parameters: dict[str, Any]
     results: dict[str, Any]
     warnings: list[str] = field(default_factory=list)
+    structured_warnings: list[dict[str, Any]] = field(default_factory=list)
     created_at: str = field(default_factory=utc_now_iso)
     software_version: str = "0.1.0"
     input_curve_version: str | None = None
@@ -131,6 +132,7 @@ class AnalysisResult:
         parameters: dict[str, Any] | None = None,
         results: dict[str, Any] | None = None,
         warnings: list[str] | None = None,
+        structured_warnings: list[dict[str, Any]] | None = None,
     ) -> "AnalysisResult":
         return cls(
             analysis_id=str(uuid4()),
@@ -140,6 +142,7 @@ class AnalysisResult:
             parameters=dict(parameters or {}),
             results=dict(results or {}),
             warnings=list(warnings or []),
+            structured_warnings=list(structured_warnings or []),
             input_curve_version=curve.curve_id,
         )
 
