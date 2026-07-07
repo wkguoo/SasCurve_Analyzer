@@ -1,5 +1,47 @@
 # CHANGELOG
 
+## 2026-07-07 - Windows double-click launcher bat
+
+### Task Objective
+
+Create double-clickable Windows bat launchers both inside the project and on the desktop so the SAS curve GUI can be started without typing commands.
+
+### Symptom Or Reason
+
+The project documented `python main.py`, but there was no double-click entry point for normal Windows desktop use.
+
+### Root Cause
+
+No Windows launcher script existed. A desktop copy also needs an explicit project path because its working directory is the desktop rather than the project root.
+
+### Touched Files
+
+- `Start_SasCurve_Analyzer.bat`
+- `E:\desktop\Start_SasCurve_Analyzer.bat`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Fix Summary
+
+- Added `Start_SasCurve_Analyzer.bat` in the project root.
+- Made the script work from the project root or as a copied desktop launcher by resolving `E:\Desktop\SasCurve_Analyzer` when needed.
+- Added Python discovery through `py -3` or `python`.
+- Added clear pause-on-error messages for missing project files, missing Python, missing PySide6, and GUI startup failures.
+
+### Tests Run
+
+```powershell
+cmd /c Start_SasCurve_Analyzer.bat --check
+cmd /c E:\desktop\Start_SasCurve_Analyzer.bat --check
+python -m py_compile main.py
+```
+
+Verified result: project-root launcher check passed; desktop launcher check passed; `main.py` syntax check passed.
+
+### Follow-Up Risk
+
+The launcher assumes this project remains at `E:\Desktop\SasCurve_Analyzer` when run from the desktop copy. If the project folder is moved, update `APP_DIR` in the desktop bat file or copy a fresh bat from the new project root.
+
 ## 2026-07-07 - Multi-agent audit fixes for UI, exports, and SAS parameter correctness
 
 ### Task Objective

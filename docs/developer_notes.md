@@ -62,6 +62,17 @@ Settings are handled by `app/core/settings.py`.
 
 Do not read arbitrary sensitive paths for settings. Keep the default settings file local and explicit.
 
+## Windows Launch Script
+
+`Start_SasCurve_Analyzer.bat` is the double-click launcher for normal Windows desktop use.
+
+The script resolves the project folder in two ways:
+
+- If the bat file is in the project root, it uses its own directory.
+- If the bat file is copied to the Windows desktop, it falls back to the fixed project path `E:\Desktop\SasCurve_Analyzer`.
+
+The launcher checks that Python is available, reports missing PySide6 dependencies with the install command, and then starts the GUI with `python main.py` or `py -3 main.py`. Keep the desktop copy synchronized with the project-root copy when the launcher changes.
+
 ## Batch In Situ Import
 
 Batch import logic belongs in `app/core/batch_import.py`.
