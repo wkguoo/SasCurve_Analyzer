@@ -23,7 +23,7 @@ def transform_curve(curve: CurveData, transform_name: str) -> TransformResult:
     if transform_name == "q_to_size":
         valid = q > 0
         if not np.all(valid):
-            warnings.append("Excluded q <= 0 for 2*pi/q transform.")
+            warnings.append("Excluded q <= 0 for 2\u03c0/q transform.")
         return TransformResult(transform_name, "q", 2.0 * np.pi / q[valid], f"1/({curve.q_unit})", warnings)
     if transform_name == "q_squared":
         return TransformResult(transform_name, "q", q**2, f"({curve.q_unit})^2", warnings)
@@ -55,4 +55,3 @@ def transform_curve(curve: CurveData, transform_name: str) -> TransformResult:
         warnings.append("Normalized intensity is for display only unless explicitly saved as derived data.")
         return TransformResult(transform_name, "I", output, "normalized", warnings)
     raise ValueError(f"Unsupported transform_name: {transform_name}")
-

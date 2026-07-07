@@ -102,7 +102,7 @@ def test_origin_long_export_writes_beginner_guide_markdown(tmp_path) -> None:
     assert "log-log" in text
     assert "Guinier" in text
     assert "heatmap" in text
-    assert "d = 2*pi/q" in text
+    assert "d = 2\u03c0/q" in text
 
 
 def test_origin_matrix_export_uses_frame_columns_for_matching_q_grid(tmp_path) -> None:

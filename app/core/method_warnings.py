@@ -59,7 +59,7 @@ def invariant_warnings(related_analysis_id=None) -> list[MethodWarning]:
 
 def peak_warnings(peak_width=None, related_analysis_id=None) -> list[MethodWarning]:
     warnings = [
-        MethodWarning("PEAK_D_NOT_DIAMETER", "warning", "d=2*pi/q* is a characteristic length or correlation distance, not a particle diameter.", "Confirm interpretation with morphology and scattering model.", related_analysis_id)
+        MethodWarning("PEAK_D_NOT_DIAMETER", "warning", "d=2\u03c0/q* is a characteristic length or correlation distance, not a particle diameter.", "Confirm interpretation with morphology and scattering model.", related_analysis_id)
     ]
     if peak_width is not None and peak_width > 0.2:
         warnings.append(MethodWarning("PEAK_BROAD", "info", "Broad peak or shoulder should be manually confirmed.", "Inspect the original curve and derivative views.", related_analysis_id))
@@ -73,7 +73,7 @@ def porod_plateau_warnings(q4i_values, related_analysis_id=None) -> list[MethodW
         mean = float(np.nanmean(values))
         cv = float(np.nanstd(values) / abs(mean))
         if mean <= 0 or cv > 0.2:
-            warnings.append(MethodWarning("POROD_NO_STABLE_PLATEAU", "warning", "q^4I(q) does not show a stable plateau.", "Choose another high-q range or inspect noise.", related_analysis_id))
+            warnings.append(MethodWarning("POROD_NO_STABLE_PLATEAU", "warning", "q\u2074I(q) does not show a stable plateau.", "Choose another high-q range or inspect noise.", related_analysis_id))
     warnings.append(MethodWarning("POROD_NO_ABSOLUTE_SURFACE", "warning", "Do not calculate absolute specific surface area without contrast and phase assumptions.", "Treat plateau metrics as descriptive unless assumptions are known.", related_analysis_id))
     return warnings
 

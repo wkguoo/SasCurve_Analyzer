@@ -45,7 +45,7 @@ def porod_deep_analysis(
         assumptions.append("volume_fraction_optional_for_specific_surface_normalization")
     checks = [
         validity_check("enough_points", q.size >= 5, severity="error", message="Porod analysis needs at least five high-q points.", value=int(q.size), threshold=5),
-        validity_check("stable_q4I_plateau", stable_positive_plateau, severity="warning", message="q^4I(q) plateau is not stable or not positive.", value=plateau_cv, threshold=0.2),
+        validity_check("stable_q4I_plateau", stable_positive_plateau, severity="warning", message="q\u2074I(q) plateau is not stable or not positive.", value=plateau_cv, threshold=0.2),
         validity_check("porod_alpha_near_4", porod_like_alpha, severity="warning", message="Fitted high-q exponent is not close to Porod q^-4.", value=alpha, threshold="4 +/- 0.4"),
         validity_check("absolute_intensity", absolute_intensity, severity="warning", message="Absolute intensity is required for absolute surface estimates."),
         validity_check("contrast_supplied", contrast is not None and contrast != 0, severity="warning", message="Contrast is required for absolute surface estimates."),
@@ -71,7 +71,7 @@ def porod_deep_analysis(
         assumptions=assumptions,
         validity_checks=checks,
         interpretation_limits=[
-            "Porod surface estimates require a two-phase system, absolute intensity, known contrast, and a stable q^4I plateau.",
+            "Porod surface estimates require a two-phase system, absolute intensity, known contrast, and a stable q\u2074I plateau.",
             "If these assumptions are missing, plateau metrics are descriptive only.",
         ],
     )

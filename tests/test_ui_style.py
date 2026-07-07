@@ -4,10 +4,12 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QComboBox, QGroupBox, QPushButton
+from PySide6.QtWidgets import QApplication, QCheckBox, QDoubleSpinBox, QGroupBox, QPushButton
 
 from app.core.data_model import CurveData
 from app.ui.main_window import MainWindow
+from app.ui.model_catalog_dialog import ModelCatalogDialog
+from app.ui.settings_dialog import SettingsDialog
 from app.ui.style import action_button, apply_help, build_app_stylesheet
 
 
@@ -104,6 +106,24 @@ def test_combo_boxes_use_researcher_labels_with_core_keys_in_user_data() -> None
         assert window.analysis_tab.analysis_type.currentData() == "guinier"
         assert window.plotting_tab.plot_type.currentData() == "linear"
         assert window.batch_tab.comparison_type.currentData() == "difference"
+
+        math_labels = []
+        for combo in [window.analysis_tab.analysis_type, window.plotting_tab.plot_type, window.advanced_tab.transform_type]:
+            math_labels.extend(combo.itemText(index) for index in range(combo.count()))
+            for index in range(combo.count()):
+                key = combo.itemData(index)
+                assert all(symbol not in key for symbol in ["\u00b2", "\u00b3", "\u2074", "\u03b1", "\u03c0"])
+        joined = "\n".join(math_labels)
+        assert "q^2" not in joined
+        assert "q^3" not in joined
+        assert "q^4" not in joined
+        assert "alpha(q)" not in joined
+        assert "2*pi" not in joined
+        assert "q\u00b2" in joined
+        assert "q\u00b3" in joined
+        assert "q\u2074" in joined
+        assert "\u03b1(q)" in joined
+        assert "2\u03c0/q" in joined
     finally:
         window.close()
 
@@ -132,3 +152,31 @@ def test_experimental_advanced_controls_are_disabled_by_default() -> None:
         assert window.project.analysis_results == []
     finally:
         window.close()
+
+
+def test_settings_dialog_exposes_negative_thresholds_and_model_catalog_button() -> None:
+    _app()
+    window = MainWindow()
+    dialog = SettingsDialog(window)
+    try:
+        buttons = {button.text() for button in dialog.findChildren(QPushButton)}
+        checkbox_labels = {checkbox.text() for checkbox in dialog.findChildren(QCheckBox)}
+        spinboxes = dialog.findChildren(QDoubleSpinBox)
+
+        assert "View calculation models and formulas" in buttons
+        assert "Allow slight negative calibrated intensities" in checkbox_labels
+        assert len(spinboxes) >= 2
+    finally:
+        dialog.close()
+        window.close()
+
+
+def test_model_catalog_dialog_can_be_instantiated() -> None:
+    _app()
+    dialog = ModelCatalogDialog()
+    try:
+        assert dialog.windowTitle() == "Calculation models and formulas"
+        assert "Sphere form factor" in dialog.catalog_text.toPlainText()
+        assert "P(r) inversion interface" in dialog.catalog_text.toPlainText()
+    finally:
+        dialog.close()

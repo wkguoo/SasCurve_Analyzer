@@ -25,14 +25,14 @@ class AnalysisTab(QWidget):
         self.main_window = main_window
         self.analysis_type = QComboBox()
         for label, key in [
-            ("Guinier: ln I vs q^2", "guinier"),
-            ("Power law: log I vs log q", "power_law"),
-            ("Local slope alpha(q)", "local_slope"),
-            ("Peak detection", "peak_detection"),
-            ("Invariant integral Q", "invariant"),
-            ("Information budget q^3I", "information_budget"),
-            ("Kratky q^2I metrics", "kratky_metrics"),
-            ("Porod q^4I metrics", "porod_metrics"),
+            ("Guinier analysis: ln I(q) vs q\u00b2", "guinier"),
+            ("Power-law slope: ln I(q) vs ln q", "power_law"),
+            ("Local slope: \u03b1(q)", "local_slope"),
+            ("Peak detection: q* and d = 2\u03c0/q*", "peak_detection"),
+            ("Finite invariant: \u222bq\u00b2I(q)dq", "invariant"),
+            ("Information budget: q\u00b3I(q) over ln q", "information_budget"),
+            ("Kratky metrics: q\u00b2I(q)", "kratky_metrics"),
+            ("Porod metrics: q\u2074I(q)", "porod_metrics"),
         ]:
             self.analysis_type.addItem(label, key)
         apply_help(

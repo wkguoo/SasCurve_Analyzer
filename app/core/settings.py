@@ -16,22 +16,43 @@ class AppSettings:
     show_method_warnings: bool = True
     default_export_dir: str = "exports"
     log_level: str = "INFO"
+    allow_slight_negative_intensity: bool = True
+    slight_negative_abs_ratio_threshold: float = 1e-3
+    slight_negative_fraction_threshold: float = 0.05
 
 
-def load_settings(path: str | Path | None = None) -> AppSettings:
+@dataclass
+class SettingsLoadInfo:
+    path: str
+    exists: bool
+    loaded_from_file: bool
+    used_defaults: bool
+    error_message: str | None = None
+
+
+def load_settings_with_info(path: str | Path | None = None) -> tuple[AppSettings, SettingsLoadInfo]:
     settings_path = Path(path) if path is not None else DEFAULT_SETTINGS_PATH
     if not settings_path.exists():
-        return AppSettings()
+        return AppSettings(), SettingsLoadInfo(str(settings_path), exists=False, loaded_from_file=False, used_defaults=True)
     try:
         payload = json.loads(settings_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return AppSettings()
+    except (OSError, json.JSONDecodeError) as exc:
+        return AppSettings(), SettingsLoadInfo(
+            str(settings_path), exists=True, loaded_from_file=False, used_defaults=True, error_message=str(exc)
+        )
     if not isinstance(payload, dict):
-        return AppSettings()
+        return AppSettings(), SettingsLoadInfo(
+            str(settings_path), exists=True, loaded_from_file=False, used_defaults=True, error_message="Settings JSON root is not an object."
+        )
     defaults = asdict(AppSettings())
     allowed = {field.name for field in fields(AppSettings)}
     merged = {**defaults, **{key: value for key, value in payload.items() if key in allowed}}
-    return AppSettings(**merged)
+    return AppSettings(**merged), SettingsLoadInfo(str(settings_path), exists=True, loaded_from_file=True, used_defaults=False)
+
+
+def load_settings(path: str | Path | None = None) -> AppSettings:
+    settings, _info = load_settings_with_info(path)
+    return settings
 
 
 def save_settings(settings: AppSettings, path: str | Path | None = None) -> Path:

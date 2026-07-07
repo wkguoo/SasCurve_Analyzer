@@ -589,3 +589,165 @@ Expected verified result before publication: all tests pass.
 - `compute_pr` is an experimental placeholder, not a validated P(r) algorithm.
 - Correlation function analysis is a reserved interface.
 - No packaging is performed during publication.
+
+## 2026-07-07 11:53:52 +08:00 - Plotting controls, calibrated negative intensities, settings transparency, and SAS math labels
+
+### Task Objective
+
+Implement the `.ai-bridge/current-plan.md` usability and method-transparency plan for calibrated SAS curve plotting and validation.
+
+### Added Files
+
+- `app/core/model_catalog.py`
+- `tests/test_model_catalog.py`
+
+### Modified Files
+
+- `app/core/advanced_transforms.py`
+- `app/core/deep_scan.py`
+- `app/core/export.py`
+- `app/core/method_warnings.py`
+- `app/core/plotting.py`
+- `app/core/porod_analysis.py`
+- `app/core/settings.py`
+- `app/core/validation.py`
+- `app/ui/advanced_tab.py`
+- `app/ui/analysis_tab.py`
+- `app/ui/main_window.py`
+- `app/ui/plotting_tab.py`
+- `app/ui/settings_dialog.py`
+- `tests/test_export.py`
+- `tests/test_model_catalog.py`
+- `tests/test_plotting.py`
+- `tests/test_settings.py`
+- `tests/test_ui_style.py`
+- `tests/test_validation.py`
+- `README.md`
+- `docs/method_notes.md`
+- `docs/developer_notes.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added calibrated negative-intensity classification: slight negative values are reported separately from significant negative values and preserved for non-log displays.
+- Added validation summary fields for negative intensity count/fraction, positive dynamic range, and log-valid/log-invalid point counts.
+- Added plotting helpers for display-coordinate transforms and cursor readout formatting.
+- Added peak/d-spacing plotting, optional `d = 2π/q` secondary axis, and standard Unicode math labels for q²/q³/q⁴/α.
+- Added plotting tab controls for manual axis limits, full/low/mid/high q quick ranges, cursor coordinate readout, d-axis display, and q*/d annotation.
+- Added settings load metadata and a read-only settings transparency panel with active values, settings path/load status, and model/formula assumptions.
+- Added a model catalog covering common SAS plotting views, assumptions, limitations, and interpretation status.
+- Updated docs and user-facing warning/export text to avoid developer-style ASCII caret/pi notation where the text is meant for users.
+
+### Reason
+
+Absolute-calibrated/background-corrected SAS data can contain slight negative values, and users need clearer plotting controls, coordinate readouts, settings visibility, and professional math notation for research workflows.
+
+### How To Run
+
+```powershell
+python -m pip install -r requirements.txt
+python main.py
+```
+
+### Generated Output Files
+
+- No experimental data or research output files were generated.
+- `.ai-bridge/agent-status.md` and `.ai-bridge/implementation-diff.patch` are updated separately as CodexPro handoff records.
+
+### How To Check Success
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'
+python -m pytest
+python -m compileall -q main.py app\core app\ui
+```
+
+Verified during implementation:
+
+- Focused tests: `35 passed`.
+- Full test suite: `127 passed`.
+- Compile check: passed.
+
+### Notes And Risks
+
+- Axis range controls only change the displayed matplotlib axes; they do not modify imported curves or analysis ranges.
+- The `d = 2π/q` axis and peak-derived `d = 2π/q*` values are characteristic scales or correlation distances, not automatic particle diameters.
+- Logarithmic plots and log-based analyses still exclude `I(q) <= 0`.
+- No raw experimental data were modified.
+- No packaging, Git commit, or Git push was performed for this entry.
+
+## 2026-07-07 15:26:02 +08:00 - Negative-intensity settings and model catalog completeness
+
+### Task Objective
+
+Complete the appended `.ai-bridge/current-plan.md` small-fix plan by moving slight negative-intensity thresholds into settings and expanding the model/formula catalog.
+
+### Added Files
+
+- `app/ui/model_catalog_dialog.py`
+
+### Modified Files
+
+- `app/core/model_catalog.py`
+- `app/core/settings.py`
+- `app/core/validation.py`
+- `app/ui/check_tab.py`
+- `app/ui/settings_dialog.py`
+- `tests/test_model_catalog.py`
+- `tests/test_settings.py`
+- `tests/test_ui_style.py`
+- `tests/test_validation.py`
+- `README.md`
+- `docs/method_notes.md`
+- `docs/advanced_methods.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added `allow_slight_negative_intensity`, `slight_negative_abs_ratio_threshold`, and `slight_negative_fraction_threshold` to `AppSettings`.
+- Extended `validate_curve()` with keyword arguments for slight-negative classification thresholds and recorded those values in `ValidationReport.summary`.
+- Updated `CheckTab` so GUI validation uses the current settings values.
+- Added settings controls for slight negative-intensity tolerance.
+- Added a standalone `ModelCatalogDialog` opened from Settings.
+- Expanded `model_catalog.py` to include shape/form-factor models, empirical/model-dependent models, P(r), correlation, and low-q/high-q extrapolation interfaces.
+- Updated tests and documentation for the new settings and catalog behavior.
+
+### Reason
+
+The previous implementation hard-coded slight-negative thresholds and the catalog did not cover the project’s model-dependent, experimental, and reserved analysis interfaces.
+
+### How To Run
+
+```powershell
+python -m pip install -r requirements.txt
+python main.py
+```
+
+### Generated Output Files
+
+- No experimental data or research output files were generated.
+- `.ai-bridge/agent-status.md`, `.ai-bridge/implementation-diff.patch`, and `.ai-bridge/execution-log.jsonl` are updated separately as handoff records.
+
+### How To Check Success
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'
+python -m pytest tests/test_settings.py tests/test_validation.py tests/test_model_catalog.py tests/test_ui_style.py -q
+python -m pytest -q
+python -m compileall -q main.py app\core app\ui
+```
+
+### Notes And Risks
+
+- Wider slight-negative thresholds can hide data-quality problems. The settings only change validation classification; they do not modify intensities and do not allow non-positive values into log analysis.
+- Model catalog entries are transparency notes, not proof that a model applies.
+- No raw experimental data were modified.
+- No packaging, Git commit, or Git push was performed for this entry.

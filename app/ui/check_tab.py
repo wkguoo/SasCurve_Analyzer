@@ -33,7 +33,13 @@ class CheckTab(QWidget):
             self.output.setPlainText("尚未选择曲线。")
             return
 
-        report = validate_curve(curve)
+        settings = self.main_window.settings
+        report = validate_curve(
+            curve,
+            allow_slight_negative_intensity=settings.allow_slight_negative_intensity,
+            slight_negative_abs_ratio_threshold=settings.slight_negative_abs_ratio_threshold,
+            slight_negative_fraction_threshold=settings.slight_negative_fraction_threshold,
+        )
         lines = [
             f"曲线: {curve.name}",
             f"curve_id: {curve.curve_id}",

@@ -15,14 +15,14 @@ class AdvancedTab(QWidget):
         self.main_window = main_window
         self.transform_type = QComboBox()
         for label, key in [
-            ("Real-space scale 2*pi/q", "q_to_size"),
-            ("q squared", "q_squared"),
+            ("Real-space scale 2\u03c0/q", "q_to_size"),
+            ("q\u00b2", "q_squared"),
             ("Natural log intensity", "lnI"),
             ("Log10 intensity", "log10I"),
             ("q I(q)", "qI"),
-            ("q^2 I(q)", "q2I"),
-            ("q^3 I(q)", "q3I"),
-            ("q^4 I(q)", "q4I"),
+            ("q\u00b2I(q)", "q2I"),
+            ("q\u00b3I(q)", "q3I"),
+            ("q\u2074I(q)", "q4I"),
             ("Normalize by I max", "normalized_I"),
         ]:
             self.transform_type.addItem(label, key)

@@ -58,7 +58,17 @@ User-facing curve export remains CSV and is separate from internal project stora
 
 Settings are handled by `app/core/settings.py`.
 
-`load_settings()` returns defaults if the settings file is missing, invalid, or incomplete. `save_settings()` writes JSON. `MainWindow` loads settings on startup and applies defaults to import, plotting, and export flows.
+`load_settings()` returns defaults if the settings file is missing, invalid, or incomplete. `load_settings_with_info()` returns the same settings plus `SettingsLoadInfo`, including path, file existence, load source, default fallback state, and any parsing error. `save_settings()` writes JSON. `MainWindow` loads settings and load metadata on startup and applies defaults to import, plotting, and export flows.
+
+The settings dialog should show the active settings, settings file path, load status, and a concise model/formula transparency summary from `app/core/model_catalog.py`. Saving through the dialog writes the default `sas_curve_analyzer_settings.json` path and applies the values to the open main window immediately.
+
+Negative-intensity tolerance settings live in `AppSettings`:
+
+- `allow_slight_negative_intensity`
+- `slight_negative_abs_ratio_threshold`
+- `slight_negative_fraction_threshold`
+
+`app/core/validation.py::validate_curve()` accepts these values as keyword arguments so the numerical validator does not need to import the settings module. GUI callers such as `CheckTab` should pass values from `MainWindow.settings`.
 
 Do not read arbitrary sensitive paths for settings. Keep the default settings file local and explicit.
 
@@ -118,6 +128,10 @@ Shape-fit parameter values live in nested `result.results["parameters"]`; keep `
 
 Combo boxes that drive core logic should show researcher-facing labels and store the core key in `itemData()`. Callers should read `currentData()` rather than relying on visible text.
 
+User-visible math labels should use standard symbols such as `q²`, `q³`, `q⁴`, `α(q)`, and `2π/q`. Internal plot keys, transform keys, JSON fields, and CSV column names should remain stable ASCII identifiers.
+
+`PlottingTab` supports display-only X/Y axis limits, quick q-range buttons, d-axis display for raw-q plots, peak/d-spacing annotations, and cursor coordinate readout. Range controls must not mutate `CurveData`; transformed views use transformed display coordinates such as q² or ln q. Cursor formatting lives in `app/core/plotting.py` so it can be tested without a full interactive mouse event.
+
 Deep-analysis-only parameters should remain visually separated from standard model-free controls. Experimental actions should not write analysis results by default unless the UI explicitly enables that experimental mode and records the assumption in history.
 
 ## History And Formal Records
@@ -141,11 +155,23 @@ Keep `AnalysisResult.warnings` for backward-compatible text output and use `Anal
 
 `information_budget()` lives in `app/core/model_free.py`. It is a finite-range, model-free companion to invariant analysis and answers where the measured invariant signal is concentrated across log-q scale.
 
-The analysis sorts valid `q > 0` points before integration, computes `q^3 I(q)` for log-q contribution density, and returns cumulative Q, `q_Q10`, `q_Q50`, `q_Q90`, `d_Q50`, dominant `q3I_peak_q`/`q3I_peak_d`, normalized `Q_entropy`, low/mid/high contribution fractions, and observable d bounds from the selected q range.
+The analysis sorts valid `q > 0` points before integration, computes `q³I(q)` for log-q contribution density, and returns cumulative Q, `q_Q10`, `q_Q50`, `q_Q90`, `d_Q50`, dominant `q3I_peak_q`/`q3I_peak_d`, normalized `Q_entropy`, low/mid/high contribution fractions, and observable d bounds from the selected q range.
 
-Use `create_curve_figure(..., plot_type="invariant_contribution")` for the q^3I versus ln q view. This plot is useful for scale-budget inspection; it is not an extrapolated 0-to-infinity invariant and should be reported with the selected q range.
+Use `create_curve_figure(..., plot_type="invariant_contribution")` for the q³I versus ln q view. This plot is useful for scale-budget inspection; it is not an extrapolated 0-to-infinity invariant and should be reported with the selected q range.
 
 Low/mid/high fractions default to log-q tertiles. If material-specific q bands are known, pass explicit `q_bands=(low_mid_q, mid_high_q)` to keep comparisons consistent across samples.
+
+## Negative Calibrated Intensities
+
+`app/core/validation.py` classifies calibrated negative intensities into slight and significant cases. Slight negatives are reported as `intensity_slight_negative` with `info` severity when both the relative magnitude and fraction are small. Significant negatives remain `intensity_negative` warnings. Summary fields include negative count/fraction, positive-only dynamic range, and log-valid/log-invalid point counts.
+
+Do not clip negative intensities to zero or add constants for log plots. Linear, Kratky, Porod, invariant-integrand, and other non-log displays can preserve calibrated negatives. Logarithmic plots and log-based analyses must continue to exclude `I(q) <= 0` with explicit warnings.
+
+## Model Catalog
+
+`app/core/model_catalog.py` centralizes user-facing method names, formulas, inputs, outputs, assumptions, limitations, and status values for common plotting and model-free views. Keep this catalog synchronized with the plotting combo box, settings transparency panel, README, and method notes when adding or renaming a user-visible method.
+
+When adding a model catalog entry, update tests so every entry has non-empty formula, inputs, outputs, assumptions, limitations, and status. Shape/model-dependent entries must state that fit quality is not unique morphology proof. Experimental or reserved entries must be clearly marked.
 
 ## 2026-07-07 Review Bugfix Notes
 

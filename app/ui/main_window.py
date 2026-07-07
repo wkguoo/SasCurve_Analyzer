@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QListWidget, QMainWindow, QSplitter, QTabWidget
 
 from app.core.data_model import CurveData
 from app.core.project import ProjectState
-from app.core.settings import load_settings
+from app.core.settings import load_settings_with_info
 from app.ui.analysis_tab import AnalysisTab
 from app.ui.advanced_tab import AdvancedTab
 from app.ui.batch_tab import BatchTab
@@ -25,7 +25,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("SAS Curve Analyzer")
         self.resize(1240, 780)
         self.project = ProjectState()
-        self.settings = load_settings()
+        self.settings, self.settings_info = load_settings_with_info()
 
         self.curve_list = QListWidget()
         self.curve_list.setObjectName("curveList")

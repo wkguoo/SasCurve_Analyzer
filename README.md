@@ -36,7 +36,7 @@ This software does not perform:
 - Detect common separators automatically.
 - Treat error/sigma columns as optional.
 - Automatically recognize common columns such as `q_A_inv` and `intensity_cm_inv`.
-- Check q ordering, duplicate q values, NaN values, non-positive intensity values, and invalid error values.
+- Check q ordering, duplicate q values, NaN values, slight/significant negative intensity values, zero intensity values, and invalid error values.
 
 ### Batch Import For In Situ Series
 
@@ -66,8 +66,11 @@ For files with `q_A_inv,intensity_cm_inv`, the q unit is inferred as `A^-1`, the
 
 ### Visualization
 
-- Linear, semilog, loglog, Guinier, Kratky, Porod, invariant, and local-slope plots.
+- Linear, semi-log, log-log/power-law, Guinier, Kratky, Porod, invariant-integrand, log-q contribution, local-slope, and peak/d-spacing plots.
 - Error bars when an error column is available.
+- Manual X/Y axis limits and quick full/low/mid/high q range buttons.
+- Cursor readout for the current plot coordinate, including derived q/I values for transformed views.
+- Optional approximate real-space scale axis using `d = 2π/q` on raw-q plots.
 - Safe filtering for logarithmic plots, including `I(q) <= 0` and `q <= 0` where required.
 
 ### Model-Free Analysis
@@ -103,6 +106,7 @@ Each analysis returns an `AnalysisResult` with the q range, parameters, numerica
 - Reserved correlation-function interface.
 - Reserved low-q and high-q extrapolation interfaces, disabled by default.
 - Plugin base classes for adding analysis extensions.
+- Settings-accessible model/formula catalog covering plotting views, model-free methods, shape/form-factor models, empirical models, P(r), correlation, and extrapolation interfaces.
 
 Experimental and reserved interfaces should not be used as sources of formal quantitative physical conclusions.
 
@@ -131,6 +135,7 @@ Minimal workflow:
 3. Confirm the q, intensity, and optional error/sigma columns.
 4. Import the curve.
 5. Inspect validation warnings, plot the curve, and run model-free analyses.
+6. Use the `Settings` menu to view the active settings, settings file path, load status, and method/formula assumptions.
 
 ## Input Data Format
 
@@ -156,31 +161,31 @@ Column names are matched case-insensitively for common q, intensity, and error/s
 
 ### Guinier Analysis
 
-Fits `ln I(q)` against `q^2` in a selected low-q interval and reports Rg, I(0), fit statistics, and residuals. It does not prove particle shape or monodispersity, and it warns when the fitted interval violates common Guinier assumptions such as high `qRg`.
+Fits `ln I(q)` against `q²` in a selected low-q interval and reports Rg, I(0), fit statistics, and residuals. It does not prove particle shape or monodispersity, and it warns when the fitted interval violates common Guinier assumptions such as high `qRg`.
 
 ### Power-Law Slope
 
-Fits `ln I(q)` against `ln q` and reports the exponent `alpha`. The exponent can suggest Porod-like, fractal-like, or rough-interface behavior, but it is not a unique structural diagnosis.
+Fits `ln I(q)` against `ln q` and reports the exponent `α`. The exponent can suggest Porod-like, fractal-like, or rough-interface behavior, but it is not a unique structural diagnosis.
 
 ### Local Slope
 
-Computes `alpha(q) = -d ln I / d ln q` to help inspect whether a selected q interval behaves like a stable power law.
+Computes `α(q) = -d ln I / d ln q` to help inspect whether a selected q interval behaves like a stable power law.
 
 ### Peak And Shoulder Detection
 
-Reports peak position, intensity, width, area, and `d = 2*pi/q*`. This `d` value is a characteristic length or correlation distance, not an automatic particle diameter.
+Reports peak position, intensity, width, area, and `d = 2π/q*`. This `d` value is a characteristic length or correlation distance, not an automatic particle diameter.
 
 ### Finite q-Range Invariant
 
-Computes the measured-range integral `integral(q^2 I(q) dq)`. It does not extrapolate to q = 0 or q = infinity and does not automatically convert to volume fraction.
+Computes the measured-range integral `∫q²I(q)dq`. It does not extrapolate to q = 0 or q = infinity and does not automatically convert to volume fraction.
 
 ### Kratky Representation
 
-Reports descriptive metrics from `q^2 I(q)`, including the maximum position when present. Interpretation depends on material class and scattering assumptions.
+Reports descriptive metrics from `q²I(q)`, including the maximum position when present. Interpretation depends on material class and scattering assumptions.
 
 ### Porod Representation
 
-Reports descriptive `q^4 I(q)` plateau statistics. Without contrast, phase assumptions, and a stable high-q range, it does not calculate absolute specific surface area.
+Reports descriptive `q⁴I(q)` plateau statistics. Without contrast, phase assumptions, and a stable high-q range, it does not calculate absolute specific surface area.
 
 ## Project Files And Outputs
 
@@ -205,6 +210,9 @@ User-facing exports include:
 ## Method Limitations
 
 - Logarithmic plots and fits exclude invalid q or intensity points and report warnings.
+- Slightly negative calibrated intensities are preserved and can be shown in linear or non-log transformed plots. They are classified separately from significant negative values; non-positive points are still excluded from logarithmic plots and log-based analyses.
+- Slight-negative classification can be configured in Settings with an enable switch, a relative abs-ratio threshold, and a negative-point fraction threshold. Wider thresholds can hide data-quality problems, so they should be reported with the analysis.
+- Plot axis limits are display-only controls and do not change imported curve data.
 - Missing error columns are allowed; unweighted fitting is used where relevant.
 - Finite invariant values are measured-range descriptors unless explicit extrapolation and contrast assumptions are supplied externally.
 - Porod metrics are descriptive unless the user supplies the physical assumptions needed for absolute surface calculations.

@@ -269,7 +269,7 @@ def run_deep_scan(
         validity_checks=checks,
         interpretation_limits=[
             "Deep scan is a model-free triage. It ranks candidate intervals but does not prove a unique structure.",
-            "Peak d=2*pi/q is a characteristic spacing unless a morphology model is supplied.",
+            "Peak d=2\u03c0/q is a characteristic spacing unless a morphology model is supplied.",
         ],
         export_tables={
             EXPORT_TABLE_GUINIER_CANDIDATES: guinier_candidates,
