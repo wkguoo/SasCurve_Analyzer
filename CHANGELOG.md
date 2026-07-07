@@ -679,6 +679,466 @@ Verified during implementation:
 - No raw experimental data were modified.
 - No packaging, Git commit, or Git push was performed for this entry.
 
+## 2026-07-07 16:50:27 +08:00 - Add Beginner Chinese User Manual
+
+### Task Objective
+
+Implement the current-plan supplementary documentation deliverable by adding a detailed Chinese user manual for beginner graduate students.
+
+### Added Files
+
+- `docs/user_manual_zh.md`
+
+### Modified Files
+
+- `README.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added a self-contained Chinese user manual covering software scope, quick start, installation, data preparation, each GUI tab, plotting, q/display-x conversion, model-free analysis, batch comparison, project/output pages, templates, settings, advanced interfaces, workflow examples, FAQ, checklist, terminology, method boundaries, and appendices.
+- Added README links to the Chinese manual in both English and Simplified Chinese sections.
+- Updated developer notes to require keeping `docs/user_manual_zh.md` synchronized with UI labels, q-range behavior, outputs, settings, and method limitations.
+
+### Reason
+
+The current plan required a beginner-facing Chinese manual that lets a new materials research student follow the software workflow without reading source code or relying only on the concise README.
+
+### How To Run
+
+No runtime command is needed for this documentation-only change.
+
+### Generated Output Files
+
+- No experimental data, processed data, figures, packages, or build artifacts were generated.
+
+### How To Check Success
+
+```powershell
+Test-Path docs\user_manual_zh.md
+Select-String -Path README.md -Encoding UTF8 -Pattern "docs/user_manual_zh.md","使用手册","User Manual"
+Select-String -Path docs\user_manual_zh.md -Encoding UTF8 -Pattern "SAS Curve Analyzer 使用手册","q 范围与坐标变换","无模型分析详解","常见问题与排错","术语表"
+```
+
+### Notes And Risks
+
+- This is a documentation-only change.
+- The manual describes current implemented UI behavior. Future Supplement Plan features such as import preview, sequence table, figure export presets, reproducible export manifest, and layered errors are not described as completed features.
+- No source code, raw experimental data, tests, packaging, Git commit, or Git push were changed or run for this entry.
+
+## 2026-07-07 17:00:08 +08:00 - Add Project Lifecycle Menu And Dirty-State Tracking
+
+### Task Objective
+
+Implement the first broader reliability/reproducibility current-plan item: project lifecycle management for new, open, save, save-as, and unsaved-change handling.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/project.py`
+- `app/ui/main_window.py`
+- `app/ui/export_tab.py`
+- `app/ui/analysis_tab.py`
+- `app/ui/batch_tab.py`
+- `app/ui/records_tab.py`
+- `tests/test_project.py`
+- `README.md`
+- `docs/user_manual_zh.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added in-memory `ProjectState.revision` tracking for project mutations.
+- Added `项目` menu with `新建项目`, `打开项目...`, `保存项目`, and `另存为项目...`.
+- Added `MainWindow.current_project_folder`, saved revision tracking, project dirty detection, save/open/new helpers, and title-bar `*` marker for unsaved changes.
+- Added visible-window close confirmation when project changes are unsaved.
+- Routed export-page project saving through `MainWindow.save_project_to_folder()` so menu save and export-page save use the same lifecycle logic.
+- Refreshed title dirty state after analysis, batch operations, formal-record changes, and export-history mutations.
+- Added tests for revision tracking, save/open lifecycle, dirty-state behavior, and GUI restoration after opening a saved project.
+- Updated README, Chinese manual, and developer notes for project lifecycle behavior.
+
+### Reason
+
+The project previously had project serialization functions and an export-page save button, but did not provide a complete user-facing lifecycle with open/save/save-as/new controls or unsaved-change protection.
+
+### How To Run
+
+```powershell
+python -m pip install -r requirements.txt
+python main.py
+```
+
+Use the `项目` menu for project lifecycle operations.
+
+### Generated Output Files
+
+- No experimental data, processed data, figures, packages, or build artifacts were generated.
+- Manual testing of save/open will generate a chosen project folder containing `project.json` and `curves/*.json`.
+
+### How To Check Success
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests/test_project.py tests/test_ui_style.py -q
+python -m compileall -q main.py app\core app\ui
+```
+
+### Notes And Risks
+
+- `ProjectState.revision` is in-memory only and is not serialized to project files.
+- Close confirmation is skipped for unshown/offscreen windows so automated tests do not block; visible user windows still prompt when dirty.
+- Direct list mutations outside `ProjectState` add methods should call `MainWindow.mark_project_dirty()` or use an add method.
+- No raw experimental data were modified.
+- No packaging, Git commit, or Git push was performed for this entry.
+
+## 2026-07-07 17:05:30 +08:00 - Add Import Preview And Diagnostics
+
+### Task Objective
+
+Implement the second broader reliability/reproducibility current-plan item: import-before-preview and diagnostics for single-curve files.
+
+### Added Files
+
+- `app/core/import_preview.py`
+- `tests/test_import_preview.py`
+
+### Modified Files
+
+- `app/ui/import_tab.py`
+- `README.md`
+- `docs/user_manual_zh.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added `ImportPreview` and `preview_curve_file()` to read selected files, infer or apply current q/I/error columns, and compute non-destructive diagnostics.
+- Added `format_import_preview()` for plain-text GUI display.
+- Added import-page `预览/诊断当前文件` button and automatic preview after file selection.
+- Preview reports file status, columns, first rows, q/I ranges, NaN counts, duplicate q count, non-positive q/intensity counts, error-column invalid counts, and importability messages.
+- Updated README, Chinese manual, and developer notes for the new preview workflow and non-mutating behavior.
+- Added tests for normal CSV, missing required columns, NaN/duplicate/negative/error warnings, and empty/comment-only files.
+
+### Reason
+
+The project previously attempted column inference after selecting a file, but did not give beginner users a visible pre-import diagnosis explaining whether the current column mapping was usable and which downstream steps might be affected.
+
+### How To Run
+
+```powershell
+python -m pip install -r requirements.txt
+python main.py
+```
+
+Use `数据导入` → `选择数据文件`; the preview runs automatically. Use `预览/诊断当前文件` after manually editing column names.
+
+### Generated Output Files
+
+- No experimental data, processed data, figures, packages, or build artifacts were generated.
+
+### How To Check Success
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests/test_import_preview.py tests/test_io.py tests/test_batch_import.py tests/test_ui_style.py -q
+python -m compileall -q main.py app\core app\ui
+```
+
+### Notes And Risks
+
+- Preview/diagnostics are read-only. They do not sort, delete rows, clip negative intensities, add offsets, or modify original files.
+- `Warning` means the file can still be imported, but later plotting or analysis may filter points or hide error bars.
+- No raw experimental data were modified.
+- No packaging, Git commit, or Git push was performed for this entry.
+
+## 2026-07-07 17:11:50 +08:00 - Add Analysis q-Range Preflight
+
+### Task Objective
+
+Implement the third broader reliability/reproducibility current-plan item: model-free analysis preflight checks for the selected raw q range.
+
+### Added Files
+
+- `app/core/analysis_preflight.py`
+- `tests/test_analysis_preflight.py`
+
+### Modified Files
+
+- `app/ui/analysis_tab.py`
+- `tests/test_ui_style.py`
+- `README.md`
+- `docs/user_manual_zh.md`
+- `docs/method_notes.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added `AnalysisPreflight`, `check_analysis_preflight()`, and `format_analysis_preflight()`.
+- Added analysis-page `检查当前 q 范围` button.
+- Automatically runs preflight before standard `运行分析`.
+- Stops analysis when preflight severity is `error`.
+- Shows preflight summary with analysis results when severity is `ok` or `warning`.
+- Checks selected curve availability, finite raw q range, non-negative raw q, `q_min < q_max`, points in range, finite points, positive q points, positive intensity points, log-usable points, excluded points, minimum method-specific point counts, and selected method caveats.
+- Updated README, Chinese manual, method notes, developer notes, CHANGELOG, and tests.
+
+### Reason
+
+Users needed a clear pre-analysis explanation when selected q ranges were empty, reversed, too small, or invalid for log-based analysis, especially when display x ranges such as `ln q` can differ from raw physical q ranges.
+
+### How To Run
+
+```powershell
+python -m pip install -r requirements.txt
+python main.py
+```
+
+Use `无模型分析` → `检查当前 q 范围` before `运行分析`.
+
+### Generated Output Files
+
+- No experimental data, processed data, figures, packages, or build artifacts were generated.
+
+### How To Check Success
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests/test_analysis_preflight.py tests/test_ui_style.py tests/test_guinier.py tests/test_power_law.py -q
+python -m compileall -q main.py app\core app\ui
+```
+
+### Notes And Risks
+
+- Preflight is a minimum numerical/input check. It does not select the best scientific interval and does not prove method validity.
+- `warning` severity still allows analysis to run; `error` severity blocks standard analysis until the q range or data issue is corrected.
+- No raw experimental data were modified.
+- No packaging, Git commit, or Git push was performed for this entry.
+
+## 2026-07-07 17:17:52 +08:00 - Add Reproducible Export Bundle Metadata
+
+### Task Objective
+
+Implement the fourth broader reliability/reproducibility current-plan item: strengthen complete analysis bundles with manifest, README, settings snapshot, and stable warnings metadata.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/export.py`
+- `app/ui/export_tab.py`
+- `tests/test_export.py`
+- `README.md`
+- `docs/user_manual_zh.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added `manifest.json` to complete analysis bundles.
+- Added `README_export.md` explaining bundle purpose, file roles, manual review requirements, warnings, and data safety.
+- Added `settings_snapshot.json` with export-time application settings.
+- Made `bundle_warnings.txt` a stable bundle output even when no bundle-level warnings exist.
+- Manifest now records software metadata, project counts, input curve metadata and source hash when available, analyses, comparisons, settings snapshot link, warnings, and output file names.
+- GUI bundle export now passes comparison results and current settings into the bundle exporter.
+- Added regression coverage for manifest, README_export, settings snapshot, and warnings output.
+- Updated README, Chinese manual, developer notes, and CHANGELOG.
+
+### Reason
+
+The complete analysis bundle previously exported useful tables and reports, but did not include enough metadata for a future reader to audit inputs, settings, outputs, skipped optional files, and warning state from a single package.
+
+### How To Run
+
+```powershell
+python -m pip install -r requirements.txt
+python main.py
+```
+
+Use `项目与输出` → `导出报告` → `导出完整分析包`.
+
+### Generated Output Files
+
+When the user exports a bundle, the selected output folder now includes:
+
+- `manifest.json`
+- `README_export.md`
+- `settings_snapshot.json`
+- `bundle_warnings.txt`
+
+No files were generated during this code change except temporary pytest outputs.
+
+### How To Check Success
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests/test_export.py tests/test_export_deep_analysis.py tests/test_ui_style.py -q
+python -m compileall -q main.py app\core app\ui
+```
+
+### Notes And Risks
+
+- The bundle structure remains mostly flat in this pass to avoid a broad export-directory migration.
+- Source file hashes are recorded only when the original source path still exists locally.
+- Exporting a bundle does not modify original experimental data or imported curve arrays.
+- No packaging, Git commit, or Git push was performed for this entry.
+
+## 2026-07-07 17:23:43 +08:00 - Add Batch Sequence Management Table
+
+### Task Objective
+
+Implement the fifth broader reliability/reproducibility current-plan item: a batch sequence management table for reviewing in situ/time-series curve order and metadata.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/batch.py`
+- `app/ui/batch_tab.py`
+- `tests/test_batch.py`
+- `tests/test_ui_style.py`
+- `README.md`
+- `docs/user_manual_zh.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added `build_sequence_index()` and `export_sequence_index_csv()`.
+- Added `SEQUENCE_INDEX_COLUMNS`.
+- Added read-only sequence management table to `批量比较`.
+- Added buttons: `刷新序列表`, `按序列顺序选择全部`, `从选中行建组`, and `导出序列索引 CSV`.
+- Table rows show sequence/project order, curve ID/name, source file/stem, series/frame metadata, units, point count, q range, and warnings.
+- Warnings report q grid mismatch relative to the first curve, non-finite intensity, non-positive intensity, or no finite q.
+- Added tests for metadata rows, no-metadata rows, q-grid warning, CSV export, and UI table/buttons.
+- Updated README, Chinese manual, developer notes, and CHANGELOG.
+
+### Reason
+
+Batch import already preserved sequence metadata, but users needed a direct table for checking which files were imported, whether order/frame metadata looked correct, and which curves had q-range or warning issues.
+
+### How To Run
+
+```powershell
+python -m pip install -r requirements.txt
+python main.py
+```
+
+Use `批量比较` → `刷新序列表` and optionally `导出序列索引 CSV`.
+
+### Generated Output Files
+
+- No experimental data, processed data, figures, packages, or build artifacts were generated by this implementation.
+- Using the new export button writes a user-selected `sequence_index.csv`.
+
+### How To Check Success
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests/test_batch.py tests/test_batch_import.py tests/test_ui_style.py -q
+python -m compileall -q main.py app\core app\ui
+```
+
+### Notes And Risks
+
+- The sequence table is read-only. It does not insert, smooth, delete, re-order, or reinterpret curve data.
+- q grid mismatch warnings are audit hints; they do not automatically interpolate or modify curves.
+- No raw experimental data were modified.
+- No packaging, Git commit, or Git push was performed for this entry.
+
+## 2026-07-07 17:27:57 +08:00 - Add Figure Export Presets
+
+### Task Objective
+
+Implement the sixth broader reliability/reproducibility current-plan item: lightweight scientific figure export presets.
+
+### Added Files
+
+- `app/core/figure_export.py`
+- `tests/test_figure_export.py`
+
+### Modified Files
+
+- `app/ui/plotting_tab.py`
+- `tests/test_ui_style.py`
+- `README.md`
+- `docs/user_manual_zh.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added `FIGURE_EXPORT_PRESETS` for screen preview, presentation, and draft-publication output.
+- Added safe figure filename generation and preset-based Matplotlib figure export.
+- Added plotting-page preset selector, format selector, and `Export current figure` button.
+- Export uses current plot type, current curve, axis limits, error bars, d-axis setting, and selected preset.
+- Figure exports write project history records with curve ID, plot type, preset, format, path, and x-axis limits.
+- Added tests for preset completeness, safe filenames, file writing, UI controls, and no-current-curve failure message.
+- Updated README, Chinese manual, developer notes, and CHANGELOG.
+
+### Reason
+
+Users needed stable, low-friction image outputs for screen preview, group meetings, and manuscript drafts without turning the application into a full figure-design tool.
+
+### How To Run
+
+```powershell
+python -m pip install -r requirements.txt
+python main.py
+```
+
+Use `曲线绘图` → select preset/format → `Export current figure`.
+
+### Generated Output Files
+
+- No experimental data, processed data, figures, packages, or build artifacts were generated by this implementation.
+- Using the new button writes a user-selected `.png`, `.svg`, or `.pdf` figure.
+
+### How To Check Success
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests/test_figure_export.py tests/test_plotting.py tests/test_ui_style.py -q
+python -m compileall -q main.py app\core app\ui
+```
+
+### Notes And Risks
+
+- Presets are intended for stable defaults, not final journal layout or graphic design.
+- Applying a preset adjusts the current Matplotlib figure styling before saving.
+- No raw experimental data were modified.
+- No packaging, Git commit, or Git push was performed for this entry.
+
 ## 2026-07-07 15:26:02 +08:00 - Negative-intensity settings and model catalog completeness
 
 ### Task Objective
@@ -749,5 +1209,321 @@ python -m compileall -q main.py app\core app\ui
 
 - Wider slight-negative thresholds can hide data-quality problems. The settings only change validation classification; they do not modify intensities and do not allow non-positive values into log analysis.
 - Model catalog entries are transparency notes, not proof that a model applies.
+- No raw experimental data were modified.
+- No packaging, Git commit, or Git push was performed for this entry.
+
+## 2026-07-07 15:42:23 +08:00 - Add MIT License
+
+### Task Objective
+
+Add a standard MIT License to the standalone SAS Curve Analyzer project and update README license labeling.
+
+### Added Files
+
+- `LICENSE`
+
+### Modified Files
+
+- `README.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added standard MIT License text.
+- Set copyright line to `Copyright (c) 2026 wkguoo`.
+- Updated README license line to `License: MIT License. See LICENSE.`
+
+### Reason
+
+The project previously had no license file and README still showed `License: to be added.`
+
+### How To Run
+
+No runtime command is needed for this documentation-only change.
+
+### Generated Output Files
+
+- No experimental data, processed data, figures, packages, or build artifacts were generated.
+
+### How To Check Success
+
+```powershell
+Test-Path LICENSE
+Select-String -Path LICENSE -Pattern "MIT License","Copyright \(c\) 2026 wkguoo","THE SOFTWARE IS PROVIDED"
+Select-String -Path README.md -Pattern "MIT License","LICENSE"
+```
+
+### Notes And Risks
+
+- This is a documentation/license-only change.
+- No source code, raw experimental data, tests, packaging, Git commit, or Git push were changed or run for this entry.
+
+## 2026-07-07 15:46:04 +08:00 - Add README Language Navigation And Badges
+
+### Task Objective
+
+Add simple English/Simplified Chinese navigation and lightweight README badges, including the MIT License badge.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `README.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added top README language navigation: `[English](#english) | [简体中文](#简体中文)`.
+- Added static shields.io badges for `status active`, `python 3.x`, `platform Windows`, and `license MIT`.
+- Added `## English` heading so the existing English README content has a stable anchor.
+- Added a concise `## 简体中文` section with project purpose, main features, quick start, and usage cautions.
+
+### Reason
+
+The README top area needed to match the requested bilingual navigation and simple badge style, and the existing MIT License status needed to be visible in the badge row.
+
+### How To Run
+
+No runtime command is needed for this documentation-only change.
+
+### Generated Output Files
+
+- No experimental data, processed data, figures, packages, or build artifacts were generated.
+
+### How To Check Success
+
+```powershell
+Select-String -Path README.md -Pattern "\[English\]\(#english\)","\[简体中文\]\(#简体中文\)","status-active","python-3.x","platform-Windows","license-MIT","## English","## 简体中文"
+Select-String -Path LICENSE -Pattern "MIT License"
+git diff -- README.md CHANGELOG.md LICENSE
+```
+
+### Notes And Risks
+
+- This is a README/CHANGELOG-only documentation update.
+- Existing source code, raw experimental data, tests, packaging, Git commit, and Git push were not changed or run for this entry.
+
+## 2026-07-07 16:39:20 +08:00 - Link Plotting And Model-Free Analysis Workflow
+
+### Task Objective
+
+Implement the current-plan workflow improvements for plotting coordinates, plot/analysis navigation, transformed x-range conversion, and top-level tab hierarchy.
+
+### Added Files
+
+- `app/core/method_mapping.py`
+- `tests/test_method_mapping.py`
+
+### Modified Files
+
+- `app/core/plotting.py`
+- `app/ui/plotting_tab.py`
+- `app/ui/analysis_tab.py`
+- `app/ui/main_window.py`
+- `tests/test_plotting.py`
+- `tests/test_ui_style.py`
+- `README.md`
+- `docs/method_notes.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Moved plotting cursor/current coordinate readout into a dedicated row separate from axis range controls.
+- Added centralized `PLOT_TO_ANALYSIS` and `ANALYSIS_TO_PLOT` mappings.
+- Added plotting-page action to send linked views to model-free analysis.
+- Added analysis-page action to show the linked plot view.
+- Added `display_x_range_to_q_range()` so transformed display x ranges such as `ln q` and Guinier `q²` can be converted back to raw q.
+- Added analysis-page action to read current plotting x-limits and fill positive raw `q_min/q_max`.
+- Grouped `历史与正式记录`, `导出报告`, and `分析模板` under the new `项目与输出` nested tab while preserving existing tab object attributes.
+- Updated tests and documentation for linked workflow, transformed range semantics, and nested tabs.
+
+### Reason
+
+The previous GUI made long coordinate readouts compete with axis controls, required manual switching between related plot and analysis views, did not provide a clear path from transformed display x ranges back to physical q ranges, and kept lower-frequency project/output pages at the same top-level priority as the main workflow.
+
+### How To Run
+
+```powershell
+python -m pip install -r requirements.txt
+python main.py
+```
+
+### Generated Output Files
+
+- No experimental data, processed data, figures, packages, or build artifacts were generated.
+
+### How To Check Success
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests/test_plotting.py tests/test_method_mapping.py tests/test_ui_style.py -q
+python -m compileall -q main.py app\core app\ui
+```
+
+### Notes And Risks
+
+- Raw analysis `q_min/q_max` still represent physical q and do not accept negative values.
+- Negative values are accepted only as transformed display coordinates such as `ln q`; they are converted to positive raw q before analysis.
+- This pass implements the first current-plan GUI workflow section. The supplementary beginner manual and broader reliability/reproducibility enhancement plan remain follow-up work unless implemented in a later pass.
+- No raw experimental data were modified.
+- No packaging, Git commit, or Git push was performed for this entry.
+
+## 2026-07-07 21:26:07 +08:00 - Review-Fix Import Preview, Plot Range Conversion, And Project Save Prompts
+
+### Task Objective
+
+Execute `.ai-bridge/current-plan.md` targeted review fixes before commit/push, without adding new SAS algorithms or modifying raw experimental data.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/import_preview.py`
+- `app/core/plotting.py`
+- `app/ui/import_tab.py`
+- `app/ui/analysis_tab.py`
+- `app/ui/main_window.py`
+- `app/ui/export_tab.py`
+- `app/ui/batch_tab.py`
+- `app/ui/plotting_tab.py`
+- `tests/test_import_preview.py`
+- `tests/test_plotting.py`
+- `tests/test_project.py`
+- `tests/test_ui_style.py`
+- `README.md`
+- `docs/user_manual_zh.md`
+- `docs/developer_notes.md`
+- `docs/method_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added explicit `q_unit` and `intensity_unit` parameters to import preview, with priority for UI-provided units, fallback to inferred units, then documented safe defaults.
+- Passed current import-page unit fields into preview diagnostics.
+- Added `display_x_limits_to_q_range_for_curve()` to clamp Matplotlib display x-limits to the selected curve's valid display range before converting back to positive raw q.
+- Updated analysis-page plot-range conversion to preserve q inputs on failure and report original xlim, clipped display range, raw q range, plot type, and clipping status.
+- Replaced dirty-project discard confirmation with a shared save / discard / cancel flow for new, open, and close operations.
+- Renamed the export-page project save button to `项目另存为...` and documented it as an auxiliary project-save entry.
+- Made sequence-index CSV export default to `settings.default_export_dir`.
+- Refreshed the plotting tab after preset figure export so export styling does not persist in the current screen plot.
+- Updated docs to keep fact-only message wording aligned with code and tests, and documented `project_save` as audit history.
+
+### Reason
+
+The review plan identified submission-blocking risks: import preview units could contradict UI inputs, Matplotlib autopadding could break valid q-range conversion, unsaved project prompts could only discard/cancel, and documentation needed to match the fact-only message policy.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python main.py
+```
+
+### Generated Output Files
+
+- `.ai-bridge/implementation-diff.patch` will be regenerated after verification.
+- No experimental data, processed data, figures, packages, or build artifacts were generated by this implementation.
+
+### How To Check Success
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests/test_import_preview.py tests/test_plotting.py tests/test_project.py tests/test_user_messages.py tests/test_ui_style.py -q
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest -q
+python -m compileall -q main.py app\core app\ui
+```
+
+### Notes And Risks
+
+- `save_project()` and `save_project_as_dialog()` now return `True` or `False`; Qt action triggers ignore the return value.
+- Display x clipping uses the current selected curve and positive raw q for final analysis ranges.
+- No raw experimental data were modified.
+- No packaging, Git commit, or Git push was performed for this entry.
+
+## 2026-07-07 20:28:35 +08:00 - Add Fact-Only Layered User Messages
+
+### Task Objective
+
+Implement the current-plan layered error-message foundation while honoring the latest user requirement that messages show objective facts only and do not include action-guidance wording.
+
+### Added Files
+
+- `app/core/user_messages.py`
+- `tests/test_user_messages.py`
+
+### Modified Files
+
+- `app/core/analysis_preflight.py`
+- `app/core/import_preview.py`
+- `app/ui/import_tab.py`
+- `app/ui/analysis_tab.py`
+- `app/ui/plotting_tab.py`
+- `app/ui/export_tab.py`
+- `app/ui/main_window.py`
+- `app/ui/advanced_tab.py`
+- `tests/test_analysis_preflight.py`
+- `tests/test_ui_style.py`
+- `README.md`
+- `docs/user_manual_zh.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added `UserMessage` and `format_user_message()` for fact-only layered messages.
+- Replaced common import, analysis, figure export, export, and project lifecycle failure paths with layered messages containing severity, observed result, original-data safety, objective facts, and technical details.
+- Removed preflight `next_actions` output and retained severity, counts, filtering facts, and method limitation messages.
+- Removed action-guidance labels from structured warning displays in analysis and advanced tabs.
+- Updated README, Chinese manual, developer notes, and tests for fact-only message behavior.
+
+### Reason
+
+The current plan required clearer user-facing error messages, and the latest user correction required those messages to avoid instruction-style action guidance and show objective facts instead.
+
+### How To Run
+
+```powershell
+python -m pip install -r requirements.txt
+python main.py
+```
+
+### Generated Output Files
+
+- No experimental data, processed data, figures, packages, or build artifacts were generated by this implementation.
+
+### How To Check Success
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests/test_user_messages.py tests/test_analysis_preflight.py tests/test_ui_style.py -q
+python -m compileall -q main.py app\core app\ui
+```
+
+### Notes And Risks
+
+- The messages keep technical exception details visible.
+- Message formatting is intentionally plain text for QTextEdit/status display and testability.
 - No raw experimental data were modified.
 - No packaging, Git commit, or Git push was performed for this entry.

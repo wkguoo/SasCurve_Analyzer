@@ -5,9 +5,9 @@ from pathlib import Path
 from PySide6.QtWidgets import QFileDialog, QTextEdit, QVBoxLayout, QWidget
 
 from app.core.export import export_analysis_bundle, export_curve_csv, export_feature_table, export_origin_long_csv, export_origin_matrix_csv, origin_long_guide_path
-from app.core.project import save_project
 from app.core.records import create_history_record
 from app.core.report import generate_markdown_report
+from app.core.user_messages import exception_detail, format_user_message, UserMessage
 from app.ui.style import action_button
 
 
@@ -58,10 +58,10 @@ class ExportTab(QWidget):
         )
         export_bundle_button.clicked.connect(self.export_analysis_bundle)
         save_project_button = action_button(
-            "保存项目文件夹",
+            "项目另存为...",
             role="primary",
             tooltip="保存可复现项目。",
-            status_tip="主操作：写出 project.json 和内部曲线数据，便于下次恢复项目状态。",
+            status_tip="辅助入口：与项目菜单共用 MainWindow.save_project_to_folder()，写出 project.json 和内部曲线数据。",
         )
         save_project_button.clicked.connect(self.save_project_folder)
 
@@ -88,31 +88,91 @@ class ExportTab(QWidget):
         curve = self.main_window.current_curve()
         folder = self._choose_folder()
         if curve is None or folder is None:
-            self.output.setPlainText("请选择曲线和导出文件夹。")
+            self.output.setPlainText(
+                format_user_message(
+                    UserMessage(
+                        title="曲线 CSV 未导出",
+                        what_happened="当前曲线 CSV 导出没有执行。",
+                        facts=(
+                            f"current_curve is None: {curve is None}。",
+                            f"export folder is None: {folder is None}。",
+                        ),
+                        severity="warning",
+                    )
+                )
+            )
             return
-        path = export_curve_csv(curve, folder / f"{curve.name}_curve.csv")
+        try:
+            path = export_curve_csv(curve, folder / f"{curve.name}_curve.csv")
+        except Exception as exc:
+            self.output.setPlainText(
+                format_user_message(
+                    UserMessage(
+                        title="曲线 CSV 导出失败",
+                        what_happened="当前曲线没有写入 CSV 文件。",
+                        facts=(f"curve_id：{curve.curve_id}。", f"target_folder：{folder}。"),
+                        technical_detail=exception_detail(exc),
+                        severity="error",
+                    )
+                )
+            )
+            return
         self.main_window.project.add_history_record(
             create_history_record("export_curve_csv", input_ids=[curve.curve_id], parameters={"path": str(path), "format": "csv"})
         )
         self.main_window.records_tab.refresh()
+        self.main_window.mark_project_dirty()
         self.output.setPlainText(f"已导出: {path}")
 
     def export_feature_table(self) -> None:
         folder = self._choose_folder()
         if folder is None:
-            self.output.setPlainText("请选择导出文件夹。")
+            self.output.setPlainText("导出未执行：没有选择导出文件夹。")
             return
-        path = export_feature_table(self.main_window.project.curves, self.main_window.project.analysis_results, folder / "feature_table.csv")
+        try:
+            path = export_feature_table(self.main_window.project.curves, self.main_window.project.analysis_results, folder / "feature_table.csv")
+        except Exception as exc:
+            self.output.setPlainText(
+                format_user_message(
+                    UserMessage(
+                        title="feature_table.csv 导出失败",
+                        what_happened="项目特征表没有写入 CSV 文件。",
+                        facts=(
+                            f"curve_count：{len(self.main_window.project.curves)}。",
+                            f"analysis_count：{len(self.main_window.project.analysis_results)}。",
+                            f"target_folder：{folder}。",
+                        ),
+                        technical_detail=exception_detail(exc),
+                        severity="error",
+                    )
+                )
+            )
+            return
         self.main_window.project.add_history_record(create_history_record("export_feature_table", parameters={"path": str(path), "format": "csv"}))
         self.main_window.records_tab.refresh()
+        self.main_window.mark_project_dirty()
         self.output.setPlainText(f"已导出: {path}")
 
     def export_origin_long_table(self) -> None:
         folder = self._choose_folder()
         if folder is None:
-            self.output.setPlainText("请选择导出文件夹。")
+            self.output.setPlainText("导出未执行：没有选择导出文件夹。")
             return
-        path = export_origin_long_csv(self.main_window.project.curves, folder / "curves_long.csv")
+        try:
+            path = export_origin_long_csv(self.main_window.project.curves, folder / "curves_long.csv")
+        except Exception as exc:
+            self.output.setPlainText(
+                format_user_message(
+                    UserMessage(
+                        title="Origin 长表导出失败",
+                        what_happened="`curves_long.csv` 没有写入导出文件夹。",
+                        facts=(f"curve_count：{len(self.main_window.project.curves)}。", f"target_folder：{folder}。"),
+                        technical_detail=exception_detail(exc),
+                        severity="error",
+                    )
+                )
+            )
+            return
         guide_path = origin_long_guide_path(path)
         self.main_window.project.add_history_record(
             create_history_record(
@@ -121,14 +181,29 @@ class ExportTab(QWidget):
             )
         )
         self.main_window.records_tab.refresh()
+        self.main_window.mark_project_dirty()
         self.output.setPlainText(f"已导出 Origin 长表:\n{path}\n说明文档:\n{guide_path}")
 
     def export_origin_matrix_table(self) -> None:
         folder = self._choose_folder()
         if folder is None:
-            self.output.setPlainText("请选择导出文件夹。")
+            self.output.setPlainText("导出未执行：没有选择导出文件夹。")
             return
-        path, warnings = export_origin_matrix_csv(self.main_window.project.curves, folder / "curves_matrix.csv")
+        try:
+            path, warnings = export_origin_matrix_csv(self.main_window.project.curves, folder / "curves_matrix.csv")
+        except Exception as exc:
+            self.output.setPlainText(
+                format_user_message(
+                    UserMessage(
+                        title="Origin 矩阵表导出失败",
+                        what_happened="`curves_matrix.csv` 没有写入导出文件夹。",
+                        facts=(f"curve_count：{len(self.main_window.project.curves)}。", f"target_folder：{folder}。"),
+                        technical_detail=exception_detail(exc),
+                        severity="error",
+                    )
+                )
+            )
+            return
         self.main_window.project.add_history_record(
             create_history_record(
                 "export_origin_matrix_csv",
@@ -137,6 +212,7 @@ class ExportTab(QWidget):
             )
         )
         self.main_window.records_tab.refresh()
+        self.main_window.mark_project_dirty()
         if path is None:
             self.output.setPlainText("未导出 Origin 矩阵表:\n" + "\n".join(warnings))
         else:
@@ -145,33 +221,73 @@ class ExportTab(QWidget):
     def export_report(self) -> None:
         folder = self._choose_folder()
         if folder is None:
-            self.output.setPlainText("请选择导出文件夹。")
+            self.output.setPlainText("导出未执行：没有选择导出文件夹。")
             return
-        path = generate_markdown_report(
-            folder / "sas_curve_analyzer_report.md",
-            project_name="sas_curve_analyzer",
-            curves=self.main_window.project.curves,
-            analyses=self.main_window.project.analysis_results,
-            history=self.main_window.project.history_records,
-            formal_records=self.main_window.project.formal_records,
-        )
+        try:
+            path = generate_markdown_report(
+                folder / "sas_curve_analyzer_report.md",
+                project_name="sas_curve_analyzer",
+                curves=self.main_window.project.curves,
+                analyses=self.main_window.project.analysis_results,
+                history=self.main_window.project.history_records,
+                formal_records=self.main_window.project.formal_records,
+            )
+        except Exception as exc:
+            self.output.setPlainText(
+                format_user_message(
+                    UserMessage(
+                        title="Markdown 报告导出失败",
+                        what_happened="Markdown 报告没有写入导出文件夹。",
+                        facts=(
+                            f"curve_count：{len(self.main_window.project.curves)}。",
+                            f"analysis_count：{len(self.main_window.project.analysis_results)}。",
+                            f"target_folder：{folder}。",
+                        ),
+                        technical_detail=exception_detail(exc),
+                        severity="error",
+                    )
+                )
+            )
+            return
         self.main_window.project.add_history_record(create_history_record("export_markdown_report", parameters={"path": str(path), "format": "markdown"}))
         self.main_window.records_tab.refresh()
+        self.main_window.mark_project_dirty()
         self.output.setPlainText(f"已导出: {path}")
 
     def export_analysis_bundle(self) -> None:
         folder = self._choose_folder()
         if folder is None:
-            self.output.setPlainText("请选择导出文件夹。")
+            self.output.setPlainText("导出未执行：没有选择导出文件夹。")
             return
-        outputs = export_analysis_bundle(
-            self.main_window.project.curves,
-            self.main_window.project.analysis_results,
-            folder,
-            project_name="sas_curve_analyzer",
-            history=self.main_window.project.history_records,
-            formal_records=self.main_window.project.formal_records,
-        )
+        try:
+            outputs = export_analysis_bundle(
+                self.main_window.project.curves,
+                self.main_window.project.analysis_results,
+                folder,
+                project_name="sas_curve_analyzer",
+                comparisons=self.main_window.project.comparison_results,
+                history=self.main_window.project.history_records,
+                formal_records=self.main_window.project.formal_records,
+                settings=self.main_window.settings,
+            )
+        except Exception as exc:
+            self.output.setPlainText(
+                format_user_message(
+                    UserMessage(
+                        title="完整分析包导出失败",
+                        what_happened="完整分析包没有完成写入。",
+                        facts=(
+                            f"curve_count：{len(self.main_window.project.curves)}。",
+                            f"analysis_count：{len(self.main_window.project.analysis_results)}。",
+                            f"comparison_count：{len(self.main_window.project.comparison_results)}。",
+                            f"target_folder：{folder}。",
+                        ),
+                        technical_detail=exception_detail(exc),
+                        severity="error",
+                    )
+                )
+            )
+            return
         warnings = []
         warning_path = outputs.get("bundle_warnings")
         if warning_path is not None:
@@ -180,6 +296,7 @@ class ExportTab(QWidget):
             create_history_record("export_analysis_bundle", parameters={"path": str(folder), "files": [str(path) for path in outputs.values()]}, warnings=warnings)
         )
         self.main_window.records_tab.refresh()
+        self.main_window.mark_project_dirty()
         message = "已导出完整分析包:\n" + "\n".join(str(path) for path in outputs.values())
         if warnings:
             message += "\n\nwarnings:\n" + "\n".join(warnings)
@@ -188,11 +305,25 @@ class ExportTab(QWidget):
     def save_project_folder(self) -> None:
         folder = self._choose_folder()
         if folder is None:
-            self.output.setPlainText("请选择项目保存文件夹。")
+            self.output.setPlainText("项目保存未执行：没有选择项目保存文件夹。")
             return
-        expected_path = folder / "project.json"
-        self.main_window.project.add_history_record(create_history_record("export_project_save", parameters={"path": str(expected_path), "format": "project_folder"}))
-        path = save_project(self.main_window.project, folder)
-        self.main_window.records_tab.refresh()
+        try:
+            path = self.main_window.save_project_to_folder(folder)
+        except Exception as exc:
+            self.output.setPlainText(
+                format_user_message(
+                    UserMessage(
+                        title="项目保存失败",
+                        what_happened="当前项目没有写入所选项目文件夹。",
+                        facts=(
+                            f"curve_count：{len(self.main_window.project.curves)}。",
+                            f"target_folder：{folder}。",
+                        ),
+                        technical_detail=exception_detail(exc),
+                        severity="error",
+                    )
+                )
+            )
+            return
         self.output.setPlainText(f"项目已保存: {path}")
 

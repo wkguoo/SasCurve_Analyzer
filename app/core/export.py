@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,7 @@ from app.core.analysis_schema import (
 from app.core.data_model import AnalysisResult, ComparisonResult, CurveData
 from app.core.plotting import create_curve_figure
 from app.core.report import generate_markdown_report
+from app.core.settings import AppSettings
 
 ORIGIN_LONG_COLUMNS = ["series_id", "frame_index", "sequence_order", "curve_id", "curve_name", "source_stem", "q", "I", "error", "q_unit", "intensity_unit"]
 ORIGIN_LONG_COLUMN_GUIDE = [
@@ -97,6 +100,84 @@ def _json_default(value: Any):
     if hasattr(value, "tolist"):
         return value.tolist()
     return str(value)
+
+
+def _sha256_or_none(path: str | None) -> str | None:
+    if not path:
+        return None
+    source = Path(path)
+    if not source.exists() or not source.is_file():
+        return None
+    digest = hashlib.sha256()
+    with source.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _curve_manifest_entry(curve: CurveData) -> dict[str, Any]:
+    finite_q = curve.q[np.isfinite(curve.q)]
+    return {
+        "curve_id": curve.curve_id,
+        "curve_name": curve.name,
+        "source_file": curve.source_file,
+        "source_file_hash": _sha256_or_none(curve.source_file),
+        "q_unit": curve.q_unit,
+        "intensity_unit": curve.intensity_unit,
+        "point_count": int(curve.q.size),
+        "q_min": None if finite_q.size == 0 else float(np.min(finite_q)),
+        "q_max": None if finite_q.size == 0 else float(np.max(finite_q)),
+        "metadata": curve.metadata,
+    }
+
+
+def _bundle_readme_text(outputs: dict[str, Path], warnings: list[str]) -> str:
+    lines = [
+        "# SAS Curve Analyzer Export Bundle",
+        "",
+        "This folder is a reproducible export package generated from the current SAS Curve Analyzer project state.",
+        "",
+        "## Data Safety",
+        "",
+        "The export process does not modify original experimental data or imported curve arrays. It writes derived tables, reports, metadata, and warnings into this export folder.",
+        "",
+        "## Files",
+        "",
+    ]
+    for name, path in sorted(outputs.items()):
+        lines.append(f"- `{path.name}`: `{name}` output.")
+    lines.extend(
+        [
+            "",
+            "## Recommended Use",
+            "",
+            "- Use `curves_long.csv` in Origin, Excel, or Python for grouped curve plotting.",
+            "- Use `curves_matrix.csv` only when it exists; it is skipped when q grids differ.",
+            "- Use `analysis_summary.csv`, `fit_parameters.csv`, and `feature_table.csv` for tables.",
+            "- Use `analysis_full.json` and `manifest.json` for reproducible audit trails.",
+            "- Use `report.md` for a readable project summary.",
+            "",
+            "## Manual Review Required",
+            "",
+            "Check q units, q ranges, warnings, method assumptions, and whether log analyses excluded non-positive points before using results in reports or manuscripts.",
+            "",
+            "## Warnings",
+            "",
+        ]
+    )
+    if warnings:
+        lines.extend(f"- {warning}" for warning in warnings)
+    else:
+        lines.append("- No bundle-level warnings were recorded.")
+    return "\n".join(lines) + "\n"
+
+
+def _settings_snapshot(settings: AppSettings | dict[str, Any] | None) -> dict[str, Any]:
+    if settings is None:
+        return {}
+    if isinstance(settings, AppSettings):
+        return asdict(settings)
+    return dict(settings)
 
 
 def export_curve_csv(curve: CurveData, path: str | Path) -> Path:
@@ -459,12 +540,15 @@ def export_analysis_bundle(
     folder: str | Path,
     *,
     project_name: str = "sas_curve_analyzer",
+    comparisons: list[ComparisonResult] | None = None,
     history=None,
     formal_records=None,
+    settings: AppSettings | dict[str, Any] | None = None,
 ) -> dict[str, Path]:
     target = Path(folder)
     target.mkdir(parents=True, exist_ok=True)
     outputs: dict[str, Path] = {}
+    bundle_warnings: list[str] = []
 
     full_json = target / "analysis_full.json"
     full_json.write_text(json.dumps([asdict(result) for result in analyses], ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
@@ -489,9 +573,7 @@ def export_analysis_bundle(
     if curves_matrix_csv is not None:
         outputs["curves_matrix"] = curves_matrix_csv
     if _matrix_warnings:
-        warning_path = target / "bundle_warnings.txt"
-        warning_path.write_text("\n".join(_matrix_warnings) + "\n", encoding="utf-8")
-        outputs["bundle_warnings"] = warning_path
+        bundle_warnings.extend(_matrix_warnings)
 
     table_specs = {
         "fit_curves": EXPORT_TABLE_FIT_CURVES,
@@ -516,5 +598,64 @@ def export_analysis_bundle(
         formal_records=list(formal_records or []),
     )
     outputs["report"] = report_path
+
+    settings_path = target / "settings_snapshot.json"
+    settings_path.write_text(json.dumps(_settings_snapshot(settings), ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+    outputs["settings_snapshot"] = settings_path
+
+    warning_path = target / "bundle_warnings.txt"
+    warning_path.write_text(("\n".join(bundle_warnings) + "\n") if bundle_warnings else "No bundle-level warnings were recorded.\n", encoding="utf-8")
+    outputs["bundle_warnings"] = warning_path
+
+    manifest_path = target / "manifest.json"
+    readme_path = target / "README_export.md"
+    manifest_outputs = {**outputs, "manifest": manifest_path, "README_export": readme_path}
+    manifest = {
+        "software": {
+            "name": "SAS Curve Analyzer",
+            "version": "0.1.0",
+            "generated_at": pd.Timestamp.utcnow().isoformat(),
+            "python_version": sys.version.split()[0],
+        },
+        "project": {
+            "name": project_name,
+            "curve_count": len(curves),
+            "analysis_count": len(analyses),
+            "comparison_count": len(comparisons or []),
+            "history_record_count": len(list(history or [])),
+            "formal_record_count": len(list(formal_records or [])),
+        },
+        "inputs": [_curve_manifest_entry(curve) for curve in curves],
+        "analyses": [
+            {
+                "analysis_id": result.analysis_id,
+                "curve_id": result.curve_id,
+                "analysis_type": result.analysis_type,
+                "q_range": list(result.q_range),
+                "warnings": result.warnings,
+                "structured_warnings": result.structured_warnings,
+            }
+            for result in analyses
+        ],
+        "comparisons": [
+            {
+                "comparison_id": comparison.comparison_id,
+                "curve_a_id": comparison.curve_a_id,
+                "curve_b_id": comparison.curve_b_id,
+                "comparison_type": comparison.comparison_type,
+                "q_range": list(comparison.q_range),
+                "warnings": comparison.warnings,
+            }
+            for comparison in list(comparisons or [])
+        ],
+        "settings_snapshot": settings_path.name,
+        "warnings": bundle_warnings,
+        "outputs": {name: path.name for name, path in sorted(manifest_outputs.items())},
+    }
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+    outputs["manifest"] = manifest_path
+
+    readme_path.write_text(_bundle_readme_text(outputs, bundle_warnings), encoding="utf-8")
+    outputs["README_export"] = readme_path
     return outputs
 

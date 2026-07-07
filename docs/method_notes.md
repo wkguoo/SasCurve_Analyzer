@@ -43,7 +43,31 @@ When error bars are shown on log-intensity plots, the propagated error is `sigma
 
 Manual X/Y axis limits and quick full/low/mid/high q buttons only change the displayed axes. They do not modify `CurveData`, saved data, or analysis ranges. For transformed views, the X range is in display coordinates: q² for Guinier and ln q for log-log or log-q contribution plots. Cursor readout reports display coordinates and, where useful, approximate back-transformed q/I values.
 
+The plotting tab and model-free analysis tab are linked through a shared plot/analysis mapping. The link is user-triggered: selecting a plot type does not automatically change tabs, but the user can send supported plot views to the matching analysis or show the matching plot for a selected analysis.
+
+Analysis `q_min/q_max` values remain raw physical q ranges. Physical q must be positive for analysis-range conversion. Display coordinates can be negative when they are transformed values, for example `ln q < 0` when `0 < q < 1`. The GUI can read the current plot x-limits and convert them back to raw q before analysis:
+
+- raw-q plots: `q = x`;
+- log-log and log-q contribution plots: `q = exp(x)`;
+- Guinier plots: `q = sqrt(x)` because the display x-axis is q².
+
+If a transformed range cannot be converted to a positive increasing raw q range, the analysis tab reports the conversion error and does not change the raw q fields.
+
+When the source range comes from Matplotlib axis limits, the GUI first intersects the requested display x range with the current curve's valid display x range. This prevents automatic plot padding, such as a slightly negative raw-q or Guinier q² left edge, from invalidating an otherwise valid analysis interval. Negative `ln q` remains valid display x and is converted with `q = exp(x)`.
+
 The optional top axis `d = 2π/q` is available only when the plot X-axis is raw q. This d value is an approximate characteristic scale or correlation distance, not a particle diameter.
+
+## Analysis Preflight
+
+Before standard model-free analysis, the GUI can run a raw q-range preflight check. The preflight checks whether a curve is selected, `q_min < q_max`, raw q values are non-negative, the selected range contains enough finite points, and log-based methods have enough points with `q > 0` and `I(q) > 0`.
+
+Preflight severity is:
+
+- `ok`: the selected range passes minimum numerical checks.
+- `warning`: the analysis can run, but warnings such as filtered points, few peak points, finite-range invariant limits, or descriptive-only Kratky/Porod interpretation should be reviewed.
+- `error`: the analysis should not run until the q range or data issue is corrected.
+
+Preflight does not choose the best scientific interval and does not prove method validity. It only reports objective input facts, filtering counts, data-safety status, and method-boundary warnings.
 
 ## Guinier Analysis
 

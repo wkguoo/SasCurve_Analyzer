@@ -4,7 +4,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QCheckBox, QDoubleSpinBox, QGroupBox, QPushButton
+from PySide6.QtWidgets import QApplication, QCheckBox, QDoubleSpinBox, QGroupBox, QPushButton, QTableWidget, QTabWidget
 
 from app.core.data_model import CurveData
 from app.ui.main_window import MainWindow
@@ -83,6 +83,108 @@ def test_export_tab_exposes_origin_export_buttons() -> None:
 
         assert "导出 Origin 长表" in labels
         assert "导出 Origin 矩阵表" in labels
+        assert "项目另存为..." in labels
+        assert "保存项目文件夹" not in labels
+    finally:
+        window.close()
+
+
+def test_plot_coordinate_readout_has_independent_row() -> None:
+    _app()
+    window = MainWindow()
+    try:
+        assert window.plotting_tab.range_controls.indexOf(window.plotting_tab.cursor_label) == -1
+        assert window.plotting_tab.coordinate_row.indexOf(window.plotting_tab.cursor_label) >= 0
+        assert window.plotting_tab.cursor_label.wordWrap()
+        assert window.plotting_tab.current_x_limits() is None
+    finally:
+        window.close()
+
+
+def test_plotting_tab_exposes_figure_export_presets_and_handles_empty_export() -> None:
+    _app()
+    window = MainWindow()
+    try:
+        buttons = {button.text(): button for button in window.plotting_tab.findChildren(QPushButton)}
+
+        assert "Export current figure" in buttons
+        assert window.plotting_tab.figure_preset.count() == 3
+        assert window.plotting_tab.figure_format.count() == 3
+        buttons["Export current figure"].click()
+        assert "Figure export unavailable" in window.plotting_tab.messages.toPlainText()
+        assert "建议操作" not in window.plotting_tab.messages.toPlainText()
+    finally:
+        window.close()
+
+
+def test_plot_analysis_link_buttons_switch_tabs_and_types() -> None:
+    _app()
+    window = MainWindow()
+    try:
+        window.set_plot_type("loglog")
+        plot_buttons = {button.text(): button for button in window.plotting_tab.findChildren(QPushButton)}
+        plot_buttons["Use this view for analysis"].click()
+
+        assert window.tabs.currentWidget() is window.analysis_tab
+        assert window.analysis_tab.analysis_type.currentData() == "power_law"
+
+        window.set_analysis_type("guinier")
+        analysis_buttons = {button.text(): button for button in window.analysis_tab.findChildren(QPushButton)}
+        analysis_buttons["查看对应图"].click()
+
+        assert window.tabs.currentWidget() is window.plotting_tab
+        assert window.plotting_tab.plot_type.currentData() == "guinier"
+    finally:
+        window.close()
+
+
+def test_project_output_uses_nested_tabs_for_low_frequency_pages() -> None:
+    _app()
+    window = MainWindow()
+    try:
+        top_level_names = [window.tabs.tabText(index) for index in range(window.tabs.count())]
+        assert "历史与正式记录" not in top_level_names
+        assert "导出报告" not in top_level_names
+        assert "分析模板" not in top_level_names
+        assert "项目与输出" in top_level_names
+
+        assert isinstance(window.output_tabs, QTabWidget)
+        output_names = [window.output_tabs.tabText(index) for index in range(window.output_tabs.count())]
+        assert output_names == ["历史与正式记录", "导出报告", "分析模板"]
+    finally:
+        window.close()
+
+
+def test_batch_tab_exposes_sequence_management_table_and_buttons() -> None:
+    _app()
+    window = MainWindow()
+    try:
+        window.add_curve(
+            CurveData.create(
+                name="sample_00001",
+                q=[0.1, 0.2],
+                intensity=[1, 2],
+                metadata={"sequence_order": 0, "frame_label": "00001", "frame_index": 1},
+            )
+        )
+        window.add_curve(
+            CurveData.create(
+                name="sample_00002",
+                q=[0.1, 0.25],
+                intensity=[3, 4],
+                metadata={"sequence_order": 1, "frame_label": "00002", "frame_index": 2},
+            )
+        )
+        buttons = {button.text() for button in window.batch_tab.findChildren(QPushButton)}
+        tables = window.batch_tab.findChildren(QTableWidget)
+
+        assert "刷新序列表" in buttons
+        assert "按序列顺序选择全部" in buttons
+        assert "从选中行建组" in buttons
+        assert "导出序列索引 CSV" in buttons
+        assert tables
+        assert window.batch_tab.sequence_table.rowCount() == 2
+        assert window.batch_tab.sequence_rows[1]["frame_label"] == "00002"
     finally:
         window.close()
 
@@ -134,6 +236,20 @@ def test_deep_analysis_controls_are_visually_separated_from_standard_analysis() 
     try:
         groups = {group.title() for group in window.analysis_tab.findChildren(QGroupBox)}
         assert "深度分析参数" in groups
+    finally:
+        window.close()
+
+
+def test_analysis_tab_exposes_preflight_button() -> None:
+    _app()
+    window = MainWindow()
+    try:
+        buttons = {button.text(): button for button in window.analysis_tab.findChildren(QPushButton)}
+
+        assert "检查当前 q 范围" in buttons
+        buttons["检查当前 q 范围"].click()
+        assert "分析前 q 范围预检" in window.analysis_tab.output.toPlainText()
+        assert "当前没有选中的曲线" in window.analysis_tab.output.toPlainText()
     finally:
         window.close()
 

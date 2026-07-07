@@ -3,7 +3,13 @@ from __future__ import annotations
 import numpy as np
 
 from app.core.data_model import CurveData
-from app.core.plotting import create_curve_figure, format_plot_cursor_coordinates, transform_x_for_plot
+from app.core.plotting import (
+    create_curve_figure,
+    display_x_limits_to_q_range_for_curve,
+    display_x_range_to_q_range,
+    format_plot_cursor_coordinates,
+    transform_x_for_plot,
+)
 
 
 def test_log_plot_excludes_non_positive_intensity() -> None:
@@ -70,6 +76,66 @@ def test_transform_x_for_plot_matches_display_axis() -> None:
     assert np.allclose(transform_x_for_plot(q, "linear"), q)
     assert np.allclose(transform_x_for_plot(q, "guinier"), q**2)
     assert np.allclose(transform_x_for_plot(q, "loglog"), np.log(q))
+
+
+def test_display_x_range_to_q_range_inverts_display_axis() -> None:
+    assert np.allclose(display_x_range_to_q_range(np.log(0.01), np.log(0.1), "loglog"), (0.01, 0.1))
+    assert np.allclose(display_x_range_to_q_range(0.01, 0.04, "guinier"), (0.1, 0.2))
+    assert np.allclose(display_x_range_to_q_range(0.1, 0.2, "linear"), (0.1, 0.2))
+
+
+def test_display_x_range_to_q_range_rejects_invalid_raw_q() -> None:
+    try:
+        display_x_range_to_q_range(-1.0, 1.0, "linear")
+    except ValueError as exc:
+        assert "positive" in str(exc)
+    else:
+        raise AssertionError("negative raw q display range should fail")
+
+    try:
+        display_x_range_to_q_range(-1.0, 1.0, "guinier")
+    except ValueError as exc:
+        assert "q\u00b2" in str(exc)
+    else:
+        raise AssertionError("negative Guinier q-squared display range should fail")
+
+
+def test_display_x_limits_to_q_range_clips_linear_autopad() -> None:
+    curve = CurveData.create(name="test", q=[0.1, 0.2, 0.3], intensity=[10, 8, 6])
+
+    q_range, warnings = display_x_limits_to_q_range_for_curve(curve, -0.01, 0.31, "linear")
+
+    assert np.allclose(q_range, (0.1, 0.3))
+    assert warnings
+
+
+def test_display_x_limits_to_q_range_clips_guinier_negative_autopad() -> None:
+    curve = CurveData.create(name="test", q=[0.1, 0.2, 0.3], intensity=[10, 8, 6])
+
+    q_range, warnings = display_x_limits_to_q_range_for_curve(curve, -0.001, 0.091, "guinier")
+
+    assert np.allclose(q_range, (0.1, 0.3))
+    assert warnings
+
+
+def test_display_x_limits_to_q_range_loglog_negative_ln_is_valid() -> None:
+    curve = CurveData.create(name="test", q=[0.1, 0.2, 0.3], intensity=[10, 8, 6])
+
+    q_range, warnings = display_x_limits_to_q_range_for_curve(curve, np.log(0.12), np.log(0.28), "loglog")
+
+    assert np.allclose(q_range, (0.12, 0.28))
+    assert warnings == []
+
+
+def test_display_x_limits_to_q_range_errors_when_no_overlap() -> None:
+    curve = CurveData.create(name="test", q=[0.1, 0.2, 0.3], intensity=[10, 8, 6])
+
+    try:
+        display_x_limits_to_q_range_for_curve(curve, 1.0, 2.0, "linear")
+    except ValueError as exc:
+        assert "do not overlap" in str(exc)
+    else:
+        raise AssertionError("non-overlapping display range should fail")
 
 
 def test_cursor_coordinate_format_includes_back_transforms() -> None:

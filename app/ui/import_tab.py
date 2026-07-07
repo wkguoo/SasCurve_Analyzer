@@ -15,9 +15,11 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.batch_import import create_in_situ_group, import_in_situ_series, infer_curve_columns
+from app.core.import_preview import format_import_preview, preview_curve_file
 from app.core.io import load_curve
 from app.core.records import create_history_record
 from app.core.transforms import convert_q_unit
+from app.core.user_messages import exception_detail, format_user_message, UserMessage
 from app.ui.style import action_button, apply_help
 
 
@@ -81,6 +83,13 @@ class ImportTab(QWidget):
             status_tip="主操作：读取当前选择的数据文件，创建曲线并写入历史记录。",
         )
         import_button.clicked.connect(self.import_curve)
+        preview_button = action_button(
+            "预览/诊断当前文件",
+            role="secondary",
+            tooltip="导入前预览数据和基础诊断。",
+            status_tip="读取前几行、列映射、q/I 范围、NaN、重复 q、负强度和 error 异常；不会修改原始文件。",
+        )
+        preview_button.clicked.connect(self.refresh_import_preview)
         batch_button = action_button(
             "批量导入曲线文件",
             role="success",
@@ -106,6 +115,8 @@ class ImportTab(QWidget):
 
         self.log = QTextEdit()
         self.log.setReadOnly(True)
+        self.preview_output = QTextEdit()
+        self.preview_output.setReadOnly(True)
 
         file_row = QHBoxLayout()
         file_row.addWidget(choose_button)
@@ -123,6 +134,8 @@ class ImportTab(QWidget):
         layout.setSpacing(10)
         layout.addLayout(file_row)
         layout.addLayout(form)
+        layout.addWidget(preview_button)
+        layout.addWidget(self.preview_output, 1)
         layout.addWidget(import_button)
         layout.addWidget(batch_button)
         layout.addWidget(convert_to_nm_button)
@@ -140,6 +153,7 @@ class ImportTab(QWidget):
             self.selected_file = Path(path)
             self._display_selected_file(self.selected_file)
             self._auto_detect_columns(self.selected_file)
+            self.refresh_import_preview()
 
     def _display_selected_file(self, path: Path) -> None:
         self.file_label.setText(path.name)
@@ -155,7 +169,21 @@ class ImportTab(QWidget):
 
             columns = infer_curve_columns(read_table(path).columns)
         except Exception as exc:
-            self.log.append(f"列名自动识别失败，可手动填写: {exc}")
+            self.log.append(
+                format_user_message(
+                    UserMessage(
+                        title="列名自动识别失败",
+                        what_happened="软件没有从表头中自动判断出 q、I(q) 或 error/sigma 列。",
+                        facts=(
+                            "自动识别只匹配软件已知的常见列名别名。",
+                            "error/sigma 列是可选列。",
+                            "手动填写的列名会覆盖自动识别结果。",
+                        ),
+                        technical_detail=exception_detail(exc),
+                        severity="warning",
+                    )
+                )
+            )
             return
         self.q_column.setText(columns.q_column)
         self.intensity_column.setText(columns.intensity_column)
@@ -166,9 +194,36 @@ class ImportTab(QWidget):
             f"已识别列: q={columns.q_column}, I={columns.intensity_column}, error={columns.error_column or 'None'}, q_unit={columns.q_unit}, I_unit={columns.intensity_unit}"
         )
 
+    def refresh_import_preview(self) -> None:
+        if self.selected_file is None:
+            self.preview_output.setPlainText("请先选择 csv、txt 或 dat 文件。")
+            return
+        error_text = self.error_column.text().strip()
+        preview = preview_curve_file(
+            self.selected_file,
+            q_column=self.q_column.text().strip() or None,
+            intensity_column=self.intensity_column.text().strip() or None,
+            error_column=error_text if error_text else None,
+            q_unit=self.q_unit.text().strip() or None,
+            intensity_unit=self.intensity_unit.text().strip() or None,
+        )
+        self.preview_output.setPlainText(format_import_preview(preview))
+
     def import_curve(self) -> None:
         if self.selected_file is None:
-            self.log.append("请先选择 csv、txt 或 dat 文件。")
+            self.log.append(
+                format_user_message(
+                    UserMessage(
+                        title="无法导入曲线",
+                        what_happened="当前还没有选择要导入的数据文件。",
+                        facts=(
+                            "当前 selected_file 为空。",
+                            "支持的常用输入扩展名为 `.csv`、`.txt`、`.dat`。",
+                        ),
+                        severity="warning",
+                    )
+                )
+            )
             return
 
         error_text = self.error_column.text().strip()
@@ -183,7 +238,21 @@ class ImportTab(QWidget):
                 intensity_unit=self.intensity_unit.text().strip(),
             )
         except Exception as exc:
-            self.log.append(f"导入失败: {exc}")
+            self.log.append(
+                format_user_message(
+                    UserMessage(
+                        title="导入失败",
+                        what_happened="当前文件没有成功转换为一条可用的 SAS 曲线。",
+                        facts=(
+                            "导入要求至少有可解析为数值的 q 列和 I(q) 列。",
+                            "导入失败时不会把该文件加入当前项目曲线列表。",
+                            "预览/诊断区域会显示当前列映射和读取到的前几行。",
+                        ),
+                        technical_detail=exception_detail(exc),
+                        severity="error",
+                    )
+                )
+            )
             return
 
         self.main_window.add_curve(curve)
@@ -235,10 +304,39 @@ class ImportTab(QWidget):
                 )
             )
         if result.failed_files:
+            failed_details = "\n".join(f"- {failed['file']}: {failed['error']}" for failed in result.failed_files)
+            self.log.append(
+                format_user_message(
+                    UserMessage(
+                        title="批量导入有文件失败",
+                        what_happened=f"{len(result.failed_files)} 个文件未能导入；其它成功文件已保留在当前项目中。",
+                        facts=(
+                            f"成功导入文件数：{len(result.imported_curves)}。",
+                            f"失败文件数：{len(result.failed_files)}。",
+                            "批量导入允许部分文件失败，已成功导入的曲线不会因此回滚。",
+                        ),
+                        technical_detail=failed_details,
+                        severity="warning",
+                    )
+                )
+            )
             for failed in result.failed_files:
                 self.log.append(f"导入失败: {failed['file']}: {failed['error']}")
         if not result.imported_curves:
-            self.log.append("批量导入未成功导入任何曲线。")
+            self.log.append(
+                format_user_message(
+                    UserMessage(
+                        title="批量导入未成功导入任何曲线",
+                        what_happened="本次选择的文件没有生成任何可用曲线。",
+                        facts=(
+                            "本次 imported_curves 数量为 0。",
+                            f"失败文件数：{len(result.failed_files)}。",
+                            "当前项目中未新增本次批量导入曲线。",
+                        ),
+                        severity="error",
+                    )
+                )
+            )
 
     def convert_current(self, target_unit: str) -> None:
         curve = self.main_window.current_curve()
@@ -248,7 +346,21 @@ class ImportTab(QWidget):
         try:
             converted = convert_q_unit(curve, target_unit)
         except Exception as exc:
-            self.log.append(f"单位转换失败: {exc}")
+            self.log.append(
+                format_user_message(
+                    UserMessage(
+                        title="单位转换失败",
+                        what_happened="当前曲线没有成功生成目标 q 单位的新副本。",
+                        facts=(
+                            f"目标单位：{target_unit}。",
+                            f"当前曲线单位：{curve.q_unit}。",
+                            "单位转换成功时会生成新曲线，不会覆盖原曲线。",
+                        ),
+                        technical_detail=exception_detail(exc),
+                        severity="error",
+                    )
+                )
+            )
             return
         self.main_window.replace_current_curve_selection(converted)
         self.main_window.project.add_history_record(

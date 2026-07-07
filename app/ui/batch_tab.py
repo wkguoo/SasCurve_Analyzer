@@ -1,8 +1,23 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QAbstractItemView, QComboBox, QFormLayout, QHBoxLayout, QLineEdit, QListWidget, QTextEdit, QVBoxLayout, QWidget
+from pathlib import Path
 
-from app.core.batch import average_replicates, create_curve_group
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLineEdit,
+    QListWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+from app.core.batch import SEQUENCE_INDEX_COLUMNS, average_replicates, build_sequence_index, create_curve_group, export_sequence_index_csv
 from app.core.comparison import compare_curves
 from app.core.records import create_history_record
 from app.ui.style import action_button, apply_help
@@ -28,6 +43,17 @@ class BatchTab(QWidget):
         self.curve_a = QComboBox()
         self.curve_b = QComboBox()
         self.comparison_type = QComboBox()
+        self.sequence_rows: list[dict] = []
+        self.sequence_table = QTableWidget(0, len(SEQUENCE_INDEX_COLUMNS))
+        self.sequence_table.setHorizontalHeaderLabels(SEQUENCE_INDEX_COLUMNS)
+        self.sequence_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.sequence_table.setSelectionMode(QAbstractItemView.MultiSelection)
+        self.sequence_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        apply_help(
+            self.sequence_table,
+            tooltip="序列管理表。",
+            status_tip="显示当前项目曲线的序列顺序、frame、q 范围、点数和 warning；只读，不修改曲线数据。",
+        )
         for label, key in [
             ("Difference B - A", "difference"),
             ("Ratio B / A", "ratio"),
@@ -57,6 +83,34 @@ class BatchTab(QWidget):
             status_tip="同步左侧项目曲线列表中的最新导入或派生曲线。",
         )
         refresh_button.clicked.connect(self.refresh_curves)
+        refresh_sequence_button = action_button(
+            "刷新序列表",
+            role="secondary",
+            tooltip="刷新序列管理表。",
+            status_tip="根据当前项目曲线和 metadata 重新生成序列索引表。",
+        )
+        refresh_sequence_button.clicked.connect(self.refresh_sequence_table)
+        select_sequence_button = action_button(
+            "按序列顺序选择全部",
+            role="secondary",
+            tooltip="按序列顺序选中曲线。",
+            status_tip="同步选择序列表和多选曲线列表，方便建组或平均。",
+        )
+        select_sequence_button.clicked.connect(self.select_all_by_sequence_order)
+        group_sequence_button = action_button(
+            "从选中行建组",
+            role="success",
+            tooltip="用序列表选中行创建曲线组。",
+            status_tip="按序列表当前顺序创建曲线组，不自动解释相变或动力学。",
+        )
+        group_sequence_button.clicked.connect(self.create_group_from_selected_sequence_rows)
+        export_sequence_button = action_button(
+            "导出序列索引 CSV",
+            role="secondary",
+            tooltip="导出序列表。",
+            status_tip="写出 sequence_index.csv，便于复核导入顺序、frame、q 范围和 warning。",
+        )
+        export_sequence_button.clicked.connect(self.export_sequence_index)
         group_button = action_button(
             "将选中曲线建组",
             role="success",
@@ -92,6 +146,14 @@ class BatchTab(QWidget):
         form.addRow("比较类型", self.comparison_type)
         layout.addWidget(self.curve_list)
         layout.addLayout(form)
+        sequence_buttons = QHBoxLayout()
+        sequence_buttons.addWidget(refresh_sequence_button)
+        sequence_buttons.addWidget(select_sequence_button)
+        sequence_buttons.addWidget(group_sequence_button)
+        sequence_buttons.addWidget(export_sequence_button)
+        sequence_buttons.addStretch(1)
+        layout.addLayout(sequence_buttons)
+        layout.addWidget(self.sequence_table)
         buttons = QHBoxLayout()
         buttons.addWidget(refresh_button)
         buttons.addWidget(group_button)
@@ -118,6 +180,67 @@ class BatchTab(QWidget):
                 idx = combo.findData(current)
                 if idx >= 0:
                     combo.setCurrentIndex(idx)
+        self.refresh_sequence_table()
+
+    def refresh_sequence_table(self) -> None:
+        self.sequence_rows = build_sequence_index(self.main_window.project.curves)
+        self.sequence_table.setRowCount(len(self.sequence_rows))
+        for row_index, row in enumerate(self.sequence_rows):
+            for column_index, column in enumerate(SEQUENCE_INDEX_COLUMNS):
+                value = row.get(column)
+                item = QTableWidgetItem("" if value is None else str(value))
+                self.sequence_table.setItem(row_index, column_index, item)
+        self.sequence_table.resizeColumnsToContents()
+
+    def select_all_by_sequence_order(self) -> None:
+        self.curve_list.clearSelection()
+        self.sequence_table.clearSelection()
+        for row_index, row in enumerate(self.sequence_rows):
+            project_order = row.get("project_order")
+            if project_order is not None and 0 <= project_order < self.curve_list.count():
+                self.curve_list.item(project_order).setSelected(True)
+            self.sequence_table.selectRow(row_index)
+        self.output.setPlainText(f"已按序列顺序选择 {len(self.sequence_rows)} 条曲线。")
+
+    def _selected_sequence_curves(self):
+        selected_rows = sorted({index.row() for index in self.sequence_table.selectedIndexes()})
+        curve_ids = [self.sequence_rows[row]["curve_id"] for row in selected_rows if row < len(self.sequence_rows)]
+        return [curve for curve_id in curve_ids if (curve := self._curve_by_id(curve_id)) is not None]
+
+    def create_group_from_selected_sequence_rows(self) -> None:
+        curves = self._selected_sequence_curves()
+        if not curves:
+            self.output.setPlainText("请先在序列管理表中选择要分组的行。")
+            return
+        group = create_curve_group(
+            self.group_name.text().strip() or "sequence_group",
+            curves,
+            metadata={"group_type": "sequence_table_selection", "source": "sequence_management_table"},
+        )
+        self.main_window.project.add_group(group)
+        record = create_history_record(
+            "create_sequence_group",
+            input_ids=[curve.curve_id for curve in curves],
+            output_ids=[group.group_id],
+            parameters={"group_name": group.name, "curve_count": len(curves), "source": "sequence_management_table"},
+        )
+        self.main_window.project.add_history_record(record)
+        self.main_window.records_tab.refresh()
+        self.main_window.mark_project_dirty()
+        self.output.setPlainText(f"已从序列管理表创建曲线组: {group.name}, 曲线数={len(group.curve_ids)}")
+
+    def export_sequence_index(self) -> None:
+        default_path = Path(self.main_window.settings.default_export_dir) / "sequence_index.csv"
+        path, _ = QFileDialog.getSaveFileName(self, "导出序列索引 CSV", str(default_path), "CSV files (*.csv);;All files (*)")
+        if not path:
+            return
+        output_path = export_sequence_index_csv(self.main_window.project.curves, path)
+        self.main_window.project.add_history_record(
+            create_history_record("export_sequence_index_csv", parameters={"path": str(output_path), "curve_count": len(self.main_window.project.curves)})
+        )
+        self.main_window.records_tab.refresh()
+        self.main_window.mark_project_dirty()
+        self.output.setPlainText(f"已导出序列索引: {output_path}")
 
     def _selected_curves(self):
         rows = sorted(self.curve_list.row(item) for item in self.curve_list.selectedItems())
@@ -141,6 +264,7 @@ class BatchTab(QWidget):
         )
         self.main_window.project.add_history_record(record)
         self.main_window.records_tab.refresh()
+        self.main_window.mark_project_dirty()
         self.output.setPlainText(f"已创建曲线组: {group.name}, 曲线数={len(group.curve_ids)}")
 
     def average_selected(self) -> None:
@@ -157,6 +281,7 @@ class BatchTab(QWidget):
         self.main_window.project.add_history_record(record)
         self.refresh_curves()
         self.main_window.records_tab.refresh()
+        self.main_window.mark_project_dirty()
         self.output.setPlainText(f"已生成平均曲线: {averaged.name}\nrecord_id: {record.record_id}")
 
     def compare_selected(self) -> None:
@@ -179,6 +304,7 @@ class BatchTab(QWidget):
         )
         self.main_window.project.add_history_record(record)
         self.main_window.records_tab.refresh()
+        self.main_window.mark_project_dirty()
         self.output.setPlainText(
             f"比较完成: {result.comparison_type}\ncomparison_id: {result.comparison_id}\n点数: {result.q.size}\nwarnings: {result.warnings}"
         )

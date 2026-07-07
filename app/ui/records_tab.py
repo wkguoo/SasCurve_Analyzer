@@ -108,6 +108,7 @@ class RecordsTab(QWidget):
             create_history_record("mark_formal_record", input_ids=[source_id], output_ids=[record.formal_id], parameters={"source_type": source_type})
         )
         self.refresh()
+        self.main_window.mark_project_dirty()
 
     def unmark_selected_formal_record(self) -> None:
         row = self.formal_list.currentRow()
@@ -119,6 +120,7 @@ class RecordsTab(QWidget):
             create_history_record("unmark_formal_record", input_ids=[record.formal_id], parameters={"source_type": record.source_type, "source_id": record.source_id})
         )
         self.refresh()
+        self.main_window.mark_project_dirty()
 
     def refresh(self) -> None:
         project = self.main_window.project

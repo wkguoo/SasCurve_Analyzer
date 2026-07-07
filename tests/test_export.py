@@ -11,6 +11,7 @@ from app.core.model_fitting import fit_shape_model
 from app.core.model_free import invariant_measured
 from app.core.project import ProjectState, load_project, save_project
 from app.core.report import generate_markdown_report
+from app.core.settings import AppSettings
 from app.core.shape_models import sphere_model
 
 
@@ -190,6 +191,36 @@ def test_export_summary_includes_curve_units_parameters_and_fit_parameter_table(
     assert "- parameters:" in report_text
     assert "radius" in report_text
     assert "1/q" in report_text
+
+
+def test_analysis_bundle_writes_reproducibility_manifest_readme_settings_and_warnings(tmp_path) -> None:
+    curve = CurveData.create(name="curve", q=[0.1, 0.2], intensity=[10, 20], q_unit="A^-1", intensity_unit="cm^-1")
+    result = invariant_measured(curve, (0.1, 0.2))
+    settings = AppSettings(default_q_unit="A^-1", default_export_dir="exports")
+
+    outputs = export.export_analysis_bundle([curve], [result], tmp_path / "bundle", project_name="test_project", settings=settings)
+
+    assert outputs["manifest"].exists()
+    assert outputs["README_export"].exists()
+    assert outputs["settings_snapshot"].exists()
+    assert outputs["bundle_warnings"].exists()
+
+    manifest = json.loads(outputs["manifest"].read_text(encoding="utf-8"))
+    settings_payload = json.loads(outputs["settings_snapshot"].read_text(encoding="utf-8"))
+    readme = outputs["README_export"].read_text(encoding="utf-8")
+    warnings = outputs["bundle_warnings"].read_text(encoding="utf-8")
+
+    assert manifest["software"]["name"] == "SAS Curve Analyzer"
+    assert manifest["project"]["name"] == "test_project"
+    assert manifest["project"]["curve_count"] == 1
+    assert manifest["project"]["analysis_count"] == 1
+    assert manifest["inputs"][0]["curve_name"] == "curve"
+    assert manifest["analyses"][0]["analysis_type"] == result.analysis_type
+    assert manifest["settings_snapshot"] == "settings_snapshot.json"
+    assert "manifest" in manifest["outputs"]
+    assert settings_payload["default_q_unit"] == "A^-1"
+    assert "does not modify original experimental data" in readme
+    assert "No bundle-level warnings" in warnings
 
 
 def test_project_save_and_load(tmp_path) -> None:

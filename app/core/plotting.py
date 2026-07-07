@@ -37,6 +37,71 @@ def transform_x_for_plot(q, plot_type: str):
     raise ValueError(f"Unsupported plot_type: {plot_type}")
 
 
+def display_x_range_to_q_range(x_min: float, x_max: float, plot_type: str) -> tuple[float, float]:
+    x0 = float(x_min)
+    x1 = float(x_max)
+    if not np.isfinite(x0) or not np.isfinite(x1):
+        raise ValueError("Display x range must contain finite values.")
+
+    if plot_type in Q_AXIS_PLOT_TYPES:
+        q_values = [x0, x1]
+    elif plot_type in {"loglog", "invariant_contribution"}:
+        q_values = [float(np.exp(x0)), float(np.exp(x1))]
+    elif plot_type == "guinier":
+        if x0 < 0 or x1 < 0:
+            raise ValueError("Guinier display x is q², so it cannot be negative.")
+        q_values = [float(np.sqrt(x0)), float(np.sqrt(x1))]
+    else:
+        raise ValueError(f"Unsupported plot type for q-range conversion: {plot_type}")
+
+    q0, q1 = sorted(q_values)
+    if q0 <= 0 or q1 <= 0 or q0 >= q1:
+        raise ValueError("Converted raw q range must be positive and increasing.")
+    return q0, q1
+
+
+def display_x_limits_to_q_range_for_curve(
+    curve: CurveData,
+    x_min: float,
+    x_max: float,
+    plot_type: str,
+) -> tuple[tuple[float, float], list[str]]:
+    display_limits = np.asarray([x_min, x_max], dtype=float)
+    if not np.all(np.isfinite(display_limits)):
+        raise ValueError("Display x limits must contain finite values.")
+
+    q = np.asarray(curve.q, dtype=float)
+    intensity = np.asarray(curve.intensity, dtype=float)
+    mask = np.isfinite(q) & np.isfinite(intensity) & (q > 0)
+    if plot_type in {"semilog", "loglog", "guinier"}:
+        mask &= intensity > 0
+    valid_q = q[mask]
+    if valid_q.size == 0:
+        raise ValueError("Current curve has no positive finite raw q values available for this plot type.")
+
+    display_x = np.asarray(transform_x_for_plot(valid_q, plot_type), dtype=float)
+    display_x = display_x[np.isfinite(display_x)]
+    if display_x.size == 0:
+        raise ValueError("Current curve has no finite display x values available for this plot type.")
+
+    requested_min, requested_max = sorted((float(display_limits[0]), float(display_limits[1])))
+    valid_min = float(np.min(display_x))
+    valid_max = float(np.max(display_x))
+    clipped_min = max(requested_min, valid_min)
+    clipped_max = min(requested_max, valid_max)
+    if clipped_min >= clipped_max:
+        raise ValueError(
+            "Display x limits do not overlap the current curve's valid data range "
+            f"for plot_type={plot_type}: requested=[{requested_min:.6g}, {requested_max:.6g}], "
+            f"valid=[{valid_min:.6g}, {valid_max:.6g}]."
+        )
+
+    warnings: list[str] = []
+    if clipped_min != requested_min or clipped_max != requested_max:
+        warnings.append("Display x range was clipped to the current curve's valid data range before conversion.")
+    return display_x_range_to_q_range(clipped_min, clipped_max, plot_type), warnings
+
+
 def format_plot_cursor_coordinates(x: float | None, y: float | None, plot_type: str) -> str:
     if x is None or y is None or not np.isfinite(x) or not np.isfinite(y):
         return "Coordinates: -"

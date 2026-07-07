@@ -110,5 +110,5 @@ class AdvancedTab(QWidget):
         warnings.extend(porod_plateau_warnings([1.0, 3.0, 0.5]))
         lines = ["结构化方法 warning 示例:"]
         for warning in warnings:
-            lines.append(f"- {warning.warning_code} [{warning.severity}] {warning.message} 建议: {warning.suggested_action}")
+            lines.append(f"- {warning.warning_code} [{warning.severity}] {warning.message}")
         self.output.setPlainText("\n".join(lines))

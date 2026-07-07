@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 import numpy as np
+import pandas as pd
 
 from app.core.array_utils import sort_arrays_by_q
 from app.core.data_model import CurveData, CurveGroup, HistoryRecord, utc_now_iso
@@ -24,6 +28,79 @@ def q_grids_match(curves: list[CurveData]) -> bool:
         return False
     reference = sort_arrays_by_q(curves[0].q)[0]
     return all(curve.q.shape == reference.shape and np.allclose(sort_arrays_by_q(curve.q)[0], reference) for curve in curves[1:])
+
+
+def build_sequence_index(curves: list[CurveData]) -> list[dict[str, Any]]:
+    reference_q = sort_arrays_by_q(curves[0].q)[0] if curves else None
+    rows: list[dict[str, Any]] = []
+    for project_order, curve in enumerate(curves):
+        metadata = curve.metadata or {}
+        q_finite = curve.q[np.isfinite(curve.q)]
+        warnings: list[str] = []
+        if q_finite.size == 0:
+            warnings.append("no finite q")
+        if reference_q is not None:
+            q_sorted = sort_arrays_by_q(curve.q)[0]
+            if curve.q.shape != reference_q.shape or not np.allclose(q_sorted, reference_q):
+                warnings.append("q grid differs from first curve")
+        if np.any(~np.isfinite(curve.intensity)):
+            warnings.append("non-finite intensity")
+        if np.any(np.isfinite(curve.intensity) & (curve.intensity <= 0)):
+            warnings.append("non-positive intensity")
+
+        rows.append(
+            {
+                "sequence_order": metadata.get("sequence_order", project_order),
+                "project_order": project_order,
+                "curve_id": curve.curve_id,
+                "curve_name": curve.name,
+                "source_file": curve.source_file,
+                "source_stem": metadata.get("source_stem"),
+                "series_id": metadata.get("series_id"),
+                "frame_label": metadata.get("frame_label"),
+                "frame_index": metadata.get("frame_index"),
+                "q_unit": curve.q_unit,
+                "intensity_unit": curve.intensity_unit,
+                "point_count": int(curve.q.size),
+                "q_min": None if q_finite.size == 0 else float(np.min(q_finite)),
+                "q_max": None if q_finite.size == 0 else float(np.max(q_finite)),
+                "warnings": "OK" if not warnings else " | ".join(warnings),
+            }
+        )
+    return sorted(
+        rows,
+        key=lambda row: (
+            row["sequence_order"] is None,
+            row["project_order"] if row["sequence_order"] is None else row["sequence_order"],
+            row["project_order"],
+        ),
+    )
+
+
+SEQUENCE_INDEX_COLUMNS = [
+    "sequence_order",
+    "project_order",
+    "curve_id",
+    "curve_name",
+    "source_file",
+    "source_stem",
+    "series_id",
+    "frame_label",
+    "frame_index",
+    "q_unit",
+    "intensity_unit",
+    "point_count",
+    "q_min",
+    "q_max",
+    "warnings",
+]
+
+
+def export_sequence_index_csv(curves: list[CurveData], path: str | Path) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(build_sequence_index(curves), columns=SEQUENCE_INDEX_COLUMNS).to_csv(target, index=False)
+    return target
 
 
 def average_replicates(curves: list[CurveData], *, interpolate: bool = True, name: str = "average_curve") -> tuple[CurveData, HistoryRecord]:

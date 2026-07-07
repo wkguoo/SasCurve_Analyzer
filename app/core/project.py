@@ -19,9 +19,14 @@ class ProjectState:
     comparison_results: list[ComparisonResult] = field(default_factory=list)
     history_records: list[HistoryRecord] = field(default_factory=list)
     formal_records: list[FormalRecord] = field(default_factory=list)
+    revision: int = field(default=0, init=False, repr=False, compare=False)
+
+    def _touch(self) -> None:
+        self.revision += 1
 
     def add_curve(self, curve: CurveData) -> None:
         self.curves.append(curve)
+        self._touch()
 
     def get_curve(self, curve_id: str) -> CurveData | None:
         for curve in self.curves:
@@ -31,21 +36,26 @@ class ProjectState:
 
     def add_analysis_result(self, result: AnalysisResult) -> None:
         self.analysis_results.append(result)
+        self._touch()
 
     def get_results_for_curve(self, curve_id: str) -> list[AnalysisResult]:
         return [result for result in self.analysis_results if result.curve_id == curve_id]
 
     def add_group(self, group: CurveGroup) -> None:
         self.groups.append(group)
+        self._touch()
 
     def add_comparison_result(self, result: ComparisonResult) -> None:
         self.comparison_results.append(result)
+        self._touch()
 
     def add_history_record(self, record: HistoryRecord) -> None:
         self.history_records.append(record)
+        self._touch()
 
     def add_formal_record(self, record: FormalRecord) -> None:
         self.formal_records.append(record)
+        self._touch()
 
 
 def _json_default(value: Any):
@@ -108,4 +118,5 @@ def load_project(folder: str | Path) -> ProjectState:
     ]
     project.history_records = [HistoryRecord(**record) for record in payload.get("history_records", [])]
     project.formal_records = [FormalRecord(**record) for record in payload.get("formal_records", [])]
+    project.revision = 0
     return project

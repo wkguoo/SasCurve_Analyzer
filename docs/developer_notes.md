@@ -17,6 +17,8 @@ sas_curve_analyzer/
 
 `app/ui` contains the PySide6 interface. GUI classes should call `app/core` and should not contain numerical algorithms.
 
+`docs/user_manual_zh.md` is the beginner-facing Chinese user manual. Keep it synchronized when UI tab names, button labels, q-range behavior, analysis outputs, export behavior, settings, or method limitations change. README should stay concise and link to the manual rather than duplicating detailed instructions.
+
 ## UI Theme And Help Text
 
 Shared GUI styling and hover-help behavior live in `app/ui/style.py`.
@@ -53,6 +55,18 @@ Project folders contain a top-level `project.json` plus internal curve data file
 New project saves write curve arrays to `curves/<curve_id>.json`. Loading still reads the `data_file` path stored in `project.json`, so old project entries pointing to `.csv` files with JSON content remain readable.
 
 User-facing curve export remains CSV and is separate from internal project storage.
+
+`ProjectState.revision` is an in-memory dirty-state counter. It increments when project objects are added through `add_curve()`, `add_analysis_result()`, `add_group()`, `add_comparison_result()`, `add_history_record()`, or `add_formal_record()`. It is not serialized. `load_project()` resets the loaded project revision to `0`.
+
+`MainWindow` owns project lifecycle state:
+
+- `current_project_folder`: folder used by `保存项目`;
+- `_saved_revision`: revision at the last successful save/open/new baseline;
+- `is_project_dirty()`: compares current revision with `_saved_revision`;
+- `save_project_to_folder()`: writes project data and marks the project clean;
+- `open_project_folder()`: loads a folder containing `project.json` and refreshes GUI state.
+
+Visible main-window close events prompt before discarding unsaved project changes. Offscreen/unshown windows close without a prompt so automated tests do not block. When adding new UI actions that mutate existing project lists directly, prefer using `ProjectState` add methods or call `MainWindow.mark_project_dirty()` after the mutation so the title marker stays current.
 
 ## Settings
 
@@ -98,6 +112,46 @@ Responsibilities:
 
 The UI should only collect file selections and display summaries.
 
+Sequence management table support lives in `app/core/batch.py` and `app/ui/batch_tab.py`.
+
+- `build_sequence_index()` creates row dictionaries from current project curves and existing `CurveData.metadata`.
+- `export_sequence_index_csv()` writes `sequence_index.csv`.
+- The table is read-only and should not insert, smooth, delete, or re-order curve data in the project.
+- Warnings are descriptive, for example q grid mismatch relative to the first curve or non-positive intensity.
+- Keep table fields aligned with `SEQUENCE_INDEX_COLUMNS` and tests when adding new sequence metadata.
+
+## Import Preview And Diagnostics
+
+Single-file import preview logic lives in `app/core/import_preview.py`.
+
+- `preview_curve_file()` reads the table without modifying the source file, applies inferred or user-provided q/I/error columns, and returns an `ImportPreview`.
+- `format_import_preview()` owns the plain-text summary shown by `ImportTab`.
+- Preview status is `ok`, `warning`, or `error`; warnings remain importable but should tell the user what downstream plotting or analysis may filter.
+- Diagnostics include row/column counts, q/I ranges, NaN counts, duplicate q count, non-positive q/intensity counts, error-column invalid counts, and preview rows.
+
+Do not make preview mutate data, sort q in place, remove bad rows, clip negative intensities, or add intensity offsets. If future UI adds column selectors or preview tables, keep the diagnosis in core so tests can cover malformed files without opening Qt.
+
+## User-Facing Messages
+
+Fact-only layered user messages live in `app/core/user_messages.py`.
+
+- `UserMessage` stores title, severity, what happened, objective facts, original-data safety, and optional technical detail.
+- `format_user_message()` owns the plain-text format used by common import, analysis, export, figure-export, and project lifecycle failures.
+- Do not include action-guidance or speculative-cause sections in these messages. Keep them factual: observed state, counts, paths, selected method, selected q range, and exception detail.
+- Keep technical details visible so developer debugging is still possible.
+- State original-data safety explicitly when an operation fails or only affects display/export state.
+
+## Analysis Preflight
+
+Standard model-free analysis preflight lives in `app/core/analysis_preflight.py`.
+
+- `check_analysis_preflight()` accepts a `CurveData`, analysis type, raw q range, and range source label.
+- `AnalysisPreflight` stores counts for total points, points in range, finite points, positive q points, positive intensity points, log-usable points, excluded points, severity, and messages.
+- `format_analysis_preflight()` owns the plain-text summary shown by `AnalysisTab`.
+- `AnalysisTab.run_analysis()` should stop when `preflight.can_run` is false and should include the preflight summary when analysis continues.
+
+Preflight should remain a minimum numerical/input check. Do not make it select the "best" Guinier, Porod, peak, or power-law range, and do not let it emit structural conclusions. Add tests for new analysis types when their minimum point count, log requirements, or data filters differ from existing model-free methods.
+
 ## Origin Batch Exports
 
 Origin-friendly batch curve exports live in `app/core/export.py`.
@@ -106,6 +160,9 @@ Origin-friendly batch curve exports live in `app/core/export.py`.
 - `origin_long_guide_path()` owns the guide filename convention. Keep UI output, bundle output keys, and tests aligned with it.
 - `export_origin_matrix_csv()` writes `curves_matrix.csv` only when all curves share the same sorted q grid. It returns `(None, warnings)` and does not create a file when q grids differ.
 - `export_analysis_bundle()` always includes `curves_long`, `curves_long_guide`, and `fit_parameters`; includes `curves_matrix` only when matrix export succeeds; and writes `bundle_warnings.txt` when optional bundle outputs are skipped.
+- Complete analysis bundles also include `manifest.json`, `README_export.md`, `settings_snapshot.json`, and `bundle_warnings.txt`.
+- `manifest.json` should record software metadata, project counts, input curve metadata and source hashes when available, analyses, comparisons, warnings, settings snapshot link, and output file names.
+- `README_export.md` should explain the bundle, file purposes, manual review requirements, warnings, and that original experimental data were not modified.
 - Summary exports should include curve name, q unit, intensity unit, length unit, invariant unit, and `parameters_json` so scalar results can be interpreted outside the GUI.
 
 Do not silently interpolate during matrix export. If interpolation is added later, expose it as an explicit user option and record it in project history.
@@ -132,11 +189,30 @@ User-visible math labels should use standard symbols such as `q²`, `q³`, `q⁴
 
 `PlottingTab` supports display-only X/Y axis limits, quick q-range buttons, d-axis display for raw-q plots, peak/d-spacing annotations, and cursor coordinate readout. Range controls must not mutate `CurveData`; transformed views use transformed display coordinates such as q² or ln q. Cursor formatting lives in `app/core/plotting.py` so it can be tested without a full interactive mouse event.
 
+The plot coordinate readout should stay in its own row, separate from axis range controls, so long transformed-coordinate messages do not compress X/Y inputs or q-range shortcut buttons.
+
+Plotting/analysis navigation is centralized in `app/core/method_mapping.py`. Update `PLOT_TO_ANALYSIS`, `ANALYSIS_TO_PLOT`, UI combo-box items, the model catalog, and tests together when adding or renaming a plot type or model-free analysis type. The UI should call `MainWindow.set_plot_type()`, `MainWindow.set_analysis_type()`, `show_plotting_tab()`, and `show_analysis_tab()` rather than duplicating tab indices.
+
+Display x-range to raw q-range conversion lives in `app/core/plotting.py::display_x_range_to_q_range()`. Use `display_x_limits_to_q_range_for_curve()` when converting Matplotlib axis limits, because automatic axis padding can extend raw-q or Guinier q² views outside the valid data range. Keep raw analysis q ranges positive; negative values are valid only for transformed display axes such as `ln q`.
+
+Top-level tabs should prioritize the main workflow. Lower-frequency project output pages are grouped under `MainWindow.output_tabs` inside the `项目与输出` top-level tab while preserving `self.records_tab`, `self.export_tab`, and `self.templates_tab` attributes for existing callers.
+
+Figure export presets live in `app/core/figure_export.py`.
+
+- `FIGURE_EXPORT_PRESETS` owns the screen, presentation, and draft-publication presets.
+- `safe_figure_filename()` owns filename sanitization.
+- `export_figure_with_preset()` applies font, line, marker, format, and DPI settings before saving the current Matplotlib figure.
+- `PlottingTab.export_current_figure()` should record figure exports in project history and refresh the current plot after export so preset styling does not persist on screen.
+
+Keep this feature lightweight. Do not turn the plotting tab into a full graphic-design or layout editor; presets should only provide stable defaults for preview, group meeting, and draft-publication output.
+
 Deep-analysis-only parameters should remain visually separated from standard model-free controls. Experimental actions should not write analysis results by default unless the UI explicitly enables that experimental mode and records the assumption in history.
 
 ## History And Formal Records
 
 Use `ProjectState.history_records` for project-level actions such as import, q unit conversion, analysis, group creation, averaging, comparison, export, project save, and formal-record actions.
+
+Every project save writes a `project_save` record. Treat this as an audit trail for reproducibility; do not remove or compress save history unless a future migration explicitly defines that behavior.
 
 Use `CurveData.processing_history` for provenance of derived curve objects.
 
