@@ -29,9 +29,37 @@ def test_relative_difference_and_zero_warning() -> None:
     assert result.warnings
 
 
+def test_comparison_interpolates_after_sorting_unsorted_q() -> None:
+    a = CurveData.create(name="a", q=[0.3, 0.1, 0.2], intensity=[30, 10, 20])
+    b = CurveData.create(name="b", q=[0.1, 0.2, 0.3], intensity=[11, 22, 33])
+
+    result = compare_curves(a, b, "difference", interpolate=True)
+
+    assert np.allclose(result.q, [0.1, 0.2, 0.3])
+    assert np.allclose(result.values, [1, 2, 3])
+
+
 def test_display_normalization() -> None:
     curve = CurveData.create(name="n", q=[0.1, 0.2], intensity=[2, 4])
     normalized, warnings = normalized_intensity(curve, "I/Imax")
     assert np.allclose(normalized, [0.5, 1.0])
     assert warnings
+
+
+def test_q_reference_normalization_uses_sorted_q_for_interpolation() -> None:
+    curve = CurveData.create(name="n", q=[0.3, 0.1, 0.2], intensity=[30, 10, 20])
+
+    normalized, _warnings = normalized_intensity(curve, "I/I(q_ref)", q_ref=0.15)
+
+    assert np.allclose(normalized, [2.0, 2.0 / 3.0, 4.0 / 3.0])
+
+
+def test_integral_normalization_uses_sorted_q_for_positive_area() -> None:
+    curve = CurveData.create(name="n", q=[0.3, 0.1, 0.2], intensity=[30, 10, 20])
+
+    normalized_area, _warnings = normalized_intensity(curve, "I/area")
+    normalized_invariant, _warnings = normalized_intensity(curve, "I/Q_measured")
+
+    assert np.all(normalized_area > 0)
+    assert np.all(normalized_invariant > 0)
 

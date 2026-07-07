@@ -28,12 +28,14 @@ def porod_deep_analysis(
     q4i = q**4 * intensity
     plateau_mean = float(np.nanmean(q4i)) if q4i.size else None
     plateau_std = float(np.nanstd(q4i)) if q4i.size else None
-    plateau_cv = float(plateau_std / plateau_mean) if plateau_mean not in (None, 0.0) else None
+    plateau_cv = float(plateau_std / abs(plateau_mean)) if plateau_mean not in (None, 0.0) else None
     power = power_law_analysis(curve, q_range, min_points=5) if q.size >= 5 else None
     alpha = None if power is None else power.results.get("alpha")
     specific_surface_candidate = None
     interface_area_density_candidate = None
-    if absolute_intensity and contrast not in (None, 0.0) and plateau_mean is not None:
+    stable_positive_plateau = plateau_mean is not None and plateau_mean > 0 and plateau_cv is not None and plateau_cv <= 0.2
+    porod_like_alpha = alpha is not None and abs(float(alpha) - 4.0) <= 0.4
+    if absolute_intensity and contrast not in (None, 0.0) and stable_positive_plateau and porod_like_alpha:
         interface_area_density_candidate = float(plateau_mean / (2.0 * np.pi * contrast**2))
         specific_surface_candidate = interface_area_density_candidate
     assumptions = []
@@ -43,8 +45,8 @@ def porod_deep_analysis(
         assumptions.append("volume_fraction_optional_for_specific_surface_normalization")
     checks = [
         validity_check("enough_points", q.size >= 5, severity="error", message="Porod analysis needs at least five high-q points.", value=int(q.size), threshold=5),
-        validity_check("stable_q4I_plateau", plateau_cv is not None and plateau_cv <= 0.2, severity="warning", message="q^4I(q) plateau is not stable.", value=plateau_cv, threshold=0.2),
-        validity_check("porod_alpha_near_4", alpha is not None and abs(float(alpha) - 4.0) <= 0.4, severity="warning", message="Fitted high-q exponent is not close to Porod q^-4.", value=alpha, threshold="4 +/- 0.4"),
+        validity_check("stable_q4I_plateau", stable_positive_plateau, severity="warning", message="q^4I(q) plateau is not stable or not positive.", value=plateau_cv, threshold=0.2),
+        validity_check("porod_alpha_near_4", porod_like_alpha, severity="warning", message="Fitted high-q exponent is not close to Porod q^-4.", value=alpha, threshold="4 +/- 0.4"),
         validity_check("absolute_intensity", absolute_intensity, severity="warning", message="Absolute intensity is required for absolute surface estimates."),
         validity_check("contrast_supplied", contrast is not None and contrast != 0, severity="warning", message="Contrast is required for absolute surface estimates."),
     ]

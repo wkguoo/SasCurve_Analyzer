@@ -192,6 +192,10 @@ A saved project folder contains:
 User-facing exports include:
 
 - Curve CSV files.
+- Origin-ready batch curve exports:
+  - `curves_long.csv`: one row per q-I point with in situ frame metadata.
+  - `curves_long_guide.md`: beginner guide explaining long-table columns, plotting choices, interpretation checks, and analysis caveats.
+  - `curves_matrix.csv`: q plus one intensity column per frame when q grids match.
 - Analysis JSON/CSV files.
 - Comparison CSV files.
 - Feature tables.

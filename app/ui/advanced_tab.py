@@ -14,7 +14,18 @@ class AdvancedTab(QWidget):
         super().__init__()
         self.main_window = main_window
         self.transform_type = QComboBox()
-        self.transform_type.addItems(["q_to_size", "q_squared", "lnI", "log10I", "qI", "q2I", "q3I", "q4I", "normalized_I"])
+        for label, key in [
+            ("Real-space scale 2*pi/q", "q_to_size"),
+            ("q squared", "q_squared"),
+            ("Natural log intensity", "lnI"),
+            ("Log10 intensity", "log10I"),
+            ("q I(q)", "qI"),
+            ("q^2 I(q)", "q2I"),
+            ("q^3 I(q)", "q3I"),
+            ("q^4 I(q)", "q4I"),
+            ("Normalize by I max", "normalized_I"),
+        ]:
+            self.transform_type.addItem(label, key)
         apply_help(
             self.transform_type,
             tooltip="选择高级变换。",
@@ -27,20 +38,22 @@ class AdvancedTab(QWidget):
             status_tip="主操作：对当前曲线生成选定变换结果，原始曲线不被修改。",
         )
         transform_button.clicked.connect(self.run_transform)
-        pr_button = action_button(
+        self.pr_button = action_button(
             "P(r) experimental 预留接口",
             role="warning",
             tooltip="运行实验性 P(r)。",
             status_tip="谨慎：P(r) 接口为实验性结果，不应直接作为正式物理结论。",
         )
-        pr_button.clicked.connect(self.run_pr_placeholder)
-        corr_button = action_button(
+        self.pr_button.setEnabled(False)
+        self.pr_button.clicked.connect(self.run_pr_placeholder)
+        self.corr_button = action_button(
             "相关函数分析",
             role="warning",
             tooltip="运行相关函数分析。",
             status_tip="谨慎：相关函数结果依赖 q 范围和数据质量，需结合方法警告解释。",
         )
-        corr_button.clicked.connect(self.run_correlation_placeholder)
+        self.corr_button.setEnabled(False)
+        self.corr_button.clicked.connect(self.run_correlation_placeholder)
         warning_button = action_button(
             "显示方法边界 warning 示例",
             role="warning",
@@ -56,8 +69,8 @@ class AdvancedTab(QWidget):
         layout.setSpacing(10)
         layout.addWidget(self.transform_type)
         layout.addWidget(transform_button)
-        layout.addWidget(pr_button)
-        layout.addWidget(corr_button)
+        layout.addWidget(self.pr_button)
+        layout.addWidget(self.corr_button)
         layout.addWidget(warning_button)
         layout.addWidget(self.output, 1)
 
@@ -66,7 +79,7 @@ class AdvancedTab(QWidget):
         if curve is None:
             self.output.setPlainText("尚未选择曲线。")
             return
-        result = transform_curve(curve, self.transform_type.currentText())
+        result = transform_curve(curve, self.transform_type.currentData())
         self.output.setPlainText(
             f"transform_name: {result.transform_name}\nunit: {result.unit}\npoints: {result.output.size}\nwarnings: {result.warnings}"
         )

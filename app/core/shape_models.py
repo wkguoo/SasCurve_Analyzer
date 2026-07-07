@@ -106,8 +106,8 @@ def mass_fractal_model(q: np.ndarray, dimension: float, cutoff_length: float, sc
     q_arr = np.maximum(np.asarray(q, dtype=float), 1e-12)
     dimension = float(np.clip(dimension, 1.0, 3.0))
     cutoff_length = max(float(cutoff_length), 1e-12)
-    cutoff = 1.0 / (1.0 + (q_arr * cutoff_length) ** 2)
-    return scale * (q_arr ** (-dimension)) * cutoff + background
+    finite_cutoff = 1.0 / cutoff_length
+    return scale * ((q_arr**2 + finite_cutoff**2) ** (-dimension / 2.0)) + background
 
 
 def surface_fractal_model(q: np.ndarray, surface_dimension: float, scale: float, background: float) -> np.ndarray:

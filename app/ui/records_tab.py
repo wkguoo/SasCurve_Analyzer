@@ -12,7 +12,13 @@ class RecordsTab(QWidget):
         super().__init__()
         self.main_window = main_window
         self.source_type = QComboBox()
-        self.source_type.addItems(["curve", "analysis_result", "comparison_result", "figure"])
+        for label, key in [
+            ("Curve", "curve"),
+            ("Analysis result", "analysis_result"),
+            ("Comparison result", "comparison_result"),
+            ("Figure", "figure"),
+        ]:
+            self.source_type.addItem(label, key)
         apply_help(
             self.source_type,
             tooltip="选择记录来源类型。",
@@ -70,7 +76,7 @@ class RecordsTab(QWidget):
         self.refresh_sources()
 
     def refresh_sources(self) -> None:
-        source_type = self.source_type.currentText()
+        source_type = self.source_type.currentData()
         self.source_selector.clear()
         if source_type == "curve":
             for curve in self.main_window.project.curves:
@@ -85,7 +91,7 @@ class RecordsTab(QWidget):
             self.source_selector.addItem("手动图像路径入口预留", "")
 
     def mark_selected_source(self) -> None:
-        source_type = self.source_type.currentText()
+        source_type = self.source_type.currentData()
         source_id = self.source_selector.currentData()
         if not source_id:
             self.output.setPlainText("没有可标记的对象。")

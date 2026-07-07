@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -27,6 +28,7 @@ class ImportTab(QWidget):
         self.selected_file: Path | None = None
 
         self.file_label = QLabel("未选择文件")
+        self.file_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         apply_help(
             self.file_label,
             tooltip="当前选择的数据文件路径。",
@@ -136,8 +138,16 @@ class ImportTab(QWidget):
         )
         if path:
             self.selected_file = Path(path)
-            self.file_label.setText(str(self.selected_file))
+            self._display_selected_file(self.selected_file)
             self._auto_detect_columns(self.selected_file)
+
+    def _display_selected_file(self, path: Path) -> None:
+        self.file_label.setText(path.name)
+        apply_help(
+            self.file_label,
+            tooltip=path.name,
+            status_tip=f"完整路径: {path}",
+        )
 
     def _auto_detect_columns(self, path: Path) -> None:
         try:

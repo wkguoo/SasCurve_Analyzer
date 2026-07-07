@@ -51,3 +51,14 @@ def test_q3_invariant_contribution_plot_uses_log_q_axis() -> None:
     assert axis.get_ylabel().startswith("q^3 I(q)")
     assert list(axis.lines[0].get_ydata()) == [1.0, 16.0, 192.0]
 
+
+def test_linear_plot_sorts_unsorted_q_for_scientific_curve_reading() -> None:
+    curve = CurveData.create(name="test", q=[0.3, 0.1, 0.2], intensity=[30.0, 10.0, 20.0])
+
+    figure, warnings = create_curve_figure(curve, plot_type="linear")
+
+    assert not warnings
+    axis = figure.axes[0]
+    assert list(axis.lines[0].get_xdata()) == [0.1, 0.2, 0.3]
+    assert list(axis.lines[0].get_ydata()) == [10.0, 20.0, 30.0]
+

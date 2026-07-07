@@ -34,3 +34,16 @@ def test_peak_detection_sorts_q_before_width_and_area() -> None:
     assert np.isclose(reversed_peak["FWHM"], sorted_peak["FWHM"])
     assert np.isclose(reversed_peak["peak_area"], sorted_peak["peak_area"])
 
+
+def test_peak_fwhm_uses_q_positions_on_nonuniform_grid() -> None:
+    q = np.geomspace(0.1, 1.0, 600)
+    peak_q = 0.42
+    sigma = 0.035
+    intensity = 1.0 + 20.0 * np.exp(-((q - peak_q) ** 2) / (2 * sigma**2))
+    curve = CurveData.create(name="nonuniform_peak", q=q, intensity=intensity)
+
+    peak = detect_peaks(curve, (0.1, 1.0), prominence=5.0).results["peaks"][0]
+
+    expected_fwhm = 2.0 * np.sqrt(2.0 * np.log(2.0)) * sigma
+    assert np.isclose(peak["FWHM"], expected_fwhm, rtol=0.03)
+

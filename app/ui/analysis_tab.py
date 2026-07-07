@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QTextEdit,
     QVBoxLayout,
@@ -23,7 +24,17 @@ class AnalysisTab(QWidget):
         super().__init__()
         self.main_window = main_window
         self.analysis_type = QComboBox()
-        self.analysis_type.addItems(["guinier", "power_law", "local_slope", "peak_detection", "invariant", "information_budget", "kratky_metrics", "porod_metrics"])
+        for label, key in [
+            ("Guinier: ln I vs q^2", "guinier"),
+            ("Power law: log I vs log q", "power_law"),
+            ("Local slope alpha(q)", "local_slope"),
+            ("Peak detection", "peak_detection"),
+            ("Invariant integral Q", "invariant"),
+            ("Information budget q^3I", "information_budget"),
+            ("Kratky q^2I metrics", "kratky_metrics"),
+            ("Porod q^4I metrics", "porod_metrics"),
+        ]:
+            self.analysis_type.addItem(label, key)
         apply_help(
             self.analysis_type,
             tooltip="选择无模型分析。",
@@ -144,15 +155,18 @@ class AnalysisTab(QWidget):
         form.addRow("分析类型", self.analysis_type)
         form.addRow("q_min", self.q_min)
         form.addRow("q_max", self.q_max)
-        form.addRow("样品类型", self.sample_type)
-        form.addRow("形状/模型", self.shape_model)
-        form.addRow("Dmax", self.dmax)
-        form.addRow("正则化", self.regularization)
-        form.addRow("contrast", self.contrast)
-        form.addRow("体积分数初值", self.volume_fraction)
-        form.addRow(self.use_contrast)
-        form.addRow(self.absolute_intensity)
-        form.addRow(self.fit_background)
+
+        deep_group = QGroupBox("深度分析参数")
+        deep_form = QFormLayout(deep_group)
+        deep_form.addRow("样品类型", self.sample_type)
+        deep_form.addRow("形状/模型", self.shape_model)
+        deep_form.addRow("Dmax", self.dmax)
+        deep_form.addRow("正则化", self.regularization)
+        deep_form.addRow("contrast", self.contrast)
+        deep_form.addRow("体积分数初值", self.volume_fraction)
+        deep_form.addRow(self.use_contrast)
+        deep_form.addRow(self.absolute_intensity)
+        deep_form.addRow(self.fit_background)
 
         controls = QHBoxLayout()
         controls.addWidget(fill_button)
@@ -164,6 +178,7 @@ class AnalysisTab(QWidget):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(10)
         layout.addLayout(form)
+        layout.addWidget(deep_group)
         layout.addLayout(controls)
         layout.addWidget(self.output, 1)
 
@@ -182,7 +197,7 @@ class AnalysisTab(QWidget):
             return
 
         q_range = (float(self.q_min.value()), float(self.q_max.value()))
-        analysis_type = self.analysis_type.currentText()
+        analysis_type = self.analysis_type.currentData()
         try:
             if analysis_type == "guinier":
                 result = guinier_analysis(curve, q_range)

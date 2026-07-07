@@ -15,6 +15,17 @@ def test_invariant_requires_assumptions_for_volume_fraction() -> None:
     assert "contrast_required" in result.results["assumptions"]
 
 
+def test_invariant_does_not_emit_volume_fraction_without_absolute_intensity() -> None:
+    q = np.linspace(0.01, 0.2, 60)
+    curve = CurveData.create(name="inv", q=q, intensity=np.full_like(q, 0.1))
+
+    result = invariant_with_extrapolation(curve, (float(q.min()), float(q.max())), contrast=1.0, absolute_intensity=False)
+
+    assert result.results["contrast_factor_phi_1_minus_phi"] is None
+    assert result.results["volume_fraction_candidate"] is None
+    assert "absolute_intensity_required" in result.results["assumptions"]
+
+
 def test_invariant_with_extrapolation_sorts_q_before_integrating() -> None:
     q = np.linspace(0.01, 0.2, 60)
     intensity = np.exp(-q)

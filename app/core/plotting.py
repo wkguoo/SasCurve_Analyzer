@@ -5,6 +5,7 @@ from typing import Iterable
 import numpy as np
 from matplotlib.figure import Figure
 
+from app.core.array_utils import sort_arrays_by_q
 from app.core.data_model import CurveData
 from app.core.model_free import local_slope
 
@@ -25,9 +26,11 @@ def create_curve_figure(
     warnings: list[str] = []
 
     for curve in curve_list:
-        q = curve.q
-        intensity = curve.intensity
-        error = curve.error
+        if curve.error is None:
+            q, intensity = sort_arrays_by_q(curve.q, curve.intensity)
+            error = None
+        else:
+            q, intensity, error = sort_arrays_by_q(curve.q, curve.intensity, curve.error)
         mask = np.isfinite(q) & np.isfinite(intensity)
 
         if plot_type in {"semilog", "loglog", "guinier"}:

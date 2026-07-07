@@ -4,6 +4,7 @@ import math
 
 import numpy as np
 
+from app.core.array_utils import sort_arrays_by_q
 from app.core.data_model import AnalysisResult, CurveData
 from app.core.fitting import linear_fit
 from app.core.method_warnings import guinier_warnings, invariant_warnings, porod_plateau_warnings, power_law_warnings, warning_to_dict, warning_to_text
@@ -188,8 +189,7 @@ def power_law_analysis(curve: CurveData, q_range: tuple[float, float], *, min_po
 
 def local_slope(curve: CurveData, q_range: tuple[float, float], *, window_length: int = 5, std_threshold: float = 0.15) -> AnalysisResult:
     mask, warnings = _valid_log_mask(curve, q_range, require_q_positive=True)
-    q = curve.q[mask]
-    intensity = curve.intensity[mask]
+    q, intensity = sort_arrays_by_q(curve.q[mask], curve.intensity[mask])
     if window_length % 2 == 0:
         raise ValueError("window_length must be odd.")
     if q.size <= window_length:
@@ -372,7 +372,7 @@ def porod_metrics(curve: CurveData, q_range: tuple[float, float]) -> AnalysisRes
     y = q**4 * curve.intensity[mask]
     mean = float(np.mean(y)) if y.size else None
     std = float(np.std(y)) if y.size else None
-    cv = float(std / mean) if mean not in (None, 0.0) else None
+    cv = float(std / abs(mean)) if mean not in (None, 0.0) else None
     warnings: list[str] = []
     results = {"q4I_plateau_mean": mean, "q4I_plateau_std": std, "q4I_plateau_cv": cv, "points": int(q.size)}
     return _create_result_with_method_warnings(curve=curve, analysis_type="porod_metrics", q_range=q_range, results=results, warnings=warnings, method_warnings=porod_plateau_warnings(y))

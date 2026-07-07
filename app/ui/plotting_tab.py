@@ -12,7 +12,18 @@ class PlottingTab(QWidget):
         super().__init__()
         self.main_window = main_window
         self.plot_type = QComboBox()
-        self.plot_type.addItems(["linear", "semilog", "loglog", "guinier", "kratky", "porod", "invariant", "invariant_contribution", "local_slope"])
+        for label, key in [
+            ("Linear I(q)", "linear"),
+            ("Semilog ln I", "semilog"),
+            ("Log-log ln I vs ln q", "loglog"),
+            ("Guinier q^2 plot", "guinier"),
+            ("Kratky q^2I", "kratky"),
+            ("Porod q^4I", "porod"),
+            ("Invariant q^2I", "invariant"),
+            ("q^3I contribution spectrum", "invariant_contribution"),
+            ("Local slope alpha(q)", "local_slope"),
+        ]:
+            self.plot_type.addItem(label, key)
         apply_help(
             self.plot_type,
             tooltip="选择绘图坐标。",
@@ -62,7 +73,7 @@ class PlottingTab(QWidget):
 
         self.figure, warnings = create_curve_figure(
             curve,
-            plot_type=self.plot_type.currentText(),
+            plot_type=self.plot_type.currentData(),
             show_error=self.show_error.isChecked(),
         )
         self.canvas.figure = self.figure

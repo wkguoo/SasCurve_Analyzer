@@ -28,7 +28,12 @@ class BatchTab(QWidget):
         self.curve_a = QComboBox()
         self.curve_b = QComboBox()
         self.comparison_type = QComboBox()
-        self.comparison_type.addItems(["difference", "ratio", "relative_difference"])
+        for label, key in [
+            ("Difference B - A", "difference"),
+            ("Ratio B / A", "ratio"),
+            ("Relative difference (B - A) / A", "relative_difference"),
+        ]:
+            self.comparison_type.addItem(label, key)
         apply_help(
             self.curve_a,
             tooltip="选择曲线 A。",
@@ -163,7 +168,7 @@ class BatchTab(QWidget):
         if curve_a.curve_id == curve_b.curve_id:
             self.output.setPlainText("不能比较同一条曲线。")
             return
-        result = compare_curves(curve_a, curve_b, self.comparison_type.currentText(), interpolate=True)
+        result = compare_curves(curve_a, curve_b, self.comparison_type.currentData(), interpolate=True)
         self.main_window.project.add_comparison_result(result)
         record = create_history_record(
             f"comparison:{result.comparison_type}",

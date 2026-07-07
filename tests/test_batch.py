@@ -24,6 +24,17 @@ def test_average_interpolates_mismatched_q_grid() -> None:
     assert record.warnings
 
 
+def test_average_interpolates_after_sorting_unsorted_q() -> None:
+    c1 = CurveData.create(name="a", q=[0.3, 0.1, 0.2], intensity=[30, 10, 20])
+    c2 = CurveData.create(name="b", q=[0.1, 0.2, 0.3], intensity=[11, 22, 33])
+
+    averaged, record = average_replicates([c1, c2], interpolate=True)
+
+    assert np.allclose(averaged.q, [0.1, 0.2, 0.3])
+    assert np.allclose(averaged.intensity, [10.5, 21.0, 31.5])
+    assert not record.warnings
+
+
 def test_average_does_not_modify_original_curves() -> None:
     c1 = CurveData.create(name="a", q=[0.1, 0.2], intensity=[10, 20])
     original = c1.intensity.copy()

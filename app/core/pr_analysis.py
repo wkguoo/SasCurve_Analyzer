@@ -4,6 +4,7 @@ import numpy as np
 from scipy.optimize import nnls
 
 from app.core.analysis_schema import EXPORT_TABLE_PR_DISTRIBUTION, RESULT_GROUP_PR, merge_standard_metadata
+from app.core.array_utils import sort_arrays_by_q
 from app.core.data_model import AnalysisResult, CurveData
 from app.core.reliability import reliability_from_checks, validity_check, warning_messages_from_checks
 
@@ -39,8 +40,7 @@ def compute_pr(
     r_points: int = 80,
 ) -> AnalysisResult:
     mask = _range_mask(curve, q_range)
-    q = curve.q[mask]
-    intensity = curve.intensity[mask]
+    q, intensity = sort_arrays_by_q(curve.q[mask], curve.intensity[mask])
     warnings: list[str] = []
     if regularization is None:
         regularization = 1e-2

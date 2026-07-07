@@ -26,6 +26,7 @@ def generate_markdown_report(
         "",
         "## Curves",
     ]
+    curves_by_id = {curve.curve_id: curve for curve in curves}
     for curve in curves:
         lines.extend(
             [
@@ -40,9 +41,32 @@ def generate_markdown_report(
 
     lines.append("## Analysis Results")
     for result in analyses:
-        lines.extend([f"### {result.analysis_type}", f"- analysis_id: `{result.analysis_id}`", f"- curve_id: `{result.curve_id}`", f"- q_range: {result.q_range}", "- key results:"])
+        curve = curves_by_id.get(result.curve_id)
+        q_unit = "" if curve is None else f" {curve.q_unit}"
+        lines.extend(
+            [
+                f"### {result.analysis_type}",
+                f"- analysis_id: `{result.analysis_id}`",
+                f"- curve_id: `{result.curve_id}`",
+                f"- curve: {curve.name if curve is not None else 'unknown'}",
+                f"- q_range: {result.q_range[0]} to {result.q_range[1]}{q_unit}",
+            ]
+        )
+        if result.parameters:
+            lines.append("- parameters:")
+            for key, value in result.parameters.items():
+                lines.append(f"  - {key}: {value}")
+        lines.append("- key results:")
         for key, value in scalar_result_items(result.results).items():
             lines.append(f"  - {key}: {value}")
+        fitted_parameters = result.results.get("parameters")
+        if isinstance(fitted_parameters, dict):
+            lines.append("- fitted parameters:")
+            for name, payload in fitted_parameters.items():
+                if isinstance(payload, dict):
+                    lines.append(
+                        f"  - {name}: value={payload.get('value')}, stderr={payload.get('stderr')}, unit={payload.get('unit')}"
+                    )
         assumptions = result.results.get("assumptions", [])
         if assumptions:
             lines.append("- assumptions / 前提条件:")

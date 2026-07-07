@@ -77,6 +77,38 @@ Responsibilities:
 
 The UI should only collect file selections and display summaries.
 
+## Origin Batch Exports
+
+Origin-friendly batch curve exports live in `app/core/export.py`.
+
+- `export_origin_long_csv()` writes `curves_long.csv` with one row per q-I point and fixed columns for sequence metadata, curve identity, q, intensity, optional error, and units. It also writes a sibling beginner guide named `<csv-stem>_guide.md`.
+- `origin_long_guide_path()` owns the guide filename convention. Keep UI output, bundle output keys, and tests aligned with it.
+- `export_origin_matrix_csv()` writes `curves_matrix.csv` only when all curves share the same sorted q grid. It returns `(None, warnings)` and does not create a file when q grids differ.
+- `export_analysis_bundle()` always includes `curves_long`, `curves_long_guide`, and `fit_parameters`; includes `curves_matrix` only when matrix export succeeds; and writes `bundle_warnings.txt` when optional bundle outputs are skipped.
+- Summary exports should include curve name, q unit, intensity unit, length unit, invariant unit, and `parameters_json` so scalar results can be interpreted outside the GUI.
+
+Do not silently interpolate during matrix export. If interpolation is added later, expose it as an explicit user option and record it in project history.
+
+## q-Order And Candidate-Parameter Safety
+
+Imported `CurveData` preserves input order. Any algorithm that uses neighbor relationships, interpolation, integration, gradients, inverse transforms, peak widths, or matrix layout must work on sorted local copies and must not mutate the original curve arrays.
+
+Use `app/core/array_utils.py::sort_arrays_by_q()` for new q-neighbor paths. Add reversed-q and, where relevant, nonuniform-q tests for new analysis or export behavior.
+
+Parameter candidates that require physical assumptions should be gated before emission:
+
+- Invariant volume-fraction candidates require absolute intensity, valid nonzero contrast, enough q points, positive finite Q, and a physical contrast factor.
+- Porod surface candidates require absolute intensity, valid nonzero contrast, positive stable q4I plateau, and a high-q power-law alpha near 4.
+- If assumptions are missing, export descriptive metrics and warnings, but leave the physical candidate value as `None`.
+
+Shape-fit parameter values live in nested `result.results["parameters"]`; keep `fit_parameters.csv`, `analysis_summary.csv`, `feature_table.csv`, and Markdown reports synchronized when parameter schema changes.
+
+## UI Labels And Experimental Controls
+
+Combo boxes that drive core logic should show researcher-facing labels and store the core key in `itemData()`. Callers should read `currentData()` rather than relying on visible text.
+
+Deep-analysis-only parameters should remain visually separated from standard model-free controls. Experimental actions should not write analysis results by default unless the UI explicitly enables that experimental mode and records the assumption in history.
+
 ## History And Formal Records
 
 Use `ProjectState.history_records` for project-level actions such as import, q unit conversion, analysis, group creation, averaging, comparison, export, project save, and formal-record actions.

@@ -70,8 +70,9 @@ def porod_plateau_warnings(q4i_values, related_analysis_id=None) -> list[MethodW
     values = np.asarray(q4i_values, dtype=float)
     warnings: list[MethodWarning] = []
     if values.size and np.nanmean(values) != 0:
-        cv = float(np.nanstd(values) / np.nanmean(values))
-        if cv > 0.2:
+        mean = float(np.nanmean(values))
+        cv = float(np.nanstd(values) / abs(mean))
+        if mean <= 0 or cv > 0.2:
             warnings.append(MethodWarning("POROD_NO_STABLE_PLATEAU", "warning", "q^4I(q) does not show a stable plateau.", "Choose another high-q range or inspect noise.", related_analysis_id))
     warnings.append(MethodWarning("POROD_NO_ABSOLUTE_SURFACE", "warning", "Do not calculate absolute specific surface area without contrast and phase assumptions.", "Treat plateau metrics as descriptive unless assumptions are known.", related_analysis_id))
     return warnings

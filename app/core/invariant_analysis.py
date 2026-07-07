@@ -75,7 +75,16 @@ def invariant_with_extrapolation(
     q_total = q_measured + low_q_contribution + high_q_contribution
     contrast_factor = None
     volume_fraction_candidate = None
-    if contrast is not None and contrast != 0 and np.isfinite(q_total):
+    can_estimate_volume_fraction = (
+        absolute_intensity
+        and contrast is not None
+        and contrast != 0
+        and np.isfinite(contrast)
+        and np.isfinite(q_total)
+        and q_total > 0
+        and q.size >= 5
+    )
+    if can_estimate_volume_fraction:
         contrast_factor = float(q_total / (2.0 * np.pi**2 * contrast**2))
         if 0.0 <= contrast_factor <= 0.25:
             volume_fraction_candidate = float((1.0 - np.sqrt(1.0 - 4.0 * contrast_factor)) / 2.0)

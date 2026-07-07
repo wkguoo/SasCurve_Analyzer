@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from app.core.array_utils import sort_arrays_by_q
 from app.core.data_model import CurveData, CurveGroup, HistoryRecord, utc_now_iso
 
 
@@ -21,8 +22,8 @@ def _common_q_grid(curves: list[CurveData]) -> np.ndarray:
 def q_grids_match(curves: list[CurveData]) -> bool:
     if not curves:
         return False
-    reference = curves[0].q
-    return all(curve.q.shape == reference.shape and np.allclose(curve.q, reference) for curve in curves[1:])
+    reference = sort_arrays_by_q(curves[0].q)[0]
+    return all(curve.q.shape == reference.shape and np.allclose(sort_arrays_by_q(curve.q)[0], reference) for curve in curves[1:])
 
 
 def average_replicates(curves: list[CurveData], *, interpolate: bool = True, name: str = "average_curve") -> tuple[CurveData, HistoryRecord]:
@@ -31,16 +32,23 @@ def average_replicates(curves: list[CurveData], *, interpolate: bool = True, nam
 
     warnings: list[str] = []
     if q_grids_match(curves):
-        q_grid = curves[0].q.copy()
-        intensities = np.vstack([curve.intensity for curve in curves])
+        sorted_inputs = [sort_arrays_by_q(curve.q, curve.intensity) for curve in curves]
+        q_grid = sorted_inputs[0][0].copy()
+        intensities = np.vstack([intensity for _q, intensity in sorted_inputs])
         errors = [curve.error for curve in curves]
+        if all(error is not None for error in errors):
+            errors = [sort_arrays_by_q(curve.q, curve.error)[1] for curve in curves]
         interpolation_method = "none"
     else:
         if not interpolate:
             raise ValueError("q grids differ; set interpolate=True to average on a common q grid.")
         q_grid = _common_q_grid(curves)
-        intensities = np.vstack([np.interp(q_grid, curve.q, curve.intensity) for curve in curves])
-        errors = [None if curve.error is None else np.interp(q_grid, curve.q, curve.error) for curve in curves]
+        sorted_inputs = [sort_arrays_by_q(curve.q, curve.intensity) for curve in curves]
+        intensities = np.vstack([np.interp(q_grid, q_sorted, intensity_sorted) for q_sorted, intensity_sorted in sorted_inputs])
+        errors = [
+            None if curve.error is None else np.interp(q_grid, *sort_arrays_by_q(curve.q, curve.error))
+            for curve in curves
+        ]
         interpolation_method = "linear"
         warnings.append("q grids differed; curves were linearly interpolated to a common q grid.")
 

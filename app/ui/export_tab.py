@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QFileDialog, QTextEdit, QVBoxLayout, QWidget
 
-from app.core.export import export_analysis_bundle, export_curve_csv, export_feature_table
+from app.core.export import export_analysis_bundle, export_curve_csv, export_feature_table, export_origin_long_csv, export_origin_matrix_csv, origin_long_guide_path
 from app.core.project import save_project
 from app.core.records import create_history_record
 from app.core.report import generate_markdown_report
@@ -29,6 +29,20 @@ class ExportTab(QWidget):
             status_tip="汇总当前项目曲线和分析结果为 feature_table.csv。",
         )
         export_feature_button.clicked.connect(self.export_feature_table)
+        export_origin_long_button = action_button(
+            "导出 Origin 长表",
+            role="success",
+            tooltip="导出一行一个 q-I 点的 Origin 长表。",
+            status_tip="写出 curves_long.csv 和 curves_long_guide.md；适合分组叠图、误差棒、筛选和原位序列分析，不插值、不平滑、不修改曲线。",
+        )
+        export_origin_long_button.clicked.connect(self.export_origin_long_table)
+        export_origin_matrix_button = action_button(
+            "导出 Origin 矩阵表",
+            role="warning",
+            tooltip="导出 q 网格一致时的 Origin 矩阵表。",
+            status_tip="仅在所有曲线 q 网格一致时导出 curves_matrix.csv；不自动插值以避免改变原始数据。",
+        )
+        export_origin_matrix_button.clicked.connect(self.export_origin_matrix_table)
         export_report_button = action_button(
             "导出 Markdown 报告",
             role="primary",
@@ -59,6 +73,8 @@ class ExportTab(QWidget):
         layout.setSpacing(10)
         layout.addWidget(export_curve_button)
         layout.addWidget(export_feature_button)
+        layout.addWidget(export_origin_long_button)
+        layout.addWidget(export_origin_matrix_button)
         layout.addWidget(export_report_button)
         layout.addWidget(export_bundle_button)
         layout.addWidget(save_project_button)
@@ -91,6 +107,41 @@ class ExportTab(QWidget):
         self.main_window.records_tab.refresh()
         self.output.setPlainText(f"已导出: {path}")
 
+    def export_origin_long_table(self) -> None:
+        folder = self._choose_folder()
+        if folder is None:
+            self.output.setPlainText("请选择导出文件夹。")
+            return
+        path = export_origin_long_csv(self.main_window.project.curves, folder / "curves_long.csv")
+        guide_path = origin_long_guide_path(path)
+        self.main_window.project.add_history_record(
+            create_history_record(
+                "export_origin_long_csv",
+                parameters={"path": str(path), "guide_path": str(guide_path), "format": "csv", "curve_count": len(self.main_window.project.curves)},
+            )
+        )
+        self.main_window.records_tab.refresh()
+        self.output.setPlainText(f"已导出 Origin 长表:\n{path}\n说明文档:\n{guide_path}")
+
+    def export_origin_matrix_table(self) -> None:
+        folder = self._choose_folder()
+        if folder is None:
+            self.output.setPlainText("请选择导出文件夹。")
+            return
+        path, warnings = export_origin_matrix_csv(self.main_window.project.curves, folder / "curves_matrix.csv")
+        self.main_window.project.add_history_record(
+            create_history_record(
+                "export_origin_matrix_csv",
+                parameters={"path": None if path is None else str(path), "format": "csv", "curve_count": len(self.main_window.project.curves)},
+                warnings=warnings,
+            )
+        )
+        self.main_window.records_tab.refresh()
+        if path is None:
+            self.output.setPlainText("未导出 Origin 矩阵表:\n" + "\n".join(warnings))
+        else:
+            self.output.setPlainText(f"已导出 Origin 矩阵表: {path}")
+
     def export_report(self) -> None:
         folder = self._choose_folder()
         if folder is None:
@@ -121,11 +172,18 @@ class ExportTab(QWidget):
             history=self.main_window.project.history_records,
             formal_records=self.main_window.project.formal_records,
         )
+        warnings = []
+        warning_path = outputs.get("bundle_warnings")
+        if warning_path is not None:
+            warnings = warning_path.read_text(encoding="utf-8").splitlines()
         self.main_window.project.add_history_record(
-            create_history_record("export_analysis_bundle", parameters={"path": str(folder), "files": [str(path) for path in outputs.values()]})
+            create_history_record("export_analysis_bundle", parameters={"path": str(folder), "files": [str(path) for path in outputs.values()]}, warnings=warnings)
         )
         self.main_window.records_tab.refresh()
-        self.output.setPlainText("已导出完整分析包:\n" + "\n".join(str(path) for path in outputs.values()))
+        message = "已导出完整分析包:\n" + "\n".join(str(path) for path in outputs.values())
+        if warnings:
+            message += "\n\nwarnings:\n" + "\n".join(warnings)
+        self.output.setPlainText(message)
 
     def save_project_folder(self) -> None:
         folder = self._choose_folder()

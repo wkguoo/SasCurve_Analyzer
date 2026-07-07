@@ -4,23 +4,26 @@ from uuid import uuid4
 
 import numpy as np
 
+from app.core.array_utils import sort_arrays_by_q
 from app.core.data_model import ComparisonResult, CurveData
 
 
 def _aligned_values(curve_a: CurveData, curve_b: CurveData, *, interpolate: bool) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
     warnings: list[str] = []
-    if curve_a.q.shape == curve_b.q.shape and np.allclose(curve_a.q, curve_b.q):
-        return curve_a.q.copy(), curve_a.intensity.copy(), curve_b.intensity.copy(), warnings
+    q_a, a_intensity = sort_arrays_by_q(curve_a.q, curve_a.intensity)
+    q_b, b_intensity = sort_arrays_by_q(curve_b.q, curve_b.intensity)
+    if q_a.shape == q_b.shape and np.allclose(q_a, q_b):
+        return q_a.copy(), a_intensity.copy(), b_intensity.copy(), warnings
     if not interpolate:
         raise ValueError("q grids differ; set interpolate=True to compare on a common q grid.")
-    q_min = max(float(np.nanmin(curve_a.q)), float(np.nanmin(curve_b.q)))
-    q_max = min(float(np.nanmax(curve_a.q)), float(np.nanmax(curve_b.q)))
+    q_min = max(float(np.nanmin(q_a)), float(np.nanmin(q_b)))
+    q_max = min(float(np.nanmax(q_a)), float(np.nanmax(q_b)))
     if q_min >= q_max:
         raise ValueError("Curves do not share an overlapping q range.")
-    point_count = min(curve_a.q.size, curve_b.q.size)
+    point_count = min(q_a.size, q_b.size)
     q_grid = np.linspace(q_min, q_max, point_count)
     warnings.append("q grids differed; both curves were linearly interpolated to a common q grid.")
-    return q_grid, np.interp(q_grid, curve_a.q, curve_a.intensity), np.interp(q_grid, curve_b.q, curve_b.intensity), warnings
+    return q_grid, np.interp(q_grid, q_a, a_intensity), np.interp(q_grid, q_b, b_intensity), warnings
 
 
 def compare_curves(curve_a: CurveData, curve_b: CurveData, comparison_type: str, *, interpolate: bool = True) -> ComparisonResult:
@@ -61,11 +64,14 @@ def normalized_intensity(curve: CurveData, normalization_type: str, *, q_ref: fl
     elif normalization_type == "I/I(q_ref)":
         if q_ref is None:
             raise ValueError("q_ref is required for I/I(q_ref).")
-        denom = float(np.interp(q_ref, curve.q, curve.intensity))
+        q_sorted, intensity_sorted = sort_arrays_by_q(curve.q, curve.intensity)
+        denom = float(np.interp(q_ref, q_sorted, intensity_sorted))
     elif normalization_type == "I/area":
-        denom = float(np.trapezoid(curve.intensity, curve.q))
+        q_sorted, intensity_sorted = sort_arrays_by_q(curve.q, curve.intensity)
+        denom = float(np.trapezoid(intensity_sorted, q_sorted))
     elif normalization_type == "I/Q_measured":
-        denom = float(np.trapezoid(curve.q**2 * curve.intensity, curve.q))
+        q_sorted, intensity_sorted = sort_arrays_by_q(curve.q, curve.intensity)
+        denom = float(np.trapezoid(q_sorted**2 * intensity_sorted, q_sorted))
     else:
         raise ValueError(f"Unsupported normalization_type: {normalization_type}")
     if abs(denom) <= 1e-12:
