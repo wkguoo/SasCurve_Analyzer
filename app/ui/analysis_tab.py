@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QTextEdit, QVBoxLayout, QWidget
+import math
+
+import numpy as np
+from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QTextEdit, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 
 from app.core.analysis_preflight import check_analysis_preflight, format_analysis_preflight
+from app.core.auto_regions import AutoRegionCandidate, detect_auto_regions, region_type_label, run_analysis_for_region
+from app.core.export import export_auto_region_candidates_csv
 from app.core.method_mapping import plot_for_analysis
 from app.core.plot_analysis import analyze_curve_plot
 from app.core.plotting import display_x_limits_to_q_range_for_curve, transform_x_for_plot
@@ -95,6 +100,11 @@ class AnalysisTab(QWidget):
 
         self.output = QTextEdit()
         self.output.setReadOnly(True)
+        self.auto_region_candidates: list[AutoRegionCandidate] = []
+        self.auto_region_detection_result = None
+        self._auto_region_filled_candidate_id: str | None = None
+        self._auto_region_filled_q_range: tuple[float, float] | None = None
+        self.auto_region_group = self._build_auto_region_group()
 
         form = QFormLayout()
         form.addRow("分析类型", self.analysis_type)
@@ -114,8 +124,349 @@ class AnalysisTab(QWidget):
         layout.setSpacing(10)
         layout.addWidget(self.title_label)
         layout.addLayout(form)
+        layout.addWidget(self.auto_region_group)
         layout.addLayout(controls)
         layout.addWidget(self.output, 1)
+
+    def _build_auto_region_group(self) -> QGroupBox:
+        group = QGroupBox("自动识别 q 区间")
+        detect_button = action_button(
+            "识别区间",
+            role="secondary",
+            tooltip="基于当前曲线和 raw q 范围生成候选分析区间。",
+            status_tip="自动识别只生成候选区，不做结构判定；结果会写入项目历史记录。",
+        )
+        detect_button.clicked.connect(self.detect_auto_regions_for_current_curve)
+        fill_full_range_button = action_button("使用当前曲线完整 q 范围", role="secondary", tooltip="先填入当前曲线完整 raw q 范围。")
+        fill_full_range_button.clicked.connect(self.fill_current_range)
+        fill_region_button = action_button("将该区间填入 q_min/q_max", role="secondary", tooltip="把当前选中候选区的 raw q 范围填入分析输入框。")
+        fill_region_button.clicked.connect(self.fill_selected_auto_region_range)
+        run_region_button = action_button("使用该区间拟合/计算", role="primary", tooltip="基于当前选中候选区运行推荐分析。")
+        run_region_button.clicked.connect(self.run_selected_auto_region_analysis)
+        export_region_button = action_button("导出候选区表", role="secondary", tooltip="把当前候选区列表导出为独立 CSV。")
+        export_region_button.clicked.connect(self.export_auto_region_candidates)
+
+        self.auto_region_table = QTableWidget(0, 8)
+        self.auto_region_table.setHorizontalHeaderLabels(["类型", "q 范围", "d 范围", "点数", "评分", "等级", "推荐操作", "警告"])
+        self.auto_region_table.setAlternatingRowColors(True)
+        self.auto_region_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.auto_region_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.auto_region_table.itemSelectionChanged.connect(self._refresh_auto_region_detail)
+
+        self.auto_region_detail = QTextEdit()
+        self.auto_region_detail.setReadOnly(True)
+        self.auto_region_detail.setMaximumHeight(120)
+
+        button_row = QHBoxLayout()
+        button_row.addWidget(fill_full_range_button)
+        button_row.addWidget(detect_button)
+        button_row.addWidget(fill_region_button)
+        button_row.addWidget(run_region_button)
+        button_row.addWidget(export_region_button)
+        button_row.addStretch(1)
+
+        layout = QVBoxLayout(group)
+        layout.addLayout(button_row)
+        layout.addWidget(self.auto_region_table)
+        layout.addWidget(self.auto_region_detail)
+        return group
+
+    def _current_raw_q_range(self) -> tuple[float, float]:
+        return (float(self.q_min.value()), float(self.q_max.value()))
+
+    def _finite_curve_q_range(self, curve) -> tuple[float, float] | None:
+        finite_q = curve.q[np.isfinite(curve.q)]
+        if finite_q.size == 0:
+            return None
+        return (float(np.nanmin(finite_q)), float(np.nanmax(finite_q)))
+
+    def _set_q_range_without_marking_manual(self, q_range: tuple[float, float], *, range_source: str) -> None:
+        self.q_min.blockSignals(True)
+        self.q_max.blockSignals(True)
+        try:
+            self.q_min.setValue(float(q_range[0]))
+            self.q_max.setValue(float(q_range[1]))
+        finally:
+            self.q_min.blockSignals(False)
+            self.q_max.blockSignals(False)
+        self.range_source = range_source
+
+    def _q_range_for_auto_region_detection(self, curve) -> tuple[tuple[float, float] | None, list[str]]:
+        full_range = self._finite_curve_q_range(curve)
+        if full_range is None:
+            self.output.setPlainText(
+                format_user_message(
+                    UserMessage(
+                        title="Auto q-region detection cannot run",
+                        what_happened="Curve has no finite q data.",
+                        facts=(f"curve: {curve.name}",),
+                        severity="warning",
+                    )
+                )
+            )
+            return None, []
+
+        raw_q_range = self._current_raw_q_range()
+        messages: list[str] = []
+        default_initial_range = (
+            self.range_source == "manual raw q input"
+            and math.isclose(raw_q_range[0], 0.0, rel_tol=0.0, abs_tol=1e-12)
+            and math.isclose(raw_q_range[1], 1.0, rel_tol=0.0, abs_tol=1e-12)
+        )
+        if default_initial_range:
+            self._set_q_range_without_marking_manual(full_range, range_source="current curve raw q range for auto detection")
+            messages.append("完整 raw q 范围: 已自动使用当前曲线完整 raw q 范围，避免默认 0-1 截断自动识别。")
+            return full_range, messages
+
+        if raw_q_range[0] >= raw_q_range[1]:
+            self._set_q_range_without_marking_manual(full_range, range_source="current curve raw q range after invalid manual range")
+            messages.append("自动改用当前曲线完整 raw q 范围: 手工 q_min/q_max 范围无效。")
+            return full_range, messages
+
+        q_start, q_end = raw_q_range
+        curve_q_min, curve_q_max = full_range
+        if q_end < curve_q_min or q_start > curve_q_max:
+            self.output.setPlainText(
+                format_user_message(
+                    UserMessage(
+                        title="Auto q-region detection cannot run",
+                        what_happened="没有与当前曲线 q 范围重叠: manual q range has no overlap with curve.",
+                        facts=(
+                            f"manual raw q range: [{q_start:.6g}, {q_end:.6g}]",
+                            f"curve raw q range: [{curve_q_min:.6g}, {curve_q_max:.6g}]",
+                        ),
+                        severity="warning",
+                    )
+                )
+            )
+            return None, []
+
+        return raw_q_range, messages
+
+    def detect_auto_regions_for_current_curve(self) -> None:
+        curve = self.main_window.current_curve()
+        if curve is None:
+            self.output.setPlainText(
+                format_user_message(
+                    UserMessage(
+                        title="自动 q 区域识别无法运行",
+                        what_happened="当前没有选中的曲线。",
+                        facts=("MainWindow.current_curve() 返回 None。", "请先导入并选中一条 SAS 曲线。"),
+                        severity="warning",
+                    )
+                )
+            )
+            return
+        try:
+            q_range, range_messages = self._q_range_for_auto_region_detection(curve)
+            if q_range is None:
+                return
+            result = detect_auto_regions(curve, q_range)
+        except Exception as exc:
+            self.output.setPlainText(
+                format_user_message(
+                    UserMessage(
+                        title="自动 q 区域识别失败",
+                        what_happened="候选区间生成器没有返回可用结果。",
+                        facts=(f"curve: {curve.name}", f"raw q range: [{self.q_min.value():.6g}, {self.q_max.value():.6g}]"),
+                        technical_detail=exception_detail(exc),
+                        severity="error",
+                    )
+                )
+            )
+            return
+
+        self.auto_region_detection_result = result
+        self.auto_region_candidates = [AutoRegionCandidate.from_dict(row) for row in result.results.get("candidates", [])]
+        self._populate_auto_region_table()
+        self.main_window.project.add_analysis_result(result)
+        self.main_window.project.add_history_record(
+            create_history_record(
+                "auto_region_detection",
+                input_ids=[curve.curve_id],
+                output_ids=[result.analysis_id],
+                parameters={"q_range": result.q_range, "candidate_count": len(self.auto_region_candidates)},
+                warnings=result.warnings,
+            )
+        )
+        self.main_window.records_tab.refresh()
+        self.main_window.mark_project_dirty()
+        prefix = ("\n".join(range_messages) + "\n\n") if range_messages else ""
+        if self.auto_region_candidates:
+            self.output.setPlainText(prefix + self._format_result(result))
+        else:
+            self.output.setPlainText(
+                prefix
+                +
+                format_user_message(
+                    UserMessage(
+                        title="自动 q 区域识别未找到候选区",
+                        what_happened="自动 q 区域识别未找到满足最低置信度要求的候选区间。",
+                        facts=tuple(result.results.get("detection_warnings") or ["没有候选区。"]),
+                        severity="warning",
+                    )
+                )
+            )
+
+    def _format_float(self, value: float | None) -> str:
+        if value is None:
+            return "-"
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return "-"
+        if not math.isfinite(parsed):
+            return "-"
+        return f"{parsed:.6g}"
+
+    def _populate_auto_region_table(self) -> None:
+        self.auto_region_table.setRowCount(len(self.auto_region_candidates))
+        for row, candidate in enumerate(self.auto_region_candidates):
+            d_values = [value for value in (candidate.d_start, candidate.d_end) if value is not None]
+            d_range = "-" if not d_values else f"{self._format_float(min(d_values))} - {self._format_float(max(d_values))}"
+            values = [
+                region_type_label(candidate.region_type),
+                f"{self._format_float(candidate.q_start)} - {self._format_float(candidate.q_end)}",
+                d_range,
+                str(candidate.n_points),
+                self._format_float(candidate.score),
+                candidate.confidence_label,
+                candidate.recommended_analysis or "人工复核",
+                " | ".join(candidate.warnings[:2]) if candidate.warnings else "-",
+            ]
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setToolTip(value)
+                self.auto_region_table.setItem(row, column, item)
+        if self.auto_region_candidates:
+            self.auto_region_table.selectRow(0)
+        self.auto_region_table.resizeColumnsToContents()
+        self._refresh_auto_region_detail()
+
+    def _selected_auto_region(self) -> AutoRegionCandidate | None:
+        row = self.auto_region_table.currentRow()
+        if row < 0 or row >= len(self.auto_region_candidates):
+            return None
+        return self.auto_region_candidates[row]
+
+    def _refresh_auto_region_detail(self) -> None:
+        candidate = self._selected_auto_region()
+        if candidate is None:
+            self.auto_region_detail.setPlainText("尚未选择自动候选区。")
+            return
+        metric_lines = []
+        for key, value in candidate.metrics.items():
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                metric_lines.append(f"- {key}: {value}")
+        warning_lines = [f"- {warning}" for warning in candidate.warnings] or ["- 无"]
+        self.auto_region_detail.setPlainText(
+            "\n".join(
+                [
+                    f"region_id: {candidate.region_id}",
+                    f"类型: {region_type_label(candidate.region_type)}",
+                    f"检测方法: {candidate.detection_method}",
+                    f"raw q: {self._format_float(candidate.q_start)} - {self._format_float(candidate.q_end)}",
+                    f"推荐分析: {candidate.recommended_analysis or '人工复核'}",
+                    "关键指标:",
+                    *(metric_lines[:8] or ["- 无"]),
+                    "warnings:",
+                    *warning_lines,
+                ]
+            )
+        )
+
+    def fill_selected_auto_region_range(self) -> None:
+        candidate = self._selected_auto_region()
+        if candidate is None:
+            self.output.setPlainText("尚未选择自动候选区，无法填入 q_min/q_max。")
+            return
+        self.q_min.setValue(candidate.q_start)
+        self.q_max.setValue(candidate.q_end)
+        self.range_source = f"auto detected q range ({candidate.region_id})"
+        self._auto_region_filled_candidate_id = candidate.region_id
+        self._auto_region_filled_q_range = (candidate.q_start, candidate.q_end)
+        self.output.setPlainText(f"已填入候选区 raw q 范围: {candidate.q_start:.6g} - {candidate.q_end:.6g}")
+
+    def run_selected_auto_region_analysis(self) -> None:
+        curve = self.main_window.current_curve()
+        candidate = self._selected_auto_region()
+        if curve is None or candidate is None:
+            self.output.setPlainText("当前没有可用于一键拟合/计算的曲线或候选区。")
+            return
+        current_q_range = (
+            self._auto_region_filled_q_range
+            if self._auto_region_filled_candidate_id == candidate.region_id and self._auto_region_filled_q_range is not None
+            else self._current_raw_q_range()
+        )
+        user_override = None
+        if self._auto_region_filled_candidate_id != candidate.region_id and not (
+            math.isclose(current_q_range[0], candidate.q_start, rel_tol=1e-9, abs_tol=1e-12)
+            and math.isclose(current_q_range[1], candidate.q_end, rel_tol=1e-9, abs_tol=1e-12)
+        ):
+            user_override = current_q_range
+        try:
+            result = run_analysis_for_region(curve, candidate, user_overridden_q_range=user_override)
+        except Exception as exc:
+            self.output.setPlainText(
+                format_user_message(
+                    UserMessage(
+                        title="自动候选区一键分析失败",
+                        what_happened="候选区已经选中，但推荐分析函数执行失败。",
+                        facts=(f"candidate: {candidate.region_id}", f"region_type: {candidate.region_type}"),
+                        technical_detail=exception_detail(exc),
+                        severity="error",
+                    )
+                )
+            )
+            return
+        self.main_window.project.add_analysis_result(result)
+        self.main_window.project.add_history_record(
+            create_history_record(
+                "auto_region_analysis",
+                input_ids=[curve.curve_id, candidate.region_id],
+                output_ids=[result.analysis_id],
+                parameters={
+                    "source": "auto_region",
+                    "auto_region_id": candidate.region_id,
+                    "region_type": candidate.region_type,
+                    "original_q_range": (candidate.q_start, candidate.q_end),
+                    "final_q_range": result.q_range,
+                    "score": candidate.score,
+                    "confidence_label": candidate.confidence_label,
+                    "recommended_analysis": candidate.recommended_analysis,
+                    "user_overrode_range": user_override is not None,
+                    "force": False,
+                },
+                warnings=result.warnings,
+            )
+        )
+        self.main_window.records_tab.refresh()
+        self.main_window.mark_project_dirty()
+        self.output.setPlainText(self._format_result(result))
+
+    def export_auto_region_candidates(self) -> None:
+        if not self.auto_region_candidates:
+            self.output.setPlainText("当前没有可导出的自动候选区。")
+            return
+        path, _selected_filter = QFileDialog.getSaveFileName(self, "导出自动 q 候选区 CSV", "auto_region_candidates.csv", "CSV Files (*.csv)")
+        if not path:
+            return
+        try:
+            output_path = export_auto_region_candidates_csv(self.auto_region_candidates, path)
+        except Exception as exc:
+            self.output.setPlainText(
+                format_user_message(
+                    UserMessage(
+                        title="自动 q 候选区导出失败",
+                        what_happened="候选区表没有写入所选 CSV 文件。",
+                        facts=(f"target: {path}", f"candidate_count: {len(self.auto_region_candidates)}"),
+                        technical_detail=exception_detail(exc),
+                        severity="error",
+                    )
+                )
+            )
+            return
+        self.output.setPlainText(f"已导出自动 q 候选区表: {output_path}")
 
     def set_plot_type_from_plot(self, plot_type: str) -> None:
         index = self.analysis_type.findData(plot_type)
@@ -133,6 +484,8 @@ class AnalysisTab(QWidget):
 
     def _set_manual_range_source(self) -> None:
         self.range_source = "manual raw q input"
+        self._auto_region_filled_candidate_id = None
+        self._auto_region_filled_q_range = None
 
     def fill_range_from_plot_x_limits(self) -> None:
         curve = self.main_window.current_curve()

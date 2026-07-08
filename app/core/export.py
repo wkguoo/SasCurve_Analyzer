@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from app.core.array_utils import sort_arrays_by_q
-from app.core.data_model import AnalysisResult, ComparisonResult, CurveData
+from app.core.data_model import AnalysisResult, ComparisonResult, CurveData, utc_now_iso
 from app.core.derived_data import build_curve_derived_table
 from app.core.plotting import create_curve_figure
 
@@ -315,6 +315,79 @@ def export_origin_matrix_csv(curves: list[CurveData], path: str | Path) -> tuple
         data[column_name] = intensity
     pd.DataFrame(data).to_csv(target, index=False)
     return target, []
+
+
+AUTO_REGION_CANDIDATE_COLUMNS = [
+    "curve_id",
+    "curve_name",
+    "region_id",
+    "region_type",
+    "q_start",
+    "q_end",
+    "d_start",
+    "d_end",
+    "d_min",
+    "d_max",
+    "n_points",
+    "detection_method",
+    "score",
+    "confidence_label",
+    "fit_ready",
+    "recommended_analysis",
+    "metrics_json",
+    "warnings",
+    "source_detection_analysis_id",
+    "created_at",
+]
+
+
+def _auto_region_candidate_payload(candidate: Any) -> dict[str, Any]:
+    if hasattr(candidate, "to_dict"):
+        return candidate.to_dict()
+    return dict(candidate)
+
+
+def _auto_region_candidate_row(candidate: Any, created_at: str) -> dict[str, Any]:
+    payload = _auto_region_candidate_payload(candidate)
+    d_start = payload.get("d_start")
+    d_end = payload.get("d_end")
+    d_values = [float(value) for value in (d_start, d_end) if value is not None]
+    return {
+        "curve_id": payload.get("curve_id"),
+        "curve_name": payload.get("curve_name"),
+        "region_id": payload.get("region_id"),
+        "region_type": payload.get("region_type"),
+        "q_start": payload.get("q_start"),
+        "q_end": payload.get("q_end"),
+        "d_start": d_start,
+        "d_end": d_end,
+        "d_min": min(d_values) if d_values else None,
+        "d_max": max(d_values) if d_values else None,
+        "n_points": payload.get("n_points"),
+        "detection_method": payload.get("detection_method"),
+        "score": payload.get("score"),
+        "confidence_label": payload.get("confidence_label"),
+        "fit_ready": payload.get("fit_ready"),
+        "recommended_analysis": payload.get("recommended_analysis"),
+        "metrics_json": json.dumps(payload.get("metrics") or {}, ensure_ascii=False, default=_json_default),
+        "warnings": " | ".join(payload.get("warnings") or []),
+        "source_detection_analysis_id": payload.get("source_detection_analysis_id"),
+        "created_at": created_at,
+    }
+
+
+def export_auto_region_candidates_csv(candidates: list[Any], path: str | Path) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    created_at = utc_now_iso()
+    rows = [_auto_region_candidate_row(candidate, created_at) for candidate in candidates]
+    pd.DataFrame(rows, columns=AUTO_REGION_CANDIDATE_COLUMNS).to_csv(
+        target,
+        index=False,
+        encoding="utf-8-sig",
+        float_format="%.12g",
+    )
+    return target
 
 
 def export_analysis_json(result: AnalysisResult, path: str | Path) -> Path:

@@ -14,10 +14,15 @@ def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: 
     mask = np.isfinite(curve.q) & np.isfinite(curve.intensity) & (curve.q >= q_min) & (curve.q <= q_max)
     q = curve.q[mask]
     intensity = curve.intensity[mask]
+    error = None
+    if curve.error is not None and curve.error.shape == curve.q.shape:
+        error = curve.error[mask]
     if q.size > 1:
         order = np.argsort(q)
         q = q[order]
         intensity = intensity[order]
+        if error is not None:
+            error = error[order]
     warnings: list[str] = []
     peaks, properties = find_peaks(intensity, prominence=prominence)
     peak_results: list[dict] = []
@@ -27,6 +32,22 @@ def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: 
         sample_positions = np.arange(q.size, dtype=float)
         for i, peak_index in enumerate(peaks):
             peak_q = float(q[peak_index])
+            peak_prominence = None
+            if "prominences" in properties:
+                candidate_prominence = float(properties["prominences"][i])
+                peak_prominence = candidate_prominence if math.isfinite(candidate_prominence) else None
+            peak_snr = None
+            peak_snr_unavailable_reason = None
+            if peak_prominence is None:
+                peak_snr_unavailable_reason = "Peak prominence is unavailable."
+            elif error is None:
+                peak_snr_unavailable_reason = "No valid error column."
+            else:
+                peak_error = float(error[peak_index])
+                if math.isfinite(peak_error) and peak_error > 0:
+                    peak_snr = float(peak_prominence / peak_error)
+                else:
+                    peak_snr_unavailable_reason = "Peak error value is not finite and positive."
             left_ip = float(widths[2][i])
             right_ip = float(widths[3][i])
             left_q = float(np.interp(left_ip, sample_positions, q))
@@ -51,6 +72,11 @@ def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: 
                     "peak_I": float(intensity[peak_index]),
                     "peak_index": int(peak_index),
                     "FWHM": fwhm,
+                    "left_q": left_q,
+                    "right_q": right_q,
+                    "peak_prominence": peak_prominence,
+                    "peak_snr": peak_snr,
+                    "peak_snr_unavailable_reason": peak_snr_unavailable_reason,
                     "peak_area": area,
                     "raw_area_within_fwhm": area,
                     "baseline_corrected_peak_area": baseline_corrected_area,

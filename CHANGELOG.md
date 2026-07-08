@@ -1,5 +1,172 @@
 # CHANGELOG
 
+## 2026-07-08 23:35:41 +08:00 - Refine Automatic q-Region Detection Safety
+
+### Task Objective
+
+Execute the current `.ai-bridge/current-plan.md` automatic q-region detection rigor refactor: make Porod-like selection more conservative, enforce scanner window limits, make low-q upturn and out-of-range power-law slopes safer, enrich peak metrics, remove duplicate deep-scan scanner bodies, and prevent GUI default q ranges from silently truncating data.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/auto_regions.py`
+- `app/core/deep_scan.py`
+- `app/core/feature_extraction.py`
+- `app/core/region_scanners.py`
+- `app/ui/analysis_tab.py`
+- `tests/test_auto_regions.py`
+- `tests/test_auto_region_ui.py`
+- `tests/test_deep_scan.py`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added TDD coverage for conservative Porod high-q gating, scanner `max_scanned_windows`, high-q noise scoring, low-q upturn downgrade behavior, out-of-range power-law alpha handling, peak metric fields, GUI q-range safety, and `deep_scan.py` duplicate scanner cleanup.
+- Enforced `max_scanned_windows` in Guinier, power-law, and Porod sliding-window scanners, and recorded `scanned_windows`, `max_scanned_windows`, and `max_scanned_windows_reached` in candidate metrics.
+- Changed Porod-like scoring to include high-q position, `q^4I` plateau stability, positive plateau checks, point-count score, and high-q noise penalty; low-q or unstable windows are capped below high confidence.
+- Added power-law alpha plausibility warnings and score caps for slopes outside the usual empirical SAS range.
+- Downgraded Guinier candidates overlapping or near detected low-q upturns and preserved a low-score risk candidate when the regular ranking would hide the risky interval.
+- Added peak `peak_prominence`, `peak_snr`, `peak_snr_unavailable_reason`, `peak_local_baseline`, and `peak_local_contrast` metrics.
+- Replaced duplicate scanner implementations in `deep_scan.py` with compatibility wrappers around `region_scanners.py`.
+- Updated automatic q-region GUI detection so default `0-1` and invalid manual ranges fall back to the current curve's full raw q range, while non-overlapping manual ranges show a `UserMessage` and do not write an analysis result.
+
+### Reason
+
+The previous automatic q-region implementation could over-rank non-high-q Porod-like windows, hide low-q upturn risk, scan more windows than intended, and silently use the GUI's default `0-1` q range. These behaviors are risky for beginner SAS analysis because they can produce confident-looking but scientifically unsafe candidate intervals.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+python -B -m compileall -q main.py app\core app\ui
+```
+
+Focused checks used during this task:
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_regions.py tests\test_auto_region_ui.py tests\test_deep_scan.py
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_regions.py tests\test_auto_region_ui.py tests\test_deep_scan.py tests\test_porod_analysis.py tests\test_power_law.py tests\test_peak_analysis.py
+```
+
+### Generated Output Files
+
+- `.ai-bridge/implementation-diff.patch` will be regenerated after final handoff status updates.
+- No research output files, processed data, figures, packages, commits, or pushes were generated intentionally.
+- Test execution may create transient pytest or Python cache files, which are ignored by project `.gitignore`.
+
+### How To Check Success
+
+- Focused automatic-region/deep-scan tests pass with `25 passed`.
+- Related Porod, power-law, and peak regression tests pass with `34 passed`.
+- Full pytest passes with `242 passed`.
+- `python -B -m compileall -q main.py app\core app\ui` exits successfully.
+- `git -C sas_curve_analyzer diff --check` exits successfully, with only LF/CRLF normalization warnings on Windows.
+
+### Notes And Risks
+
+- Automatic labels remain candidate/risk labels only and do not prove particle shape, fractal type, interface sharpness, particle diameter, or volume fraction.
+- Conservative Porod scoring may reduce automatic confidence for valid data; users should review q range, background subtraction, and instrument noise before interpreting Porod-like behavior.
+- Raw experimental q/I data were not modified, deleted, moved, renamed, smoothed, interpolated, background-subtracted, unit-converted, or overwritten.
+- No packaging, Git commit, or Git push was performed for this entry.
+
+## 2026-07-08 22:52:49 +08:00 - Add Automatic SAS q-Region Detection And One-Click Analysis
+
+### Task Objective
+
+Execute the current `.ai-bridge/current-plan.md`: add automatic q-region candidate detection for SAS curves, support one-click fitting/calculation from candidate regions, allow user q-range adjustment, export traceable candidate tables, and keep existing `deep_scan` behavior compatible.
+
+### Added Files
+
+- `app/core/auto_regions.py`
+- `app/core/region_scanners.py`
+- `tests/test_auto_regions.py`
+- `tests/test_auto_region_ui.py`
+
+### Modified Files
+
+- `app/core/analysis_schema.py`
+- `app/core/deep_scan.py`
+- `app/core/export.py`
+- `app/core/feature_extraction.py`
+- `app/ui/analysis_tab.py`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added `AutoRegionOptions`, `AutoRegionCandidate`, `AutoRegionDetectionResult`, helper functions, and `detect_auto_regions()`.
+- Added `region_scanners.py` for reusable Guinier, power-law, peak, Porod-like, low-q upturn, and high-q noise/background-risk scanning.
+- Kept old `deep_scan.py` scanner import paths as wrappers that call `region_scanners.py`.
+- Added automatic region result metadata with `result_group="auto_region"` and `export_tables["auto_region_candidates"]`.
+- Added one-click `run_analysis_for_region()` dispatch for Guinier, power-law, Porod-like, peak, and finite measured invariant candidates.
+- Added skip results for non-fit-ready risk regions such as low-q upturn and high-q noise when `force=False`.
+- Added `left_q` and `right_q` peak boundary fields for traceable FWHM-derived peak candidates.
+- Added `export_auto_region_candidates_csv()` with q range, d range, score, confidence, metrics JSON, warnings, and source detection ID fields.
+- Added an `AnalysisTab` group box for automatic q-region detection, candidate display, q_min/q_max filling, one-click analysis, and candidate CSV export.
+- Added focused tests for automatic candidate detection, boundary cases, source metadata, CSV export, UI safety, q-range filling, and one-click execution.
+- After final review, fixed automatic q-range filling so spinbox rounding does not falsely record `user_overrode_range=True`.
+- After final review, fixed peak candidate `n_points` to report the actual number of raw q points inside the candidate q range.
+
+### Reason
+
+Manual q-range selection is a major source of SAS analysis error. The new workflow gives beginner users a traceable candidate interval list while keeping all labels as candidates or risk indicators, not structural proof.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+python -B -m compileall -q main.py app\core app\ui
+```
+
+Focused regression check:
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_regions.py tests\test_auto_region_ui.py tests\test_deep_scan.py tests\test_guinier.py tests\test_power_law.py tests\test_invariant.py tests\test_local_slope.py tests\test_porod_analysis.py tests\test_peak_analysis.py tests\test_ui_style.py tests\test_records.py tests\test_export.py
+```
+
+### Generated Output Files
+
+- No research output files, processed data, figures, packages, commits, or pushes were generated intentionally.
+- The UI can now export user-selected automatic candidates to a CSV path chosen by the user.
+- Test execution may create transient pytest or Python cache files, which are ignored by project `.gitignore`.
+
+### How To Check Success
+
+- In the analysis page, use `自动识别 q 区间` to detect candidates for the current curve.
+- Candidate rows include q range, d range, point count, score, confidence, warnings, and recommended action.
+- Selecting a candidate can fill `q_min/q_max` and run the recommended analysis.
+- Result metadata includes `source_auto_region_id`, `source_region_type`, `auto_score`, original/final q ranges, and override status.
+- Automatically filled candidate ranges are recorded as `user_overrode_range=False` unless the user changes the q range after filling.
+- Peak candidate point counts match the number of q points inside the candidate q range.
+- Full pytest passes with `233 passed`, and `compileall` exits successfully.
+
+### Notes And Risks
+
+- Original imported curves and raw experimental data files are not modified, moved, deleted, smoothed, background-subtracted, unit-converted, or overwritten.
+- The automatic labels are candidate/risk labels only; they do not prove particle shape, interface sharpness, fractal type, particle diameter, or volume fraction.
+- Low-q upturn and high-q noise/background-risk regions are not fit-ready by default.
+- No `build_feature_table` automatic-region columns were added in this round.
+- No plot overlay, P(r), background subtraction, absolute intensity calibration, or automatic structure determination was added.
+- No packaging was performed.
+
 ## 2026-07-08 19:10:28 +08:00 - Fix P1/P2 Data Safety And Analysis Bugs
 
 ### Task Objective

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import numpy as np
 
 from app.core.data_model import CurveData
-from app.core.deep_scan import run_deep_scan, scan_guinier_candidates, scan_power_law_candidates
+from app.core.deep_scan import curve_quality_metrics, run_deep_scan, scan_guinier_candidates, scan_power_law_candidates
 
 
 def test_deep_scan_ranks_guinier_candidate() -> None:
@@ -40,3 +43,41 @@ def test_power_law_candidates_report_fractal_like_interval() -> None:
     assert candidates
     assert np.isclose(candidates[0]["alpha"], 2.2, rtol=0.02)
     assert candidates[0]["interpretation"] == "mass_fractal_candidate"
+
+
+def test_deep_scan_keeps_legacy_scanner_import_paths_and_result_fields() -> None:
+    q = np.geomspace(0.01, 0.5, 120)
+    curve = CurveData.create(name="legacy", q=q, intensity=5.0 * q**-2.2)
+
+    quality = curve_quality_metrics(curve, (float(q.min()), float(q.max())))
+    result = run_deep_scan(curve, (float(q.min()), float(q.max())))
+
+    assert quality["positive_log_points"] == q.size
+    for key in [
+        "quality",
+        "best_guinier",
+        "best_power_law",
+        "peak_count",
+        "peaks",
+        "finite_invariant",
+        "guinier_candidate_count",
+        "power_law_candidate_count",
+        "multiscale_candidate_count",
+        "export_tables",
+    ]:
+        assert key in result.results
+
+
+def test_deep_scan_does_not_define_duplicate_scanner_bodies() -> None:
+    source_path = Path(__file__).resolve().parents[1] / "app" / "core" / "deep_scan.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    function_names = [node.name for node in tree.body if isinstance(node, ast.FunctionDef)]
+
+    for name in [
+        "_finite_positive_curve",
+        "scan_guinier_candidates",
+        "scan_power_law_candidates",
+        "curve_quality_metrics",
+        "_deep_peak_detection",
+    ]:
+        assert function_names.count(name) == 1

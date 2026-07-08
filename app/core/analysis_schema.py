@@ -13,6 +13,7 @@ RESULT_GROUP_FRACTAL = "fractal"
 RESULT_GROUP_LAMELLAR = "lamellar"
 RESULT_GROUP_TWO_PHASE = "two_phase"
 RESULT_GROUP_QUALITY = "quality"
+RESULT_GROUP_AUTO_REGION = "auto_region"
 
 RELIABILITY_HIGH = "high"
 RELIABILITY_MEDIUM = "medium"
@@ -37,6 +38,7 @@ EXPORT_TABLE_POWER_LAW_CANDIDATES = "power_law_candidates"
 EXPORT_TABLE_PR_DISTRIBUTION = "pr_distribution"
 EXPORT_TABLE_CORRELATION_FUNCTION = "correlation_function"
 EXPORT_TABLE_RESIDUALS = "residuals"
+EXPORT_TABLE_AUTO_REGION_CANDIDATES = "auto_region_candidates"
 
 
 def merge_standard_metadata(
