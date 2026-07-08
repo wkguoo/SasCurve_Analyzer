@@ -76,7 +76,8 @@ For files with `q_A_inv,intensity_cm_inv`, the q unit is inferred as `A^-1`, the
 
 ### Visualization
 
-- Linear, semi-log, log-log/power-law, Guinier, Kratky, Porod, invariant-integrand, log-q contribution, local-slope, and peak/d-spacing plots.
+- Eight main plotting views: linear, semi-log, log-log/power-law, Guinier, Kratky, Porod, invariant-integrand, and local-slope plots.
+- Peak q/d-spacing and log-q contribution diagnostics remain auxiliary derived-data or analysis outputs; they are not main plot-type entries.
 - Error bars when an error column is available.
 - Manual X/Y axis limits and quick full/low/mid/high q range buttons.
 - Cursor readout for the current plot coordinate, including derived q/I values for transformed views.
@@ -155,12 +156,12 @@ Minimal workflow:
 2. Select a `.csv`, `.txt`, or `.dat` curve file.
 3. Confirm the q, intensity, and optional error/sigma columns.
 4. Import the curve.
-5. Inspect validation warnings, plot the curve, and run model-free analyses.
+5. Inspect validation warnings in `数据导入`, then use `曲线工作台` to plot the curve and run the matching curve analysis.
 6. Use the `Settings` menu to view the active settings, settings file path, load status, and method/formula assumptions.
 
 ## User Manual
 
-For a beginner-friendly Chinese walkthrough, see [`docs/user_manual_zh.md`](docs/user_manual_zh.md). It covers data preparation, each GUI tab, q-range selection, plotting, model-free analysis, batch comparison, exports, troubleshooting, terminology, and method limitations.
+For a beginner-friendly Chinese walkthrough, see [`docs/user_manual_zh.md`](docs/user_manual_zh.md). It covers data preparation, the four workspaces, q-range selection, plotting, curve analysis, batch comparison, exports, troubleshooting, terminology, and method limitations.
 
 ## Input Data Format
 
@@ -232,12 +233,7 @@ User-facing exports include:
 - Comparison CSV files.
 - Feature tables.
 - Figures.
-- Markdown reports.
-- Complete analysis bundle metadata:
-  - `manifest.json`: software, inputs, analyses, outputs, warnings, settings snapshot link, and project counts.
-  - `README_export.md`: exported-file guide and review notes.
-  - `settings_snapshot.json`: export-time application settings.
-  - `bundle_warnings.txt`: bundle-level warnings, including skipped optional outputs.
+- Current-curve transformed-data CSV with first-hand q/I-derived columns such as `q²`, `ln q`, `ln I(q)`, `q²I(q)`, `q⁴I(q)`, and `d = 2π/q`.
 
 ## Method Limitations
 
@@ -245,7 +241,7 @@ User-facing exports include:
 - Slightly negative calibrated intensities are preserved and can be shown in linear or non-log transformed plots. They are classified separately from significant negative values; non-positive points are still excluded from logarithmic plots and log-based analyses.
 - Slight-negative classification can be configured in Settings with an enable switch, a relative abs-ratio threshold, and a negative-point fraction threshold. Wider thresholds can hide data-quality problems, so they should be reported with the analysis.
 - Plot axis limits are display-only controls and do not change imported curve data.
-- Analysis `q_min/q_max` values are raw physical q ranges. Negative display coordinates such as `ln q < 0` can be converted back to positive raw q before analysis, but negative raw q is not accepted.
+- Curve analysis area `q_min/q_max` values are raw physical q ranges. Negative display coordinates such as `ln q < 0` can be converted back to positive raw q before analysis, but negative raw q is not accepted.
 - Missing error columns are allowed; unweighted fitting is used where relevant.
 - Finite invariant values are measured-range descriptors unless explicit extrapolation and contrast assumptions are supplied externally.
 - Porod metrics are descriptive unless the user supplies the physical assumptions needed for absolute surface calculations.
@@ -277,11 +273,12 @@ The GUI code should call `app/core` modules for numerical work. New analysis beh
 - 导入 `.csv`、`.txt`、`.dat` 中的 q-I(q) 曲线，可选误差列。
 - 导入前可预览前几行并诊断列名、q/I 范围、NaN、重复 q、非正 q/强度和 error 异常。
 - 检查 q 顺序、重复 q、NaN、零强度、轻微/显著负强度和误差列异常。
-- 提供 linear、semi-log、log-log、Guinier、Kratky、Porod、invariant、local-slope、peak/d-spacing 等常用图。
-- 支持手动坐标范围、低/中/高 q 快捷视图、独立成行的鼠标坐标读数和 `d = 2*pi/q` 辅助轴。
-- 绘图页支持屏幕预览、组会汇报、论文初稿三种图像导出预设。
-- 支持 Guinier、power-law、local slope、peak、finite invariant、Kratky、Porod 等无模型分析，并可在绘图页和分析页之间一键联动；绘图页 display x 范围会先裁剪到当前曲线有效数据范围，再换算为 raw q；分析前会进行 q 范围预检。
-- 支持批量曲线比较、Origin 友好导出、Markdown 报告和项目记录。
+- 提供 linear、semi-log、log-log、Guinier、Kratky、Porod、invariant、local-slope 等八种主图；peak/d-spacing 作为辅助诊断保留。
+- 支持手动坐标范围、低/中/高 q 快捷视图、独立成行的鼠标坐标读数和 `d = 2π/q` 辅助轴。
+- 曲线绘图区域支持屏幕预览、组会汇报、论文初稿三种图像导出预设。
+- 支持 Guinier、power-law、local slope、peak、finite invariant、Kratky、Porod 等无模型分析，并可在曲线绘图区域和曲线分析区域之间一键联动；曲线绘图区域 display x 范围会先裁剪到当前曲线有效数据范围，再换算为 raw q；分析前会进行 q 范围预检。
+- 支持批量曲线比较、Origin 友好导出和项目记录。
+- 导出报告页已简化为高频稳定入口，并支持导出当前曲线第一手转换数据 CSV：`q`、`I(q)`、`q²`、`ln q`、`log10 q`、`ln I(q)`、`log10 I(q)`、`q²I(q)`、`q⁴I(q)` 等列可直接在 Origin、Excel 或 Python 中复核。
 - 批量页提供序列管理表和 `sequence_index.csv` 导出，便于复核原位/时间序列导入顺序、frame、q 范围和 warning。
 - 支持通过 `项目` 菜单新建、打开、保存和另存为项目；未保存更改会在窗口标题中显示 `*`，关闭/新建/打开前可选择保存、不保存或取消。
 
@@ -292,7 +289,7 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-基本流程：在 `Data Import` 中导入曲线，检查数据质量，在绘图页查看曲线，并按需要运行无模型分析或导出报告。
+基本流程：在 `Data Import` 中导入曲线，检查数据质量，在 `曲线工作台` 中查看曲线并运行对应曲线分析，最后按需要导出报告。
 
 ### 使用手册
 
@@ -303,8 +300,10 @@ python main.py
 - 软件不做原始二维图像积分、背景扣除、透过率校正、厚度校正或绝对强度校准。
 - 原始导入数据不会被直接修改，派生处理会生成新的曲线或输出文件。
 - 轻微负强度可保留并单独标注，但 log 图和 log 分析仍会排除 `I(q) <= 0`。
-- 分析页的 `q_min/q_max` 始终表示原始物理 q 范围；`ln q` 等图上负横坐标需要先换算回正的 raw q。
-- `d = 2*pi/q` 或 `d = 2*pi/q*` 表示特征尺度/相关距离，不自动等于颗粒直径。
+- 曲线分析区域的 `q_min/q_max` 始终表示原始物理 q 范围；`ln q` 等图上负横坐标需要先换算回正的 raw q。
+- `d = 2π/q` 或 `d = 2π/q*` 表示特征尺度/相关距离，不自动等于颗粒直径。
+- `ln` 是自然对数，`log10`/`lg` 是 10 为底对数；Guinier 图使用 `q2` 与 `ln_I`。
+- 当前曲线转换数据 CSV 中的 NaN 表示该行数学定义域无效，例如 `q <= 0` 或 `I(q) <= 0` 导致 log 列无定义；软件不会自动加常数，也不会删除原始 q/I 行。
 - P(r)、correlation 和 extrapolation 当前属于实验或预留接口，不应直接作为正式物理结论。
 
 ## License / Citation / Contact
@@ -314,3 +313,18 @@ License: MIT License. See LICENSE.
 Citation guidance: to be added.
 
 Contact: to be added.
+
+## 2026-07-08 Navigation And Eight-Plot Analysis Update
+
+The main window now uses four top-level workspaces:
+
+- `数据导入`: contains `导入数据` and `数据检查`.
+- `曲线工作台`: shows `曲线绘图` and `曲线分析` side by side.
+- `高级功能`: contains `高级方法`, `深度分析`, and `批量比较`.
+- `项目与输出`: contains records, report export, and templates.
+
+The main plotting combo box is restricted to eight views: `linear`, `semilog`, `loglog`, `guinier`, `kratky`, `porod`, `invariant`, and `local_slope`. The former `invariant_contribution` and `peak_spacing` entries are no longer main plot types; peak q and `d = 2π/q*` remain auxiliary information for linear plots or advanced peak analysis.
+
+All plot analysis outputs use the shared derived-data table. Main logarithmic views use natural logarithms (`ln`). `log10`/`lg` columns are export helpers only. Local slope is reported as `α(q) = -d ln I / d ln q`; the raw derivative column is still exported as `local_slope_dlnI_dlnq`.
+
+The report export page is now intentionally compact: it keeps current-curve CSV, feature table, Origin long table, Origin matrix table, and current-curve transformed-data CSV. The transformed-data CSV is a first-hand wide table generated from the original q/I rows only; it does not fit parameters, smooth data, add constants, delete rows, or restore removed plot types.

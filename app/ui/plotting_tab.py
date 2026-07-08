@@ -14,6 +14,17 @@ from app.core.user_messages import exception_detail, format_user_message, UserMe
 from app.ui.style import action_button, apply_help
 
 
+PLOT_TYPE_KEYS = [
+    "linear",
+    "semilog",
+    "loglog",
+    "guinier",
+    "kratky",
+    "porod",
+    "invariant",
+    "local_slope",
+]
+
 PLOT_TYPE_ITEMS = [
     ("Linear: I(q) vs q", "linear"),
     ("Semi-log: ln I(q) vs q", "semilog"),
@@ -22,9 +33,7 @@ PLOT_TYPE_ITEMS = [
     ("Kratky: q\u00b2I(q) vs q", "kratky"),
     ("Porod: q\u2074I(q) vs q", "porod"),
     ("Invariant integrand: q\u00b2I(q) vs q", "invariant"),
-    ("Log-q contribution: q\u00b3I(q) vs ln q", "invariant_contribution"),
     ("Local slope: \u03b1(q) vs q", "local_slope"),
-    ("Peak / d-spacing: I(q) vs q, d = 2\u03c0/q*", "peak_spacing"),
 ]
 
 
@@ -188,7 +197,7 @@ class PlottingTab(QWidget):
             plot_type=plot_type,
             show_error=self.show_error.isChecked(),
             show_d_axis=self.show_d_axis.isChecked(),
-            annotate_peaks=self.annotate_peaks.isChecked() or plot_type == "peak_spacing",
+            annotate_peaks=self.annotate_peaks.isChecked(),
         )
         limit_warning = self._apply_axis_limits()
         if limit_warning:
@@ -304,7 +313,7 @@ class PlottingTab(QWidget):
             return
         q = np.asarray(curve.q, dtype=float)
         q = q[np.isfinite(q)]
-        if self.plot_type.currentData() in {"loglog", "guinier", "invariant_contribution"}:
+        if self.plot_type.currentData() in {"loglog", "guinier"}:
             q = q[q > 0]
         if q.size == 0:
             self.messages.setPlainText("No finite q values are available for range selection.")

@@ -33,6 +33,43 @@ Supported q unit conversion:
 
 Intensity units are not converted or scaled by q unit conversion. Conversion creates a new `CurveData` object and records curve-level processing history plus project-level operation history in the GUI.
 
+## Derived Data Tables
+
+`app/core/derived_data.py` builds row-preserving derived tables from imported q and I(q). The table keeps every original point and writes `NaN` for values outside a mathematical domain or missing a required parameter. `NaN` in a derived column does not mean the original row was deleted.
+
+Horizontal derived columns:
+
+| Column | Formula | Domain / notes |
+| --- | --- | --- |
+| `q` | original q | finite q for most numerical use |
+| `q2` | `q**2` | finite q |
+| `ln_q` | `ln(q)` | `q > 0` |
+| `log10_q` / `lg_q` | `log10(q)` | `q > 0` |
+| `inv_q` | `1/q` | `q != 0` |
+| `d_2pi_over_q` | `2π/q` | `q > 0`; unit is inverse of q unit |
+| `qRg` | `q*Rg` | Rg must be supplied explicitly |
+| `qD` / `qR` | `q*D`, `q*R` | D/R must be supplied explicitly |
+
+Vertical derived columns:
+
+| Column | Formula | Domain / notes |
+| --- | --- | --- |
+| `I` | original I(q) | finite I for most numerical use |
+| `ln_I` | `ln(I)` | `I > 0`; used by Guinier and semilog views |
+| `log10_I` / `lg_I` | `log10(I)` | `I > 0` |
+| `qI` | `q*I` | finite q and I |
+| `q2I` | `q**2*I` | Kratky and invariant integrand |
+| `q3I` | `q**3*I` | log-q contribution diagnostics |
+| `q4I` | `q**4*I` | Porod view |
+| `q_alpha_I` | `q**alpha*I` | alpha must be supplied and recorded in metadata |
+| `local_slope_dlnI_dlnq` | `np.gradient(np.log(I), np.log(q))` on q-sorted valid rows | requires at least 3 rows with `q > 0` and `I > 0`; duplicate valid q returns NaN |
+| `I_over_ref` | `I/I_ref` | reference curve must have the same q grid and nonzero reference intensity |
+| `I_minus_ref` | `I-I_ref` | reference curve must have the same q grid |
+
+`ln(x)` means natural logarithm. `lg(x)` and `log10(x)` mean base-10 logarithm. Guinier calculations and plots use `q2` vs `ln_I`, not `log10_I`.
+
+Reference ratio/difference columns do not interpolate. If q grids differ, the reference columns are `NaN` and a fact-only warning is recorded. This first implementation also records units as strings and does not automatically convert between `A^-1` and `nm^-1`.
+
 ## Plotting
 
 Supported plot types include linear `I(q) vs q`, semi-log `ln I(q) vs q`, log-log/power-law `ln I(q) vs ln q`, Guinier `ln I(q) vs q²`, Kratky `q²I(q) vs q`, Porod `q⁴I(q) vs q`, invariant-integrand `q²I(q) vs q`, log-q contribution `q³I(q) vs ln q`, local slope `α(q) vs q`, and peak/d-spacing `I(q) vs q` with `d = 2π/q*` annotation.
@@ -44,6 +81,8 @@ When error bars are shown on log-intensity plots, the propagated error is `sigma
 Manual X/Y axis limits and quick full/low/mid/high q buttons only change the displayed axes. They do not modify `CurveData`, saved data, or analysis ranges. For transformed views, the X range is in display coordinates: q² for Guinier and ln q for log-log or log-q contribution plots. Cursor readout reports display coordinates and, where useful, approximate back-transformed q/I values.
 
 The plotting tab and model-free analysis tab are linked through a shared plot/analysis mapping. The link is user-triggered: selecting a plot type does not automatically change tabs, but the user can send supported plot views to the matching analysis or show the matching plot for a selected analysis.
+
+Plotting data for transformed views comes from the same derived-table formulas used by export. For example, Guinier uses `q2` and `ln_I`, log-log uses `ln_q` and `ln_I`, Kratky/invariant use `q2I`, Porod uses `q4I`, and local slope uses `local_slope_dlnI_dlnq`.
 
 Analysis `q_min/q_max` values remain raw physical q ranges. Physical q must be positive for analysis-range conversion. Display coordinates can be negative when they are transformed values, for example `ln q < 0` when `0 < q < 1`. The GUI can read the current plot x-limits and convert them back to raw q before analysis:
 
@@ -164,3 +203,26 @@ The application distinguishes:
 - `ProjectState.history_records`: project-level operation log for import, unit conversion, analysis, group creation, averaging, comparison, export, project save, and formal-record actions.
 
 Formal records can point to curves, analysis results, comparison results, or reserved figure entries.
+
+## 2026-07-08 Eight Main Plot Analyses
+
+Main plotting is restricted to eight analysis-linked views. All formulas use the imported `q` and `I(q)` arrays through the shared derived table; invalid mathematical domains are represented as `NaN` plus warnings, not by modifying data.
+
+| Plot key | View | Main outputs |
+| --- | --- | --- |
+| `linear` | `I(q)` vs `q` | finite/negative/zero/non-finite counts and intensity range |
+| `semilog` | `ln I(q)` vs `q` | valid `ln_I` count and filtered non-positive intensity count |
+| `loglog` | `ln I(q)` vs `ln q` | `fit_slope_m`, `α = -m`, `A = exp(b)`, `R2`, residuals |
+| `guinier` | `ln I(q)` vs `q²` | `Rg`, `I0`, slope/intercept, qRg range, `R2`, residuals |
+| `kratky` | `q²I(q)` vs `q` | peak position/intensity, FWHM, selected-range area, trend slope |
+| `porod` | `q⁴I(q)` vs `q` | loglog slope/α, q⁴I mean/std/CV, stability score, relative Porod constant |
+| `invariant` | `q²I(q)` vs `q` | finite measured integral `Q_measured = ∫ q²I(q) dq` |
+| `local_slope` | `α(q)` vs `q` | selected-range average α and standard deviation |
+
+Guinier results require a negative fitted slope to calculate a real `Rg`. If the slope is non-negative, the result records a warning instead of forcing a radius. The qRg check is empirical and does not prove physical validity.
+
+Kratky and Porod outputs are descriptive shape or relative plateau metrics for systems such as Ti-SiC composites. They must not be interpreted as protein-folding states or absolute specific surface area unless the user supplies the needed physical assumptions and calibration.
+
+Invariant output is finite-range `Q_measured` only. It is not a full scattering invariant without justified low-q and high-q extrapolation.
+
+Local slope uses `α(q) = -d ln I / d ln q`. The exported raw derivative `local_slope_dlnI_dlnq` is retained for audit. Automatic plateau detection is not implemented in this version because local slope is noise-sensitive.

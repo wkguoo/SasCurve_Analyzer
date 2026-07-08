@@ -10,11 +10,15 @@ from app.core.data_model import CurveData
 from app.core.project import ProjectState, load_project, save_project
 from app.core.records import create_history_record
 from app.core.settings import load_settings_with_info
-from app.core.user_messages import exception_detail, format_user_message, UserMessage
-from app.ui.analysis_tab import AnalysisTab
+from app.core.user_messages import UserMessage, exception_detail, format_user_message
 from app.ui.advanced_tab import AdvancedTab
+from app.ui.advanced_workspace_tab import AdvancedWorkspaceTab
+from app.ui.analysis_tab import AnalysisTab
 from app.ui.batch_tab import BatchTab
 from app.ui.check_tab import CheckTab
+from app.ui.curve_workspace_tab import CurveWorkspaceTab
+from app.ui.data_import_workspace_tab import DataImportWorkspaceTab
+from app.ui.deep_analysis_tab import DeepAnalysisTab
 from app.ui.export_tab import ExportTab
 from app.ui.import_tab import ImportTab
 from app.ui.plotting_tab import PlottingTab
@@ -40,38 +44,45 @@ class MainWindow(QMainWindow):
         apply_help(
             self.curve_list,
             tooltip="已导入曲线列表。",
-            status_tip="选择一条曲线后，检查、绘图、分析、导出等页签会使用当前曲线。",
+            status_tip="选择一条曲线后，数据检查、绘图、分析和导出页面会使用当前曲线。",
         )
         self.curve_list.currentRowChanged.connect(self._on_curve_selection_changed)
 
         self.tabs = QTabWidget()
         self.tabs.setObjectName("mainTabs")
+
         self.import_tab = ImportTab(self)
         self.check_tab = CheckTab(self)
         self.plotting_tab = PlottingTab(self)
         self.analysis_tab = AnalysisTab(self)
         self.batch_tab = BatchTab(self)
+        self.deep_analysis_tab = DeepAnalysisTab(self)
         self.records_tab = RecordsTab(self)
         self.export_tab = ExportTab(self)
         self.templates_tab = TemplatesTab(self)
         self.advanced_tab = AdvancedTab(self)
+
         self.output_tabs = QTabWidget()
         self.output_tabs.setObjectName("outputTabs")
         self.output_tabs.addTab(self.records_tab, "历史与正式记录")
         self.output_tabs.addTab(self.export_tab, "导出报告")
         self.output_tabs.addTab(self.templates_tab, "分析模板")
-        self.tabs.addTab(self.import_tab, "数据导入")
-        self.tabs.addTab(self.check_tab, "数据检查")
-        self.tabs.addTab(self.plotting_tab, "曲线绘图")
-        self.tabs.addTab(self.analysis_tab, "无模型分析")
-        self.tabs.addTab(self.batch_tab, "批量比较")
-        self.tabs.addTab(self.advanced_tab, "高级功能")
+
+        self.data_import_workspace_tab = DataImportWorkspaceTab(self.import_tab, self.check_tab)
+        self.curve_workspace_tab = CurveWorkspaceTab(self.plotting_tab, self.analysis_tab)
+        self.advanced_workspace_tab = AdvancedWorkspaceTab(self.advanced_tab, self.deep_analysis_tab, self.batch_tab)
+        self.tabs.addTab(self.data_import_workspace_tab, "数据导入")
+        self.tabs.addTab(self.curve_workspace_tab, "曲线工作台")
+        self.tabs.addTab(self.advanced_workspace_tab, "高级功能")
         self.tabs.addTab(self.output_tabs, "项目与输出")
+        self.plotting_tab.plot_type.currentIndexChanged.connect(
+            lambda _index: self.analysis_tab.set_plot_type_from_plot(self.plotting_tab.plot_type.currentData())
+        )
         self._configure_tab_help()
 
         self._create_project_menu()
         settings_action = self.menuBar().addAction("设置")
-        settings_action.setStatusTip("配置默认 q 单位、图像格式、误差棒和导出目录。")
+        settings_action.setStatusTip("配置默认 q 单位、图像格式、误差检查和导出目录。")
         settings_action.triggered.connect(self.open_settings)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -81,7 +92,7 @@ class MainWindow(QMainWindow):
         splitter.setSizes([285, 955])
         self.setCentralWidget(splitter)
 
-        self.statusBar().showMessage("请导入已完成绝对强度校准的一维 SAS 曲线。")
+        self.statusBar().showMessage("请导入已经完成绝对强度校准的一维 SAS 曲线。")
         self._update_window_title()
 
     def _create_project_menu(self) -> None:
@@ -115,26 +126,23 @@ class MainWindow(QMainWindow):
         }
 
     def _configure_tab_help(self) -> None:
-        tab_help = {
-            0: "选择并导入单条或批量 SAS 曲线。",
-            1: "查看当前曲线的数据质量检查结果。",
-            2: "生成线性、对数、Guinier、Kratky 等常用图。",
-            3: "运行 Guinier、幂律、峰识别等无模型分析。",
-            4: "对多条曲线分组、平均或 A/B 比较。",
-            5: "实验性高级变换与方法边界提示。",
-            6: "管理历史记录、导出报告和分析模板等项目输出。",
-        }
-        for index, text in tab_help.items():
+        tab_help = [
+            "导入 SAS 曲线，并在内部数据检查页查看质量提示。",
+            "同屏查看曲线绘图和八种曲线分析输出。",
+            "使用高级方法、深度分析和批量比较等低频功能。",
+            "管理历史记录、导出报告和分析模板。",
+        ]
+        for index, text in enumerate(tab_help):
             self.tabs.setTabToolTip(index, text)
         self.output_tabs.setTabToolTip(0, "管理历史记录和正式报告记录。")
         self.output_tabs.setTabToolTip(1, "导出曲线、特征表、报告或项目文件夹。")
         self.output_tabs.setTabToolTip(2, "保存、加载并批量应用分析模板。")
 
     def show_plotting_tab(self) -> None:
-        self.tabs.setCurrentWidget(self.plotting_tab)
+        self.tabs.setCurrentWidget(self.curve_workspace_tab)
 
     def show_analysis_tab(self) -> None:
-        self.tabs.setCurrentWidget(self.analysis_tab)
+        self.tabs.setCurrentWidget(self.curve_workspace_tab)
 
     def show_project_output_tab(self, child_index: int = 0) -> None:
         self.tabs.setCurrentWidget(self.output_tabs)
@@ -149,6 +157,13 @@ class MainWindow(QMainWindow):
         return True
 
     def set_analysis_type(self, analysis_type: str) -> bool:
+        aliases = {
+            "power_law": "loglog",
+            "kratky_metrics": "kratky",
+            "porod_metrics": "porod",
+            "invariant_measured": "invariant",
+        }
+        analysis_type = aliases.get(analysis_type, analysis_type)
         index = self.analysis_tab.analysis_type.findData(analysis_type)
         if index < 0:
             return False
@@ -215,10 +230,7 @@ class MainWindow(QMainWindow):
         self._update_window_title()
 
     def _update_window_title(self) -> None:
-        if self.current_project_folder is None:
-            project_name = "Untitled"
-        else:
-            project_name = self.current_project_folder.name
+        project_name = "Untitled" if self.current_project_folder is None else self.current_project_folder.name
         dirty_marker = " *" if self.is_project_dirty() else ""
         self.setWindowTitle(f"SAS Curve Analyzer - {project_name}{dirty_marker}")
 
@@ -277,7 +289,7 @@ class MainWindow(QMainWindow):
                         title="项目打开失败",
                         what_happened="所选文件夹没有成功恢复为当前项目。",
                         facts=(
-                            f"selected_folder：{folder}。",
+                            f"selected_folder: {folder}。",
                             "项目打开要求文件夹中存在可读取的 project.json。",
                         ),
                         technical_detail=exception_detail(exc),
@@ -309,8 +321,8 @@ class MainWindow(QMainWindow):
                     title="项目保存失败",
                     what_happened="当前项目没有写入当前项目文件夹。",
                     facts=(
-                        f"current_project_folder：{self.current_project_folder}。",
-                        f"curve_count：{len(self.project.curves)}。",
+                        f"current_project_folder: {self.current_project_folder}。",
+                        f"curve_count: {len(self.project.curves)}。",
                     ),
                     technical_detail=exception_detail(exc),
                     severity="error",
@@ -331,8 +343,8 @@ class MainWindow(QMainWindow):
                     title="项目另存为失败",
                     what_happened="当前项目没有写入所选项目文件夹。",
                     facts=(
-                        f"selected_folder：{folder}。",
-                        f"curve_count：{len(self.project.curves)}。",
+                        f"selected_folder: {folder}。",
+                        f"curve_count: {len(self.project.curves)}。",
                     ),
                     technical_detail=exception_detail(exc),
                     severity="error",

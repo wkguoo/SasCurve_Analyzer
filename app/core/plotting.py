@@ -7,11 +7,21 @@ from matplotlib.figure import Figure
 
 from app.core.array_utils import sort_arrays_by_q
 from app.core.data_model import CurveData
+from app.core.derived_data import build_curve_derived_table
 from app.core.feature_extraction import detect_peaks
-from app.core.model_free import local_slope
 
 
-Q_AXIS_PLOT_TYPES = {"linear", "semilog", "kratky", "porod", "invariant", "local_slope", "peak_spacing"}
+Q_AXIS_PLOT_TYPES = {"linear", "semilog", "kratky", "porod", "invariant", "local_slope"}
+PLOT_DERIVED_MAPPING = {
+    "linear": {"x": "q", "y": "I"},
+    "semilog": {"x": "q", "y": "ln_I"},
+    "loglog": {"x": "ln_q", "y": "ln_I"},
+    "guinier": {"x": "q2", "y": "ln_I"},
+    "kratky": {"x": "q", "y": "q2I"},
+    "invariant": {"x": "q", "y": "q2I"},
+    "porod": {"x": "q", "y": "q4I"},
+    "local_slope": {"x": "q", "y": "alpha_local"},
+}
 
 
 def display_unit(unit: str) -> str:
@@ -30,7 +40,7 @@ def transform_x_for_plot(q, plot_type: str):
     q_array = np.asarray(q, dtype=float)
     if plot_type in Q_AXIS_PLOT_TYPES:
         return q_array
-    if plot_type in {"loglog", "invariant_contribution"}:
+    if plot_type == "loglog":
         return np.log(q_array)
     if plot_type == "guinier":
         return q_array**2
@@ -45,7 +55,7 @@ def display_x_range_to_q_range(x_min: float, x_max: float, plot_type: str) -> tu
 
     if plot_type in Q_AXIS_PLOT_TYPES:
         q_values = [x0, x1]
-    elif plot_type in {"loglog", "invariant_contribution"}:
+    elif plot_type == "loglog":
         q_values = [float(np.exp(x0)), float(np.exp(x1))]
     elif plot_type == "guinier":
         if x0 < 0 or x1 < 0:
@@ -137,92 +147,78 @@ def create_curve_figure(
     y_label = "I(q)"
 
     for curve in curve_list:
-        if curve.error is None:
-            q, intensity = sort_arrays_by_q(curve.q, curve.intensity)
-            error = None
-        else:
-            q, intensity, error = sort_arrays_by_q(curve.q, curve.intensity, curve.error)
-        mask = np.isfinite(q) & np.isfinite(intensity)
-
-        if plot_type in {"semilog", "loglog", "guinier"}:
-            invalid_i = mask & (intensity <= 0)
-            if np.any(invalid_i):
-                suffix = " for Guinier plot." if plot_type == "guinier" else "."
-                warnings.append(f"{curve.name}: excluded {int(np.sum(invalid_i))} points with I(q) <= 0{suffix}")
-            mask &= intensity > 0
-
-        if plot_type in {"loglog", "guinier", "invariant_contribution"}:
-            invalid_q = mask & (q <= 0)
-            if np.any(invalid_q):
-                suffix = " for Guinier plot." if plot_type == "guinier" else "."
-                warnings.append(f"{curve.name}: excluded {int(np.sum(invalid_q))} points with q <= 0{suffix}")
-            mask &= q > 0
-        if not np.any(mask):
-            warnings.append(f"{curve.name}: no valid points remain for {plot_type} plot.")
-
-        x = q[mask]
-        y = intensity[mask]
-        yerr = error[mask] if show_error and error is not None else None
-        if yerr is not None and (np.any(~np.isfinite(yerr)) or np.any(yerr < 0)):
-            warnings.append(f"{curve.name}: error bars were hidden because error contains invalid values.")
-            yerr = None
-
+        derived = build_curve_derived_table(curve, preserve_input_order=False)
+        table = derived.table
+        mapping = PLOT_DERIVED_MAPPING.get(plot_type)
+        if mapping is None:
+            raise ValueError(f"Unsupported plot_type: {plot_type}")
         q_unit = display_unit(curve.q_unit)
         intensity_unit = display_unit(curve.intensity_unit)
+        x_column = mapping["x"]
+        y_column = mapping["y"]
+        x_values = table[x_column].to_numpy(dtype=float)
+        y_values = table[y_column].to_numpy(dtype=float)
+        mask = np.isfinite(x_values) & np.isfinite(y_values)
+        if plot_type in {"loglog", "guinier"}:
+            mask &= table["q"].to_numpy(dtype=float) > 0
+        if not np.any(mask):
+            warnings.append(f"{curve.name}: no valid points remain for {plot_type} plot.")
+        if plot_type in {"semilog", "loglog", "guinier"}:
+            invalid_i_count = int(np.sum(table["I"].notna().to_numpy() & (table["I"].to_numpy(dtype=float) <= 0)))
+            if invalid_i_count:
+                suffix = " for Guinier plot." if plot_type == "guinier" else "."
+                warnings.append(f"{curve.name}: excluded {invalid_i_count} points with I(q) <= 0{suffix}")
+        if plot_type in {"loglog", "guinier"}:
+            invalid_q_count = int(np.sum(table["q"].notna().to_numpy() & (table["q"].to_numpy(dtype=float) <= 0)))
+            if invalid_q_count:
+                suffix = " for Guinier plot." if plot_type == "guinier" else "."
+                warnings.append(f"{curve.name}: excluded {invalid_q_count} points with q <= 0{suffix}")
+
+        x_plot = table.loc[mask, x_column].to_numpy(dtype=float)
+        y_plot = table.loc[mask, y_column].to_numpy(dtype=float)
+        yerr = None
+        if show_error and curve.error is not None and "error" in table:
+            error_values = table.loc[mask, "error"].to_numpy(dtype=float)
+            if np.any(~np.isfinite(error_values)) or np.any(error_values < 0):
+                warnings.append(f"{curve.name}: error bars were hidden because error contains invalid values.")
+            elif plot_type in {"semilog", "loglog", "guinier"}:
+                intensity_values = table.loc[mask, "I"].to_numpy(dtype=float)
+                yerr = error_values / intensity_values
+            elif plot_type in {"kratky", "invariant"}:
+                q_values = table.loc[mask, "q"].to_numpy(dtype=float)
+                yerr = (q_values**2) * error_values
+            elif plot_type == "porod":
+                q_values = table.loc[mask, "q"].to_numpy(dtype=float)
+                yerr = (q_values**4) * error_values
+            elif plot_type != "local_slope":
+                yerr = error_values
+
         if plot_type == "linear":
-            x_plot = x
-            y_plot = y
             x_label = f"q ({q_unit})"
             y_label = f"I(q) ({intensity_unit})"
         elif plot_type == "semilog":
-            x_plot = x
-            y_plot = np.log(y)
             x_label = f"q ({q_unit})"
             y_label = f"ln I(q) ({intensity_unit})"
-            if yerr is not None:
-                yerr = yerr / y
         elif plot_type == "loglog":
-            x_plot = np.log(x)
-            y_plot = np.log(y)
             x_label = f"ln q ({q_unit})"
             y_label = f"ln I(q) ({intensity_unit})"
-            if yerr is not None:
-                yerr = yerr / y
         elif plot_type == "guinier":
-            x_plot = x**2
-            y_plot = np.log(y)
             x_label = f"q\u00b2 ({q_unit})\u00b2"
             y_label = f"ln I(q) ({intensity_unit})"
-            if yerr is not None:
-                yerr = yerr / y
         elif plot_type in {"kratky", "invariant"}:
-            x_plot = x
-            y_plot = x**2 * y
             x_label = f"q ({q_unit})"
             y_label = f"q\u00b2I(q) ({q_unit})\u00b2 {intensity_unit}"
-            if yerr is not None:
-                yerr = (x**2) * yerr
-        elif plot_type == "invariant_contribution":
-            x_plot = np.log(x)
-            y_plot = x**3 * y
-            x_label = f"ln q ({q_unit})"
-            y_label = f"q\u00b3I(q) ({q_unit})\u00b3 {intensity_unit}"
-            if yerr is not None:
-                yerr = (x**3) * yerr
         elif plot_type == "porod":
-            x_plot = x
-            y_plot = x**4 * y
             x_label = f"q ({q_unit})"
             y_label = f"q\u2074I(q) ({q_unit})\u2074 {intensity_unit}"
-            if yerr is not None:
-                yerr = (x**4) * yerr
-        elif plot_type == "peak_spacing":
-            x_plot = x
-            y_plot = y
+        elif plot_type == "local_slope":
             x_label = f"q ({q_unit})"
-            y_label = f"I(q) ({intensity_unit})"
+            y_label = "\u03b1(q) = -d ln I / d ln q"
+            yerr = None
+
+        if plot_type == "linear" and annotate_peaks:
             peak_result = detect_peaks(curve, (float(np.nanmin(curve.q)), float(np.nanmax(curve.q))))
-            if annotate_peaks and peak_result.results["peaks"]:
+            if peak_result.results["peaks"]:
                 first_peak = peak_result.results["peaks"][0]
                 ax.axvline(first_peak["peak_q"], color="tab:red", linestyle="--", linewidth=1)
                 ax.annotate(
@@ -234,15 +230,7 @@ def create_curve_figure(
                     color="tab:red",
                 )
             warnings.extend(peak_result.warnings)
-        elif plot_type == "local_slope":
-            result = local_slope(curve, (float(np.nanmin(curve.q)), float(np.nanmax(curve.q))))
-            x_plot = np.asarray(result.results["q_mid"], dtype=float)
-            y_plot = np.asarray(result.results["alpha"], dtype=float)
-            x_label = f"q ({q_unit})"
-            y_label = "\u03b1(q) = -d ln I / d ln q"
-            yerr = None
-            warnings.extend(result.warnings)
-        else:
+        elif plot_type not in PLOT_DERIVED_MAPPING:
             raise ValueError(f"Unsupported plot_type: {plot_type}")
 
         if yerr is not None:

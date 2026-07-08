@@ -7,16 +7,33 @@ import numpy as np
 from app.core.data_model import CurveData
 
 
-LOG_INTENSITY_ANALYSES = {"guinier", "power_law", "local_slope"}
-POSITIVE_Q_ANALYSES = {"guinier", "power_law", "local_slope", "information_budget", "kratky_metrics", "porod_metrics"}
+LOG_INTENSITY_ANALYSES = {"semilog", "loglog", "guinier", "power_law", "local_slope"}
+LOG_Q_ANALYSES = {"loglog", "guinier", "power_law", "local_slope"}
+POSITIVE_Q_ANALYSES = {
+    "loglog",
+    "guinier",
+    "power_law",
+    "local_slope",
+    "information_budget",
+    "kratky",
+    "kratky_metrics",
+    "porod",
+    "porod_metrics",
+    "invariant",
+}
 MIN_POINTS = {
-    "guinier": 3,
+    "linear": 1,
+    "semilog": 1,
+    "loglog": 2,
+    "guinier": 2,
     "power_law": 3,
-    "local_slope": 4,
+    "local_slope": 3,
     "peak_detection": 3,
     "invariant": 2,
     "information_budget": 2,
+    "kratky": 2,
     "kratky_metrics": 2,
+    "porod": 2,
     "porod_metrics": 2,
 }
 
@@ -71,26 +88,43 @@ def check_analysis_preflight(
     messages: list[str] = []
 
     if not np.isfinite(q_min) or not np.isfinite(q_max):
-        messages.append("q_min/q_max 必须是有限数值。")
-        severity = "error"
-        return _result(analysis_type, (q_min, q_max), total_points, severity, messages, range_source)
+        return _result(
+            analysis_type,
+            (q_min, q_max),
+            total_points,
+            "error",
+            ["q_min/q_max 必须是有限数值。"],
+            range_source,
+        )
 
     if q_min < 0 or q_max < 0:
-        messages.append("raw q 范围不能为负。")
-        messages.append("ln q 或 q² 是 display x 坐标；分析接口只接收 raw q。")
-        severity = "error"
-        return _result(analysis_type, (q_min, q_max), total_points, severity, messages, range_source)
+        return _result(
+            analysis_type,
+            (q_min, q_max),
+            total_points,
+            "error",
+            [
+                "raw q 范围不能为负。",
+                "ln q 或 q² 是 display x 坐标；分析接口只接收 raw q。",
+            ],
+            range_source,
+        )
 
     if q_min >= q_max:
-        messages.append("q_min 必须小于 q_max。")
-        severity = "error"
-        return _result(analysis_type, (q_min, q_max), total_points, severity, messages, range_source)
+        return _result(
+            analysis_type,
+            (q_min, q_max),
+            total_points,
+            "error",
+            ["q_min 必须小于 q_max。"],
+            range_source,
+        )
 
     in_range = (q >= q_min) & (q <= q_max)
     finite = in_range & np.isfinite(q) & np.isfinite(intensity)
     positive_q = finite & (q > 0)
     positive_i = finite & (intensity > 0)
-    log_usable = finite & (q > 0) & (intensity > 0)
+    log_usable = positive_q & positive_i
 
     points_in_range = int(np.sum(in_range))
     finite_points = int(np.sum(finite))
@@ -108,10 +142,17 @@ def check_analysis_preflight(
         messages.append(f"当前 q 范围内有限数值点不足：需要至少 {min_points} 个，当前 {finite_points} 个。")
         severity = "error"
 
-    if analysis_type in LOG_INTENSITY_ANALYSES and log_usable_points < min_points:
+    if analysis_type == "semilog" and positive_i_points < min_points:
+        messages.append(
+            f"semilog 需要 I(q) > 0 的 ln I 可用点；需要至少 {min_points} 个，当前 {positive_i_points} 个。"
+        )
+        messages.append("semilog 会排除 I(q) <= 0 的点；不会自动加常数。")
+        severity = "error"
+    elif analysis_type in LOG_Q_ANALYSES and log_usable_points < min_points:
         messages.append(
             f"{analysis_type} 需要 q > 0 且 I(q) > 0 的 log 可用点；需要至少 {min_points} 个，当前 {log_usable_points} 个。"
         )
+        messages.append(f"{analysis_type} 会排除 q <= 0 或 I(q) <= 0 的点；不会自动加常数。")
         severity = "error"
     elif analysis_type in POSITIVE_Q_ANALYSES and positive_q_points < min_points:
         messages.append(f"{analysis_type} 需要正 q 点；当前正 q 点不足。")
@@ -121,16 +162,20 @@ def check_analysis_preflight(
         if excluded_points:
             messages.append(f"范围内有 {excluded_points} 个 NaN/非有限点会被排除。")
             severity = "warning"
-        if analysis_type in LOG_INTENSITY_ANALYSES and log_usable_points < finite_points:
+        if analysis_type == "semilog" and positive_i_points < finite_points:
+            filtered = finite_points - positive_i_points
+            messages.append(f"semilog 会排除 {filtered} 个 I(q) <= 0 的点；不会自动加常数。")
+            severity = "warning"
+        elif analysis_type in LOG_Q_ANALYSES and log_usable_points < finite_points:
             filtered = finite_points - log_usable_points
-            messages.append(f"log 分析会排除 {filtered} 个 q <= 0 或 I(q) <= 0 的点。")
+            messages.append(f"log 分析会排除 {filtered} 个 q <= 0 或 I(q) <= 0 的点；不会自动加常数。")
             severity = "warning"
         if analysis_type == "peak_detection" and finite_points < 5:
             messages.append("峰识别范围内点数较少，峰宽和面积可能不稳定。")
             severity = "warning"
         if analysis_type in {"invariant", "information_budget"}:
             messages.append("当前检查只覆盖 finite q-range；不包含低 q 或高 q 外推。")
-        if analysis_type in {"kratky_metrics", "porod_metrics"}:
+        if analysis_type in {"kratky", "kratky_metrics", "porod", "porod_metrics"}:
             messages.append("当前指标是描述性指标，不自动证明构象或界面机制。")
 
     if not messages:

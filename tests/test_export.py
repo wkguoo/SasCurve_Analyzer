@@ -2,17 +2,15 @@ from __future__ import annotations
 
 import json
 
+import numpy as np
 import pandas as pd
 
 from app.core import export
 from app.core.data_model import CurveData
 from app.core.export import export_analysis_json, export_curve_csv, export_feature_table
-from app.core.model_fitting import fit_shape_model
 from app.core.model_free import invariant_measured
 from app.core.project import ProjectState, load_project, save_project
 from app.core.report import generate_markdown_report
-from app.core.settings import AppSettings
-from app.core.shape_models import sphere_model
 
 
 def test_curve_csv_export(tmp_path) -> None:
@@ -152,75 +150,67 @@ def test_origin_matrix_export_warns_and_skips_mismatched_q_grid(tmp_path) -> Non
     assert not (tmp_path / "curves_matrix.csv").exists()
 
 
-def test_export_summary_includes_curve_units_parameters_and_fit_parameter_table(tmp_path) -> None:
-    q = pd.Series([0.003, 0.01, 0.02, 0.04, 0.08], dtype=float)
-    q_values = q.to_numpy()
-    curve = CurveData.create(
-        name="sphere",
-        q=q_values,
-        intensity=sphere_model(q_values, 35.0, 120.0, 2.0),
-        q_unit="A^-1",
-        intensity_unit="cm^-1",
-    )
-    result = fit_shape_model(curve, (float(q_values.min()), float(q_values.max())), "sphere", initial_parameters={"radius": 34.0})
+def test_first_hand_transform_table_preserves_rows_and_uses_user_visible_headers() -> None:
+    curve = CurveData.create(name="mixed", q=[0.1, 0.2, -0.3, 0.4], intensity=[10.0, 20.0, 30.0, -40.0])
 
-    feature_path = export_feature_table([curve], [result], tmp_path / "feature_table.csv")
-    outputs = export.export_analysis_bundle([curve], [result], tmp_path / "bundle")
-    report_path = generate_markdown_report(
-        tmp_path / "report.md",
-        project_name="test",
-        curves=[curve],
-        analyses=[result],
-        history=[],
-        formal_records=[],
-    )
+    table = export.build_first_hand_transform_table(curve)
 
-    feature_table = pd.read_csv(feature_path)
-    summary_table = pd.read_csv(outputs["analysis_summary"])
-    parameter_table = pd.read_csv(outputs["fit_parameters"])
-    report_text = report_path.read_text(encoding="utf-8")
-
-    assert feature_table.loc[0, "q_unit"] == "A^-1"
-    assert feature_table.loc[0, "intensity_unit"] == "cm^-1"
-    assert "parameters_json" in summary_table.columns
-    assert summary_table.loc[0, "curve_name"] == "sphere"
-    assert summary_table.loc[0, "q_unit"] == "A^-1"
-    assert "initial_parameters" in summary_table.loc[0, "parameters_json"]
-    assert {"analysis_id", "curve_id", "parameter", "value", "stderr", "unit"}.issubset(parameter_table.columns)
-    assert parameter_table.loc[parameter_table["parameter"] == "radius", "unit"].iloc[0] == "1/q"
-    assert "- parameters:" in report_text
-    assert "radius" in report_text
-    assert "1/q" in report_text
+    assert list(table.columns) == [
+        "q",
+        "I(q)",
+        "q²",
+        "ln q",
+        "log10 q",
+        "ln I(q)",
+        "log10 I(q)",
+        "q²I(q)",
+        "q⁴I(q)",
+        "qI(q)",
+        "q³I(q)",
+        "d = 2π/q",
+    ]
+    assert len(table) == 4
+    np.testing.assert_allclose(table["q"], [0.1, 0.2, -0.3, 0.4])
+    np.testing.assert_allclose(table["I(q)"], [10.0, 20.0, 30.0, -40.0])
+    np.testing.assert_allclose(table["q²"], [0.01, 0.04, 0.09, 0.16])
+    np.testing.assert_allclose(table["q²I(q)"], [0.1, 0.8, 2.7, -6.4])
+    np.testing.assert_allclose(table["q⁴I(q)"], [0.001, 0.032, 0.243, -1.024])
+    assert pd.isna(table.loc[2, "ln q"])
+    assert pd.isna(table.loc[2, "log10 q"])
+    assert pd.isna(table.loc[3, "ln I(q)"])
+    assert pd.isna(table.loc[3, "log10 I(q)"])
+    header_text = "\n".join(table.columns)
+    for old_formula in ["q^2", "q^4", "2*pi", "alpha(q)"]:
+        assert old_formula not in header_text
 
 
-def test_analysis_bundle_writes_reproducibility_manifest_readme_settings_and_warnings(tmp_path) -> None:
-    curve = CurveData.create(name="curve", q=[0.1, 0.2], intensity=[10, 20], q_unit="A^-1", intensity_unit="cm^-1")
-    result = invariant_measured(curve, (0.1, 0.2))
-    settings = AppSettings(default_q_unit="A^-1", default_export_dir="exports")
+def test_export_first_hand_transform_csv_writes_numeric_wide_table(tmp_path) -> None:
+    curve = CurveData.create(name="mixed", q=[0.1, 0.2, -0.3, 0.4], intensity=[10.0, 20.0, 30.0, -40.0])
 
-    outputs = export.export_analysis_bundle([curve], [result], tmp_path / "bundle", project_name="test_project", settings=settings)
+    path = export.export_first_hand_transform_csv(curve, tmp_path / "mixed_transformed_data.csv")
+    table = pd.read_csv(path, encoding="utf-8-sig")
 
-    assert outputs["manifest"].exists()
-    assert outputs["README_export"].exists()
-    assert outputs["settings_snapshot"].exists()
-    assert outputs["bundle_warnings"].exists()
+    assert path.exists()
+    assert len(table) == 4
+    assert pd.api.types.is_numeric_dtype(table["q"])
+    assert pd.api.types.is_numeric_dtype(table["I(q)"])
+    assert pd.api.types.is_numeric_dtype(table["q²I(q)"])
+    np.testing.assert_allclose(table["q²I(q)"], [0.1, 0.8, 2.7, -6.4])
+    assert pd.isna(table.loc[2, "ln q"])
+    assert pd.isna(table.loc[3, "ln I(q)"])
 
-    manifest = json.loads(outputs["manifest"].read_text(encoding="utf-8"))
-    settings_payload = json.loads(outputs["settings_snapshot"].read_text(encoding="utf-8"))
-    readme = outputs["README_export"].read_text(encoding="utf-8")
-    warnings = outputs["bundle_warnings"].read_text(encoding="utf-8")
 
-    assert manifest["software"]["name"] == "SAS Curve Analyzer"
-    assert manifest["project"]["name"] == "test_project"
-    assert manifest["project"]["curve_count"] == 1
-    assert manifest["project"]["analysis_count"] == 1
-    assert manifest["inputs"][0]["curve_name"] == "curve"
-    assert manifest["analyses"][0]["analysis_type"] == result.analysis_type
-    assert manifest["settings_snapshot"] == "settings_snapshot.json"
-    assert "manifest" in manifest["outputs"]
-    assert settings_payload["default_q_unit"] == "A^-1"
-    assert "does not modify original experimental data" in readme
-    assert "No bundle-level warnings" in warnings
+def test_removed_export_entry_functions_are_not_public_core_api() -> None:
+    for removed_name in [
+        "export_curve_derived_csv",
+        "export_curves_derived_long_csv",
+        "export_curves_derived_matrix_csv",
+        "export_analysis_bundle",
+        "export_plot_analysis_summary_csv",
+        "export_plot_analysis_results_json",
+        "export_plot_analysis_residual_tables",
+    ]:
+        assert not hasattr(export, removed_name)
 
 
 def test_project_save_and_load(tmp_path) -> None:

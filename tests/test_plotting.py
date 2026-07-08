@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from app.core.data_model import CurveData
+from app.core.derived_data import build_curve_derived_table
 from app.core.plotting import (
     create_curve_figure,
     display_x_limits_to_q_range_for_curve,
@@ -49,15 +50,15 @@ def test_guinier_plot_hides_invalid_error_bars() -> None:
     assert figure.axes
 
 
-def test_q3_invariant_contribution_plot_uses_log_q_axis_and_unicode_label() -> None:
+def test_removed_plot_types_are_not_supported_as_main_views() -> None:
     curve = CurveData.create(name="test", q=[1.0, 2.0, 4.0], intensity=[1.0, 2.0, 3.0])
-    figure, warnings = create_curve_figure(curve, plot_type="invariant_contribution")
-
-    assert not warnings
-    axis = figure.axes[0]
-    assert axis.get_xlabel().startswith("ln q")
-    assert axis.get_ylabel().startswith("q\u00b3I(q)")
-    assert list(axis.lines[0].get_ydata()) == [1.0, 16.0, 192.0]
+    for plot_type in ["invariant_contribution", "peak_spacing"]:
+        try:
+            create_curve_figure(curve, plot_type=plot_type)
+        except ValueError as exc:
+            assert "Unsupported plot_type" in str(exc)
+        else:
+            raise AssertionError(f"{plot_type} should not be available as a main plot type")
 
 
 def test_linear_plot_sorts_unsorted_q_for_scientific_curve_reading() -> None:
@@ -151,17 +152,17 @@ def test_cursor_coordinate_format_includes_back_transforms() -> None:
     assert format_plot_cursor_coordinates(None, 1.0, "linear") == "Coordinates: -"
 
 
-def test_peak_spacing_plot_runs_and_warns_about_d_interpretation() -> None:
+def test_linear_peak_annotation_runs_and_warns_about_d_interpretation() -> None:
     curve = CurveData.create(name="peak", q=[0.1, 0.2, 0.3, 0.4, 0.5], intensity=[1.0, 3.0, 10.0, 3.0, 1.0])
-    figure, warnings = create_curve_figure(curve, plot_type="peak_spacing", annotate_peaks=True)
+    figure, warnings = create_curve_figure(curve, plot_type="linear", annotate_peaks=True)
 
     assert figure.axes[0].get_xlabel().startswith("q")
     assert any("2\u03c0/q" in warning for warning in warnings)
 
 
-def test_peak_spacing_plot_warns_when_no_peak_detected() -> None:
+def test_linear_peak_annotation_warns_when_no_peak_detected() -> None:
     curve = CurveData.create(name="flat", q=[0.1, 0.2, 0.3, 0.4], intensity=[1.0, 1.0, 1.0, 1.0])
-    _figure, warnings = create_curve_figure(curve, plot_type="peak_spacing")
+    _figure, warnings = create_curve_figure(curve, plot_type="linear", annotate_peaks=True)
 
     assert any("No peak was detected" in warning for warning in warnings)
 
@@ -179,3 +180,36 @@ def test_show_d_axis_warns_for_non_raw_q_plots() -> None:
     _figure, warnings = create_curve_figure(curve, plot_type="loglog", show_d_axis=True)
 
     assert any("not enabled" in warning and "2\u03c0/q" in warning for warning in warnings)
+
+
+def test_plotting_uses_same_columns_as_derived_table_for_transformed_views() -> None:
+    curve = CurveData.create(name="test", q=[0.1, 0.2, 0.4, 0.8], intensity=[16.0, 4.0, 1.0, 0.25])
+    derived = build_curve_derived_table(curve, preserve_input_order=False).table
+    cases = {
+        "guinier": ("q2", "ln_I"),
+        "loglog": ("ln_q", "ln_I"),
+        "kratky": ("q", "q2I"),
+        "porod": ("q", "q4I"),
+        "local_slope": ("q", "alpha_local"),
+    }
+
+    for plot_type, (x_column, y_column) in cases.items():
+        figure, _warnings = create_curve_figure(curve, plot_type=plot_type)
+        line = figure.axes[0].lines[0]
+        valid = derived[x_column].notna() & derived[y_column].notna()
+        if plot_type in {"guinier", "loglog"}:
+            valid &= derived["q"] > 0
+
+        np.testing.assert_allclose(line.get_xdata(), derived.loc[valid, x_column].to_numpy(dtype=float), rtol=1e-12, atol=1e-15)
+        np.testing.assert_allclose(line.get_ydata(), derived.loc[valid, y_column].to_numpy(dtype=float), rtol=1e-12, atol=1e-15)
+
+
+def test_plotting_excludes_infinite_derived_points() -> None:
+    curve = CurveData.create(name="inf", q=[1.0, 2.0, 3.0], intensity=[1.0, np.inf, 3.0])
+
+    figure, warnings = create_curve_figure(curve, plot_type="linear")
+    line = figure.axes[0].lines[0]
+
+    assert any("no valid points" in warning for warning in warnings) is False
+    assert list(line.get_xdata()) == [1.0, 3.0]
+    assert list(line.get_ydata()) == [1.0, 3.0]

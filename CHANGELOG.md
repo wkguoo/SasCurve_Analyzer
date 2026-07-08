@@ -1,5 +1,321 @@
 # CHANGELOG
 
+## 2026-07-08 16:23:57 +08:00 - Simplify Export Report Page And First-Hand Transform CSV
+
+### Task Objective
+
+Execute the latest `.ai-bridge/current-plan.md`: simplify the `导出报告` page to stable data-export actions, add a first-hand transformed-data CSV for the current curve, remove old hidden export wrappers for removed UI entries, and synchronize tests and documentation.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/export.py`
+- `app/core/derived_data.py`
+- `app/ui/export_tab.py`
+- `tests/test_export.py`
+- `tests/test_derived_data.py`
+- `tests/test_ui_style.py`
+- `README.md`
+- `docs/user_manual_zh.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+- `.ai-bridge/agent-status.md`
+- `.ai-bridge/codex-status.md`
+- `.ai-bridge/execution-log.jsonl`
+- `.ai-bridge/implementation-diff.patch`
+
+### Deleted Files
+
+- `tests/test_export_deep_analysis.py`
+
+### Specific Changes
+
+- Rebuilt `ExportTab` into two groups: basic exports and first-hand transformed-data export.
+- Kept the visible export actions to current-curve CSV, `feature_table.csv`, Origin long table, Origin matrix table, and current-curve transformed-data CSV.
+- Added `build_first_hand_transform_table()` and `export_first_hand_transform_csv()` for a row-preserving wide CSV with `q`, `I(q)`, `q²`, `ln q`, `log10 q`, `ln I(q)`, `log10 I(q)`, `q²I(q)`, `q⁴I(q)`, `qI(q)`, `q³I(q)`, and `d = 2π/q`.
+- Removed old report-page handlers for Markdown report, complete analysis bundle, project save-as, derived long table, derived matrix table, and optional alpha/Rg/D/R/reference-curve inputs.
+- Removed deleted UI-entry backing functions from `app/core/export.py` and removed multi-curve derived long/matrix builders from `app/core/derived_data.py`.
+- Updated tests so removed public functions and old UI buttons stay absent, and so the new transformed-data CSV preserves row count and mathematical domain `NaN` values.
+- Updated README, Chinese manual, and developer notes to describe the compact export page and to avoid current-workflow claims about removed bundle/report exports.
+
+### Reason
+
+The previous export page mixed data export, report generation, project saving, and optional parameter-driven derived tables. The simplified workflow keeps only high-frequency, directly reproducible exports and prevents future agents from reintroducing removed `invariant_contribution`-style or old derived-table workflows through stale documentation.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+$env:QT_QPA_PLATFORM='offscreen'
+$env:TEMP="$PWD\.tmp"
+$env:TMP="$PWD\.tmp"
+$env:PYTEST_DEBUG_TEMPROOT="$PWD\.tmp"
+python -m pytest tests/test_export.py tests/test_ui_style.py -q
+python -m pytest -q
+python -m compileall -q main.py app\core app\ui
+```
+
+### Generated Output Files
+
+- No experimental data, processed data, figures, packages, or build artifacts were generated intentionally.
+- When a user clicks the new export button, it writes `<curve_name>_transformed_data.csv` in the selected export folder.
+- Handoff/status outputs are updated under `.ai-bridge/`: `agent-status.md`, `codex-status.md`, `execution-log.jsonl`, and `implementation-diff.patch`.
+
+### How To Check Success
+
+- `导出报告` shows only the five intended export buttons and no alpha/Rg/D/R/reference-curve controls.
+- The transformed-data CSV has the same row count as the current curve and keeps undefined log or `2π/q` values as blank/`NaN` cells rather than deleting rows.
+- `export_analysis_bundle`, old derived CSV wrappers, plot-analysis bundle wrappers, and derived long/matrix builders are no longer public core APIs.
+- Focused and full pytest suites pass, `compileall` succeeds, and `git diff --check` reports no whitespace errors.
+
+### Notes And Risks
+
+- Raw q/I arrays and original experiment files were not modified, smoothed, interpolated, background-subtracted, unit-converted, deleted, moved, or renamed.
+- The new CSV is a deterministic data table, not a fitted analysis result and not a physical proof of structure.
+- `DerivedDataOptions` and `build_curve_derived_table()` remain for plotting and analysis internals; only removed export-page wrappers and removed multi-curve derived exports were deleted.
+- No packaging, Git commit, or Git push was performed for this entry.
+
+## 2026-07-08 15:18:48 +08:00 - Documentation Navigation, Warning Filtering, And Formula Consistency Rework
+
+### Task Objective
+
+Execute the latest `.ai-bridge/current-plan.md` review rework: align Chinese/English documentation with the four-workspace UI, filter plot-analysis warnings by current plot type, standardize user-visible formulas, clean a dead UI test branch, and mark the old `invariant_contribution` plan as archived.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/derived_data.py`
+- `app/core/plot_analysis.py`
+- `app/ui/analysis_tab.py`
+- `tests/test_plot_analysis.py`
+- `tests/test_ui_style.py`
+- `README.md`
+- `docs/user_manual_zh.md`
+- `docs/method_notes.md`
+- `docs/superpowers/plans/2026-07-07-information-budget.md`
+- `CHANGELOG.md`
+- `.ai-bridge/agent-status.md`
+- `.ai-bridge/codex-status.md`
+- `.ai-bridge/execution-log.jsonl`
+- `.ai-bridge/implementation-diff.patch`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Updated the Chinese manual so `数据检查` is described under `数据导入`, `曲线绘图` and `曲线分析` are described as side-by-side areas inside `曲线工作台`, and `批量比较` is described under `高级功能`.
+- Reworded README and UI text from old page-style wording to `曲线工作台` / `曲线绘图区域` / `曲线分析区域`.
+- Added plot-type-specific derived-warning filtering so ordinary `linear`, `semilog`, `guinier`, `kratky`, `porod`, and `invariant` analyses do not show unrelated `local_slope_dlnI_dlnq` warnings, while `local_slope` still reports its own validity warnings.
+- Standardized user-visible formulas to symbols such as `q²`, `q⁴`, `α(q)`, and `2π`; internal CSV/JSON column keys such as `q2I`, `q4I`, and `d_2pi_over_q` remain unchanged.
+- Removed unreachable code from the deep-analysis UI separation test and added string tests for the current manual navigation.
+- Added an archived note to `docs/superpowers/plans/2026-07-07-information-budget.md` so `invariant_contribution` is not mistaken for a current main plot requirement.
+
+### Reason
+
+The review identified remaining inconsistencies after the previous pass: old top-level navigation language persisted in documentation, derived local-slope warnings could still inflate unrelated plot-analysis warnings, visible formulas still used ASCII notation in some places, a UI test contained unreachable code, and an old plan could mislead future implementation agents.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+$env:QT_QPA_PLATFORM='offscreen'
+python -m pytest tests/test_plot_analysis.py tests/test_derived_data.py tests/test_analysis_preflight.py tests/test_export.py tests/test_ui_style.py -q
+python -m pytest -q
+python -m compileall -q main.py app\core app\ui
+```
+
+### Generated Output Files
+
+- No experimental data, processed data, figures, packages, or build artifacts were generated intentionally.
+- Handoff/status outputs are updated under `.ai-bridge/`: `agent-status.md`, `codex-status.md`, `execution-log.jsonl`, and `implementation-diff.patch`.
+
+### How To Check Success
+
+- `docs/user_manual_zh.md` no longer uses old top-level entry phrases such as `进入 数据检查 页`, `进入 曲线绘图 页`, `进入 无模型分析 页`, or `顶层页签包括`.
+- `linear` and `semilog` plot analysis do not report unrelated `local_slope_dlnI_dlnq` warnings for two-point curves, while `local_slope` still reports insufficient valid local-slope points.
+- User-visible formulas no longer use `q^2`, `q^4`, `alpha(q)`, or `2*pi` except in tests that assert those strings are absent or in archived historical context.
+- The historical information-budget plan begins with an archived note warning that `invariant_contribution` must not be reintroduced as a main plot type.
+
+### Notes And Risks
+
+- Raw experimental q/I data were not modified, deleted, moved, renamed, smoothed, interpolated, background-subtracted, unit-converted, or overwritten.
+- No new main plot type was added; `invariant_contribution` and `peak_spacing` remain outside the main plotting combo box.
+- `Q_measured` remains a measured finite q-range integral, not a complete invariant.
+- Porod metrics remain descriptive unless the user supplies the physical assumptions needed for absolute surface calculations.
+- This pass did not package the project and did not run `git commit` or `git push`.
+
+## 2026-07-08 14:42:44 +08:00 - Post-Implementation Review Fixes For Eight-Plot Workspace
+
+### Task Objective
+
+Execute the updated `.ai-bridge/current-plan.md` review-fix plan after the workspace/eight-plot implementation: remove misleading optional warnings, keep curve workspace widgets mounted, make analysis preflight match the selected plot key, prevent residual CSV overwrite, and clean documentation conflicts.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/derived_data.py`
+- `app/core/plot_analysis.py`
+- `app/core/plotting.py`
+- `app/core/analysis_preflight.py`
+- `app/core/export.py`
+- `app/ui/analysis_tab.py`
+- `app/ui/main_window.py`
+- `tests/test_derived_data.py`
+- `tests/test_plot_analysis.py`
+- `tests/test_plotting.py`
+- `tests/test_export.py`
+- `tests/test_ui_style.py`
+- `tests/test_analysis_preflight.py`
+- `README.md`
+- `docs/user_manual_zh.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added an option to suppress missing optional alpha/Rg/D/R/reference derived-column warnings inside eight-plot analysis while preserving real log-domain and non-finite-data warnings.
+- Changed plot-analysis and plotting filters from `notna()` to finite-value masks so `inf` values are excluded from fits, integrations, and displayed transformed points.
+- Rebuilt `analysis_preflight.py` with one-to-one plot-analysis semantics: `linear` uses finite points, `semilog` requires positive intensity, and log-log/Guinier/local-slope require the appropriate positive q and intensity domains.
+- Updated `AnalysisTab` preflight mapping so `linear` no longer borrows invariant checks and `semilog` no longer borrows Guinier checks.
+- Rewrote `MainWindow` top-level tab construction so it creates the four workspaces directly and keeps `PlottingTab` plus `AnalysisTab` mounted inside `CurveWorkspaceTab`.
+- Changed residual CSV names to `plot_fit_residuals_<analysis_id>_<curve_id>_<plot_type>.csv` to avoid overwriting repeated analyses.
+- Updated docs to remove old implementation advice around `invariant_contribution` as a main plot type and to document the new residual filename.
+
+### Reason
+
+The review plan identified correctness and usability risks after the initial implementation: ordinary plot analysis could display irrelevant derived-parameter warnings, `inf` values could survive `notna()` filters, preflight checks could mention the wrong analysis family, repeated residual exports could overwrite each other, and documentation still contained old navigation or plot-type advice.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python main.py
+```
+
+In the GUI, import a curve, open `曲线工作台`, choose one of the eight plot types, and run the corresponding `曲线分析`. Use `项目与输出` to export the complete analysis bundle.
+
+### Generated Output Files
+
+- No experimental data, processed data, figures, packages, or build artifacts were generated by this implementation.
+- The handoff files `.ai-bridge/agent-status.md`, `.ai-bridge/implementation-diff.patch`, and `.ai-bridge/execution-log.jsonl` are updated separately.
+- When users export a complete analysis bundle after running plot analysis, residual outputs now use `plot_fit_residuals_<analysis_id>_<curve_id>_<plot_type>.csv`.
+
+### How To Check Success
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests/test_ui_style.py tests/test_method_mapping.py tests/test_project.py -q
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests/test_plotting.py tests/test_derived_data.py tests/test_plot_analysis.py tests/test_export.py tests/test_analysis_preflight.py -q
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest -q
+python -m compileall -q main.py app\core app\ui
+git -C sas_curve_analyzer diff --check
+```
+
+### Notes And Risks
+
+- Raw q/I arrays are not modified, smoothed, interpolated, background-subtracted, unit-converted, or resampled.
+- Optional derived columns can still report missing alpha/Rg/D/R/reference values during explicit derived-data export; only plot-analysis warning noise is suppressed.
+- Local-slope plateau auto-detection remains not implemented by design.
+- No packaging, Git commit, or Git push was performed for this entry.
+
+## 2026-07-08 12:55:46 +08:00 - Interface Workspace Refactor And Eight-Plot Analysis Outputs
+
+### Task Objective
+
+Implement the current handoff plan: reorganize the GUI into four top-level workspaces, restrict main plotting to eight plot types, add plot-specific analysis outputs, and integrate plot analysis exports while preserving raw q/I data.
+
+### Added Files
+
+- `app/core/plot_analysis.py`
+- `app/ui/data_import_workspace_tab.py`
+- `app/ui/curve_workspace_tab.py`
+- `app/ui/advanced_workspace_tab.py`
+- `app/ui/deep_analysis_tab.py`
+- `tests/test_plot_analysis.py`
+
+### Modified Files
+
+- `app/core/derived_data.py`
+- `app/core/export.py`
+- `app/core/method_mapping.py`
+- `app/core/plotting.py`
+- `app/ui/analysis_tab.py`
+- `app/ui/main_window.py`
+- `app/ui/plotting_tab.py`
+- `tests/test_derived_data.py`
+- `tests/test_export.py`
+- `tests/test_method_mapping.py`
+- `tests/test_plotting.py`
+- `tests/test_ui_style.py`
+- `README.md`
+- `docs/user_manual_zh.md`
+- `docs/method_notes.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Rebuilt the top-level UI as `数据导入 / 曲线工作台 / 高级功能 / 项目与输出`.
+- Nested `数据检查` under `数据导入`; nested `批量比较` and `深度分析` under `高级功能`.
+- Moved deep-analysis controls out of `AnalysisTab` into `DeepAnalysisTab`.
+- Limited `PLOT_TYPE_ITEMS` to `linear`, `semilog`, `loglog`, `guinier`, `kratky`, `porod`, `invariant`, and `local_slope`.
+- Removed `invariant_contribution` and `peak_spacing` from main plot mapping.
+- Added `alpha_local = -local_slope_dlnI_dlnq` to derived data and used it for local-slope plotting and analysis.
+- Added eight-plot analysis functions for diagnostics, power-law fitting, Guinier fitting, Kratky metrics, Porod metrics, finite invariant integration, and local-slope statistics.
+- Added plot-analysis bundle outputs: `plot_analysis_summary.csv`, `plot_analysis_results.json`, and residual CSV files. The final post-review naming convention is `plot_fit_residuals_<analysis_id>_<curve_id>_<plot_type>.csv`.
+- Updated tests for UI structure, plot type restrictions, derived-data mapping, numerical plot analysis, and export outputs.
+
+### Reason
+
+The prior UI exposed too many low-frequency functions at the top level and mixed deep-analysis assumptions into ordinary curve analysis. The new layout makes the common workflow clearer and keeps plotting, analysis, and export formulas consistent through shared derived data.
+
+### How To Run
+
+```powershell
+python -m pip install -r requirements.txt
+python main.py
+```
+
+### Generated Output Files
+
+- No experimental data, processed data, figures, packages, or build artifacts were generated by this implementation.
+- When users export a complete analysis bundle after running plot analysis, the bundle can generate `curves_derived_long.csv`, `plot_analysis_summary.csv`, `plot_analysis_results.json`, and residual CSV files.
+
+### How To Check Success
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests/test_ui_style.py tests/test_method_mapping.py tests/test_project.py -q
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests/test_plotting.py tests/test_derived_data.py tests/test_export.py tests/test_plot_analysis.py -q
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest -q
+python -m compileall -q main.py app\core app\ui
+```
+
+### Notes And Risks
+
+- Raw q/I arrays are not modified, smoothed, interpolated, background-subtracted, unit-converted, or resampled.
+- `Q_measured` is a finite measured-range integral, not a complete invariant.
+- Porod outputs are relative descriptors by default and do not imply absolute specific surface area.
+- Local-slope plateau detection is intentionally marked as not implemented.
+- No packaging, Git commit, or Git push was performed for this entry.
+
 ## 2026-07-07 - Windows double-click launcher bat
 
 ### Task Objective
@@ -1380,6 +1696,80 @@ python -m compileall -q main.py app\core app\ui
 - Negative values are accepted only as transformed display coordinates such as `ln q`; they are converted to positive raw q before analysis.
 - This pass implements the first current-plan GUI workflow section. The supplementary beginner manual and broader reliability/reproducibility enhancement plan remain follow-up work unless implemented in a later pass.
 - No raw experimental data were modified.
+- No packaging, Git commit, or Git push was performed for this entry.
+
+## 2026-07-08 11:22:06 +08:00 - Add Row-Preserving Derived Data Exports
+
+### Task Objective
+
+Implement the active `.ai-bridge/current-plan.md` for numerically accurate q/I-derived data calculation and export, while keeping raw experimental q/I rows unchanged.
+
+### Added Files
+
+- `app/core/derived_data.py`
+- `tests/test_derived_data.py`
+
+### Modified Files
+
+- `app/core/export.py`
+- `app/core/plotting.py`
+- `app/ui/export_tab.py`
+- `tests/test_export.py`
+- `tests/test_plotting.py`
+- `tests/test_ui_style.py`
+- `README.md`
+- `docs/user_manual_zh.md`
+- `docs/developer_notes.md`
+- `docs/method_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added `DerivedDataOptions`, `DerivedDataResult`, and `build_curve_derived_table()` for row-preserving derived data.
+- Implemented derived columns including `q2`, `ln_q`, `log10_q`, `inv_q`, `d_2pi_over_q`, `qRg`, `qD`, `qR`, `ln_I`, `log10_I`, `qI`, `q2I`, `q3I`, `q4I`, `q_alpha_I`, `local_slope_dlnI_dlnq`, `I_over_ref`, and `I_minus_ref`.
+- Added `valid_*` flags and objective warnings for invalid mathematical domains, missing optional parameters, duplicate q for local slope, and reference q-grid mismatch.
+- Updated plotting to use derived-table columns through `PLOT_DERIVED_MAPPING`, so displayed Guinier/loglog/Kratky/Porod/local-slope data match exported derived columns.
+- Added derived CSV exports: single-curve `<curve_name>_derived.csv`, multi-curve `curves_derived_long.csv`, optional `curves_derived_matrix.csv`, and guide Markdown files.
+- Added derived long-table output to complete analysis bundles.
+- Added export-page inputs for alpha, Rg, D, R, and reference curve.
+- Documented `ln` vs `log10/lg`, Guinier `q2` vs `ln_I`, NaN meaning, reference-curve no-interpolation behavior, and first-version unit boundaries.
+
+### Reason
+
+The plan required strict numerical consistency between raw q/I inputs, transformed plotting data, and exported tables, so users can verify every common SAS plotting/analysis transform in Origin, Excel, or Python.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python main.py
+```
+
+In the GUI, import a curve, then open `项目与输出` -> `导出报告` and use the derived-data export buttons.
+
+### Generated Output Files
+
+- No export files were generated during code modification.
+- When the user runs exports, the new outputs are `<curve_name>_derived.csv`, `curves_derived_long.csv`, optional `curves_derived_matrix.csv`, and matching `*_guide.md` files.
+
+### How To Check Success
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests/test_derived_data.py tests/test_plotting.py tests/test_export.py tests/test_ui_style.py -q
+$env:QT_QPA_PLATFORM='offscreen'; python -m pytest -q
+python -m compileall -q main.py app\core app\ui
+```
+
+### Notes And Risks
+
+- Optional alpha/Rg/D/R/reference values are not guessed. Missing values produce NaN columns and warnings in derived guides.
+- Reference ratio/difference requires an identical q grid; no interpolation is performed.
+- The local slope column uses `np.gradient(np.log(I), np.log(q))` on q-sorted valid rows and writes NaN when fewer than 3 valid rows exist or valid q values are duplicated.
+- No raw experimental data were modified, smoothed, interpolated, background-corrected, unit-converted, deleted, moved, or renamed.
 - No packaging, Git commit, or Git push was performed for this entry.
 
 ## 2026-07-07 21:26:07 +08:00 - Review-Fix Import Preview, Plot Range Conversion, And Project Save Prompts

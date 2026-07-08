@@ -157,15 +157,33 @@ Preflight should remain a minimum numerical/input check. Do not make it select t
 Origin-friendly batch curve exports live in `app/core/export.py`.
 
 - `export_origin_long_csv()` writes `curves_long.csv` with one row per q-I point and fixed columns for sequence metadata, curve identity, q, intensity, optional error, and units. It also writes a sibling beginner guide named `<csv-stem>_guide.md`.
-- `origin_long_guide_path()` owns the guide filename convention. Keep UI output, bundle output keys, and tests aligned with it.
+- `origin_long_guide_path()` owns the guide filename convention. Keep UI output and tests aligned with it.
 - `export_origin_matrix_csv()` writes `curves_matrix.csv` only when all curves share the same sorted q grid. It returns `(None, warnings)` and does not create a file when q grids differ.
-- `export_analysis_bundle()` always includes `curves_long`, `curves_long_guide`, and `fit_parameters`; includes `curves_matrix` only when matrix export succeeds; and writes `bundle_warnings.txt` when optional bundle outputs are skipped.
-- Complete analysis bundles also include `manifest.json`, `README_export.md`, `settings_snapshot.json`, and `bundle_warnings.txt`.
-- `manifest.json` should record software metadata, project counts, input curve metadata and source hashes when available, analyses, comparisons, warnings, settings snapshot link, and output file names.
-- `README_export.md` should explain the bundle, file purposes, manual review requirements, warnings, and that original experimental data were not modified.
-- Summary exports should include curve name, q unit, intensity unit, length unit, invariant unit, and `parameters_json` so scalar results can be interpreted outside the GUI.
+- The export report page intentionally keeps only stable, high-frequency data exports: current-curve CSV, `feature_table.csv`, Origin long table, Origin matrix table, and current-curve first-hand transformed-data CSV.
+- Summary exports should include curve name, q unit, intensity unit, length unit, and invariant unit so scalar results can be interpreted outside the GUI.
 
 Do not silently interpolate during matrix export. If interpolation is added later, expose it as an explicit user option and record it in project history.
+
+## Derived Data Tables
+
+Row-preserving derived data lives in `app/core/derived_data.py`.
+
+- `DerivedDataOptions` stores optional alpha, Rg, D, R, and reference-curve settings.
+- `build_curve_derived_table()` is the authoritative source for transformed plotting and analysis columns. Invalid mathematical domains must produce `NaN` and `valid_*` flags, not dropped rows.
+- `derived_column_units()` and `derived_column_formulas()` describe internal derived columns for plotting/analysis metadata.
+
+CSV column names must stay stable ASCII (`q2`, `ln_q`, `log10_q`, `q4I`, `local_slope_dlnI_dlnq`). UI and docs may show `q²`, `q⁴I(q)`, and `ln I(q)`.
+
+Plotting should use `PLOT_DERIVED_MAPPING` in `app/core/plotting.py` and derived-table columns rather than recomputing transformed arrays independently. Add tests whenever a plot type changes so displayed data and derived CSV columns remain identical.
+
+First-hand transformed-data export lives in `app/core/export.py`:
+
+- `build_first_hand_transform_table()` returns a single-curve wide table with user-visible headers: `q`, `I(q)`, `q虏`, `ln q`, `log10 q`, `ln I(q)`, `log10 I(q)`, `q虏I(q)`, `q鈦碔(q)`, `qI(q)`, `q鲁I(q)`, and `d = 2蟺/q`.
+- `export_first_hand_transform_csv()` writes `<curve_name>_transformed_data.csv` with UTF-8 BOM so Excel can open symbol headers more reliably.
+- This export does not ask for alpha, Rg, D, R, or reference curves; it does not fit, smooth, interpolate, add constants, or remove original q/I rows.
+- Removed report-page wrappers such as `export_curve_derived_csv()`, `export_curves_derived_long_csv()`, `export_curves_derived_matrix_csv()`, and `export_analysis_bundle()` must not be reintroduced unless a future plan explicitly restores those workflows.
+
+Missing optional alpha/Rg/D/R/reference values can still be warnings inside explicit internal derived-data calculations. They should not appear in the simplified export report page, because that page no longer exposes those optional inputs.
 
 ## q-Order And Candidate-Parameter Safety
 
@@ -233,7 +251,7 @@ Keep `AnalysisResult.warnings` for backward-compatible text output and use `Anal
 
 The analysis sorts valid `q > 0` points before integration, computes `q³I(q)` for log-q contribution density, and returns cumulative Q, `q_Q10`, `q_Q50`, `q_Q90`, `d_Q50`, dominant `q3I_peak_q`/`q3I_peak_d`, normalized `Q_entropy`, low/mid/high contribution fractions, and observable d bounds from the selected q range.
 
-Use `create_curve_figure(..., plot_type="invariant_contribution")` for the q³I versus ln q view. This plot is useful for scale-budget inspection; it is not an extrapolated 0-to-infinity invariant and should be reported with the selected q range.
+`invariant_contribution` is historical implementation terminology and is no longer a main `create_curve_figure()` plot type. Keep q3I/log-q contribution values in derived exports or dedicated analysis results, but do not re-add `invariant_contribution` to the main plotting combo box unless a future plan explicitly changes the eight-plot contract.
 
 Low/mid/high fractions default to log-q tertiles. If material-specific q bands are known, pass explicit `q_bands=(low_mid_q, mid_high_q)` to keep comparisons consistent across samples.
 
@@ -292,7 +310,7 @@ Plugins should return `AnalysisResult`. Callers should prefer `safe_run()` so a 
 
 ## Adding A New Plot Type
 
-Extend `create_curve_figure()` in `app/core/plotting.py`, then add the plot name to `app/ui/plotting_tab.py`. Logarithmic transforms must filter invalid values before calling `np.log`.
+The main plotting surface is intentionally restricted to the eight keys in `app/ui/plotting_tab.py::PLOT_TYPE_ITEMS`: `linear`, `semilog`, `loglog`, `guinier`, `kratky`, `porod`, `invariant`, and `local_slope`. Do not add another main plot type by default. If a future plan explicitly changes this contract, update `create_curve_figure()`, `PLOT_DERIVED_MAPPING`, `PLOT_TYPE_ITEMS`, method mappings, model catalog text, docs, and tests together. Logarithmic transforms must filter non-finite values and invalid log domains before calling `np.log`.
 
 ## Running Tests
 
@@ -314,3 +332,20 @@ python -m pytest
 ## Packaging
 
 This project does not currently include an automated packaging workflow. If a Windows desktop release is needed, evaluate PyInstaller or a comparable tool after confirming dependencies, icons, example data, and output-directory policy.
+
+## 2026-07-08 Workspace Refactor Notes
+
+The top-level GUI is organized by small container widgets:
+
+- `app/ui/data_import_workspace_tab.py`: nests `ImportTab` and `CheckTab`.
+- `app/ui/curve_workspace_tab.py`: uses a horizontal `QSplitter` to show `PlottingTab` and `AnalysisTab`.
+- `app/ui/advanced_workspace_tab.py`: nests `AdvancedTab`, `DeepAnalysisTab`, and `BatchTab`.
+- `app/ui/deep_analysis_tab.py`: owns `DeepAnalysisOptions`, Dmax, regularization, background fitting, and one-click deep analysis.
+
+`MainWindow` still exposes `self.import_tab`, `self.check_tab`, `self.plotting_tab`, `self.analysis_tab`, `self.batch_tab`, and `self.advanced_tab` so existing refresh and tests continue to work. Navigation helpers `show_plotting_tab()` and `show_analysis_tab()` now select the shared `曲线工作台`.
+
+Main plot type definitions live in `app/ui/plotting_tab.py` as the eight-key `PLOT_TYPE_ITEMS`. Plot data columns live in `app/core/plotting.py::PLOT_DERIVED_MAPPING` and must map to columns produced by `app/core/derived_data.py`. Do not reintroduce `invariant_contribution` or `peak_spacing` as main plot keys.
+
+`app/core/plot_analysis.py` centralizes eight-plot diagnostics, fits, finite integrations, and selected-range statistics. It suppresses unrelated optional derived-column warnings such as missing Rg/D/R/alpha/reference values while preserving real domain warnings for `q <= 0`, `I <= 0`, and non-finite values. Fit residual tables are stored in `AnalysisResult.results["export_tables"]` for future or caller-specific export paths; the simplified export report page does not currently write plot-analysis summary, JSON, or residual CSV files.
+
+Analysis preflight is intentionally one-to-one with the selected plot-analysis key. `linear` should only require finite points, `semilog` should require positive finite intensity, and log-log/Guinier/local-slope style analyses should require the relevant positive finite q and intensity domains. Do not route `linear` through invariant preflight or `semilog` through Guinier preflight.

@@ -63,3 +63,41 @@ def test_analysis_preflight_reports_no_curve() -> None:
     assert preflight.severity == "error"
     assert not preflight.can_run
     assert preflight.total_points == 0
+
+
+def test_linear_preflight_does_not_use_invariant_messages() -> None:
+    curve = CurveData.create(name="curve", q=[0.0, 0.1, 0.2], intensity=[1.0, -1.0, 2.0])
+
+    preflight = check_analysis_preflight(curve, "linear", (0.0, 0.2))
+    formatted = format_analysis_preflight(preflight)
+
+    assert preflight.severity == "ok"
+    assert "analysis_type: linear" in formatted
+    assert "finite q-range" not in formatted
+    assert "外推" not in formatted
+
+
+def test_semilog_preflight_does_not_use_guinier_messages() -> None:
+    curve = CurveData.create(name="curve", q=[0.0, 0.1, 0.2], intensity=[1.0, 0.0, 2.0])
+
+    preflight = check_analysis_preflight(curve, "semilog", (0.0, 0.2))
+    formatted = format_analysis_preflight(preflight)
+
+    assert preflight.severity == "warning"
+    assert "analysis_type: semilog" in formatted
+    assert "Guinier" not in formatted
+    assert "I(q) <= 0" in formatted
+    assert "不会自动加常数" in formatted
+
+
+def test_loglog_preflight_reports_q_and_intensity_log_domain() -> None:
+    curve = CurveData.create(name="curve", q=[0.0, 0.1, 0.2], intensity=[1.0, -1.0, 2.0])
+
+    preflight = check_analysis_preflight(curve, "loglog", (0.0, 0.2))
+    formatted = format_analysis_preflight(preflight)
+
+    assert preflight.severity == "error"
+    assert "analysis_type: loglog" in formatted
+    assert "q > 0" in formatted
+    assert "I(q) > 0" in formatted
+    assert "不会自动加常数" in formatted

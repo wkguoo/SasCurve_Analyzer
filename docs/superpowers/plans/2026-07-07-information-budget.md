@@ -1,5 +1,7 @@
 # Information Budget Implementation Plan
 
+> **Archived note:** This plan predates the current eight-main-plot contract. `invariant_contribution` is historical and must not be reintroduced as a main plot type unless a future explicit plan overrides the eight-plot contract.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a model-free information-budget analysis that shows where finite-range invariant signal is concentrated across log-q scale.

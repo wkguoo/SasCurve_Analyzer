@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -11,19 +9,9 @@ import numpy as np
 import pandas as pd
 
 from app.core.array_utils import sort_arrays_by_q
-from app.core.analysis_schema import (
-    EXPORT_TABLE_CORRELATION_FUNCTION,
-    EXPORT_TABLE_FIT_CURVES,
-    EXPORT_TABLE_GUINIER_CANDIDATES,
-    EXPORT_TABLE_PEAKS,
-    EXPORT_TABLE_POWER_LAW_CANDIDATES,
-    EXPORT_TABLE_PR_DISTRIBUTION,
-    scalar_result_items,
-)
 from app.core.data_model import AnalysisResult, ComparisonResult, CurveData
+from app.core.derived_data import build_curve_derived_table
 from app.core.plotting import create_curve_figure
-from app.core.report import generate_markdown_report
-from app.core.settings import AppSettings
 
 ORIGIN_LONG_COLUMNS = ["series_id", "frame_index", "sequence_order", "curve_id", "curve_name", "source_stem", "q", "I", "error", "q_unit", "intensity_unit"]
 ORIGIN_LONG_COLUMN_GUIDE = [
@@ -102,84 +90,6 @@ def _json_default(value: Any):
     return str(value)
 
 
-def _sha256_or_none(path: str | None) -> str | None:
-    if not path:
-        return None
-    source = Path(path)
-    if not source.exists() or not source.is_file():
-        return None
-    digest = hashlib.sha256()
-    with source.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _curve_manifest_entry(curve: CurveData) -> dict[str, Any]:
-    finite_q = curve.q[np.isfinite(curve.q)]
-    return {
-        "curve_id": curve.curve_id,
-        "curve_name": curve.name,
-        "source_file": curve.source_file,
-        "source_file_hash": _sha256_or_none(curve.source_file),
-        "q_unit": curve.q_unit,
-        "intensity_unit": curve.intensity_unit,
-        "point_count": int(curve.q.size),
-        "q_min": None if finite_q.size == 0 else float(np.min(finite_q)),
-        "q_max": None if finite_q.size == 0 else float(np.max(finite_q)),
-        "metadata": curve.metadata,
-    }
-
-
-def _bundle_readme_text(outputs: dict[str, Path], warnings: list[str]) -> str:
-    lines = [
-        "# SAS Curve Analyzer Export Bundle",
-        "",
-        "This folder is a reproducible export package generated from the current SAS Curve Analyzer project state.",
-        "",
-        "## Data Safety",
-        "",
-        "The export process does not modify original experimental data or imported curve arrays. It writes derived tables, reports, metadata, and warnings into this export folder.",
-        "",
-        "## Files",
-        "",
-    ]
-    for name, path in sorted(outputs.items()):
-        lines.append(f"- `{path.name}`: `{name}` output.")
-    lines.extend(
-        [
-            "",
-            "## Recommended Use",
-            "",
-            "- Use `curves_long.csv` in Origin, Excel, or Python for grouped curve plotting.",
-            "- Use `curves_matrix.csv` only when it exists; it is skipped when q grids differ.",
-            "- Use `analysis_summary.csv`, `fit_parameters.csv`, and `feature_table.csv` for tables.",
-            "- Use `analysis_full.json` and `manifest.json` for reproducible audit trails.",
-            "- Use `report.md` for a readable project summary.",
-            "",
-            "## Manual Review Required",
-            "",
-            "Check q units, q ranges, warnings, method assumptions, and whether log analyses excluded non-positive points before using results in reports or manuscripts.",
-            "",
-            "## Warnings",
-            "",
-        ]
-    )
-    if warnings:
-        lines.extend(f"- {warning}" for warning in warnings)
-    else:
-        lines.append("- No bundle-level warnings were recorded.")
-    return "\n".join(lines) + "\n"
-
-
-def _settings_snapshot(settings: AppSettings | dict[str, Any] | None) -> dict[str, Any]:
-    if settings is None:
-        return {}
-    if isinstance(settings, AppSettings):
-        return asdict(settings)
-    return dict(settings)
-
-
 def export_curve_csv(curve: CurveData, path: str | Path) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -187,6 +97,51 @@ def export_curve_csv(curve: CurveData, path: str | Path) -> Path:
     if curve.error is not None:
         data["error"] = curve.error
     pd.DataFrame(data).to_csv(target, index=False)
+    return target
+
+
+FIRST_HAND_TRANSFORM_COLUMNS = [
+    "q",
+    "I(q)",
+    "q²",
+    "ln q",
+    "log10 q",
+    "ln I(q)",
+    "log10 I(q)",
+    "q²I(q)",
+    "q⁴I(q)",
+    "qI(q)",
+    "q³I(q)",
+    "d = 2π/q",
+]
+
+
+def build_first_hand_transform_table(curve: CurveData) -> pd.DataFrame:
+    result = build_curve_derived_table(curve, preserve_input_order=True)
+    table = result.table
+    return pd.DataFrame(
+        {
+            "q": table["q"],
+            "I(q)": table["I"],
+            "q²": table["q2"],
+            "ln q": table["ln_q"],
+            "log10 q": table["log10_q"],
+            "ln I(q)": table["ln_I"],
+            "log10 I(q)": table["log10_I"],
+            "q²I(q)": table["q2I"],
+            "q⁴I(q)": table["q4I"],
+            "qI(q)": table["qI"],
+            "q³I(q)": table["q3I"],
+            "d = 2π/q": table["d_2pi_over_q"],
+        },
+        columns=FIRST_HAND_TRANSFORM_COLUMNS,
+    )
+
+
+def export_first_hand_transform_csv(curve: CurveData, path: str | Path) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    build_first_hand_transform_table(curve).to_csv(target, index=False, encoding="utf-8-sig", float_format="%.12g")
     return target
 
 
@@ -214,10 +169,6 @@ def _origin_column_name(curve: CurveData) -> str:
     if frame_label is not None:
         return f"frame_{frame_label}"
     return curve.name
-
-
-def _curve_by_id(curves: list[CurveData]) -> dict[str, CurveData]:
-    return {curve.curve_id: curve for curve in curves}
 
 
 def _length_unit_for_curve(curve: CurveData | None) -> str | None:
@@ -449,213 +400,4 @@ def export_feature_table(curves: list[CurveData], analyses: list[AnalysisResult]
     target.parent.mkdir(parents=True, exist_ok=True)
     build_feature_table(curves, analyses).to_csv(target, index=False)
     return target
-
-
-def _analysis_summary_rows(analyses: list[AnalysisResult], curves: list[CurveData] | None = None) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    curves_by_id = _curve_by_id(curves or [])
-    for result in analyses:
-        curve = curves_by_id.get(result.curve_id)
-        row = {
-            "analysis_id": result.analysis_id,
-            "curve_id": result.curve_id,
-            "curve_name": None if curve is None else curve.name,
-            "analysis_type": result.analysis_type,
-            "q_min": result.q_range[0],
-            "q_max": result.q_range[1],
-            "q_unit": None if curve is None else curve.q_unit,
-            "intensity_unit": None if curve is None else curve.intensity_unit,
-            "length_unit": _length_unit_for_curve(curve),
-            "Q_unit": _invariant_unit_for_curve(curve),
-            "parameters_json": json.dumps(result.parameters, ensure_ascii=False, default=_json_default),
-            "warnings": " | ".join(result.warnings),
-        }
-        row.update(scalar_result_items(result.results))
-        row["assumptions"] = " | ".join(result.results.get("assumptions", []))
-        row["interpretation_limits"] = " | ".join(result.results.get("interpretation_limits", []))
-        rows.append(row)
-    return rows
-
-
-def _fit_parameter_rows(analyses: list[AnalysisResult]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for result in analyses:
-        parameters = result.results.get("parameters")
-        if not isinstance(parameters, dict):
-            continue
-        for name, payload in parameters.items():
-            if not isinstance(payload, dict) or "value" not in payload:
-                continue
-            ci95 = payload.get("ci95")
-            row = {
-                "analysis_id": result.analysis_id,
-                "curve_id": result.curve_id,
-                "analysis_type": result.analysis_type,
-                "parameter": name,
-                "value": payload.get("value"),
-                "stderr": payload.get("stderr"),
-                "ci95_low": ci95[0] if isinstance(ci95, list) and len(ci95) == 2 else None,
-                "ci95_high": ci95[1] if isinstance(ci95, list) and len(ci95) == 2 else None,
-                "unit": payload.get("unit"),
-            }
-            rows.append(row)
-    return rows
-
-
-FIT_PARAMETER_COLUMNS = ["analysis_id", "curve_id", "analysis_type", "parameter", "value", "stderr", "ci95_low", "ci95_high", "unit"]
-
-
-def _table_rows(analyses: list[AnalysisResult], table_name: str) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for result in analyses:
-        tables = result.results.get("export_tables", {})
-        table = tables.get(table_name)
-        if table is None:
-            if table_name == EXPORT_TABLE_PEAKS:
-                table = result.results.get("peaks") or result.results.get("indexed_peaks")
-            elif table_name == EXPORT_TABLE_PR_DISTRIBUTION and "r" in result.results and "P(r)" in result.results:
-                table = [{"r": r, "P(r)": p} for r, p in zip(result.results["r"], result.results["P(r)"])]
-            elif table_name == EXPORT_TABLE_CORRELATION_FUNCTION and "r" in result.results and "correlation" in result.results:
-                table = [{"r": r, "correlation": c} for r, c in zip(result.results["r"], result.results["correlation"])]
-        if table is None:
-            continue
-        if isinstance(table, dict):
-            table = [table]
-        for item in table:
-            if not isinstance(item, dict):
-                item = {"value": item}
-            row = {
-                "analysis_id": result.analysis_id,
-                "curve_id": result.curve_id,
-                "analysis_type": result.analysis_type,
-            }
-            row.update(item)
-            rows.append(row)
-    return rows
-
-
-def export_analysis_bundle(
-    curves: list[CurveData],
-    analyses: list[AnalysisResult],
-    folder: str | Path,
-    *,
-    project_name: str = "sas_curve_analyzer",
-    comparisons: list[ComparisonResult] | None = None,
-    history=None,
-    formal_records=None,
-    settings: AppSettings | dict[str, Any] | None = None,
-) -> dict[str, Path]:
-    target = Path(folder)
-    target.mkdir(parents=True, exist_ok=True)
-    outputs: dict[str, Path] = {}
-    bundle_warnings: list[str] = []
-
-    full_json = target / "analysis_full.json"
-    full_json.write_text(json.dumps([asdict(result) for result in analyses], ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
-    outputs["analysis_full"] = full_json
-
-    summary_csv = target / "analysis_summary.csv"
-    pd.DataFrame(_analysis_summary_rows(analyses, curves)).to_csv(summary_csv, index=False)
-    outputs["analysis_summary"] = summary_csv
-
-    feature_csv = export_feature_table(curves, analyses, target / "feature_table.csv")
-    outputs["feature_table"] = feature_csv
-
-    fit_parameters_csv = target / "fit_parameters.csv"
-    pd.DataFrame(_fit_parameter_rows(analyses), columns=FIT_PARAMETER_COLUMNS).to_csv(fit_parameters_csv, index=False)
-    outputs["fit_parameters"] = fit_parameters_csv
-
-    curves_long_csv = export_origin_long_csv(curves, target / "curves_long.csv")
-    outputs["curves_long"] = curves_long_csv
-    outputs["curves_long_guide"] = origin_long_guide_path(curves_long_csv)
-
-    curves_matrix_csv, _matrix_warnings = export_origin_matrix_csv(curves, target / "curves_matrix.csv")
-    if curves_matrix_csv is not None:
-        outputs["curves_matrix"] = curves_matrix_csv
-    if _matrix_warnings:
-        bundle_warnings.extend(_matrix_warnings)
-
-    table_specs = {
-        "fit_curves": EXPORT_TABLE_FIT_CURVES,
-        "peaks": EXPORT_TABLE_PEAKS,
-        "guinier_candidates": EXPORT_TABLE_GUINIER_CANDIDATES,
-        "power_law_candidates": EXPORT_TABLE_POWER_LAW_CANDIDATES,
-        "pr_distribution": EXPORT_TABLE_PR_DISTRIBUTION,
-        "correlation_function": EXPORT_TABLE_CORRELATION_FUNCTION,
-    }
-    for file_stem, table_name in table_specs.items():
-        rows = _table_rows(analyses, table_name)
-        path = target / f"{file_stem}.csv"
-        pd.DataFrame(rows).to_csv(path, index=False)
-        outputs[file_stem] = path
-
-    report_path = generate_markdown_report(
-        target / "report.md",
-        project_name=project_name,
-        curves=curves,
-        analyses=analyses,
-        history=list(history or []),
-        formal_records=list(formal_records or []),
-    )
-    outputs["report"] = report_path
-
-    settings_path = target / "settings_snapshot.json"
-    settings_path.write_text(json.dumps(_settings_snapshot(settings), ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
-    outputs["settings_snapshot"] = settings_path
-
-    warning_path = target / "bundle_warnings.txt"
-    warning_path.write_text(("\n".join(bundle_warnings) + "\n") if bundle_warnings else "No bundle-level warnings were recorded.\n", encoding="utf-8")
-    outputs["bundle_warnings"] = warning_path
-
-    manifest_path = target / "manifest.json"
-    readme_path = target / "README_export.md"
-    manifest_outputs = {**outputs, "manifest": manifest_path, "README_export": readme_path}
-    manifest = {
-        "software": {
-            "name": "SAS Curve Analyzer",
-            "version": "0.1.0",
-            "generated_at": pd.Timestamp.utcnow().isoformat(),
-            "python_version": sys.version.split()[0],
-        },
-        "project": {
-            "name": project_name,
-            "curve_count": len(curves),
-            "analysis_count": len(analyses),
-            "comparison_count": len(comparisons or []),
-            "history_record_count": len(list(history or [])),
-            "formal_record_count": len(list(formal_records or [])),
-        },
-        "inputs": [_curve_manifest_entry(curve) for curve in curves],
-        "analyses": [
-            {
-                "analysis_id": result.analysis_id,
-                "curve_id": result.curve_id,
-                "analysis_type": result.analysis_type,
-                "q_range": list(result.q_range),
-                "warnings": result.warnings,
-                "structured_warnings": result.structured_warnings,
-            }
-            for result in analyses
-        ],
-        "comparisons": [
-            {
-                "comparison_id": comparison.comparison_id,
-                "curve_a_id": comparison.curve_a_id,
-                "curve_b_id": comparison.curve_b_id,
-                "comparison_type": comparison.comparison_type,
-                "q_range": list(comparison.q_range),
-                "warnings": comparison.warnings,
-            }
-            for comparison in list(comparisons or [])
-        ],
-        "settings_snapshot": settings_path.name,
-        "warnings": bundle_warnings,
-        "outputs": {name: path.name for name, path in sorted(manifest_outputs.items())},
-    }
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
-    outputs["manifest"] = manifest_path
-
-    readme_path.write_text(_bundle_readme_text(outputs, bundle_warnings), encoding="utf-8")
-    outputs["README_export"] = readme_path
-    return outputs
 

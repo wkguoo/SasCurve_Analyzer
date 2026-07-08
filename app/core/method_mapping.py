@@ -1,26 +1,28 @@
 from __future__ import annotations
 
 PLOT_TO_ANALYSIS: dict[str, str | None] = {
-    "linear": None,
-    "semilog": None,
-    "loglog": "power_law",
+    "linear": "linear",
+    "semilog": "semilog",
+    "loglog": "loglog",
     "guinier": "guinier",
-    "kratky": "kratky_metrics",
-    "porod": "porod_metrics",
+    "kratky": "kratky",
+    "porod": "porod",
     "invariant": "invariant",
-    "invariant_contribution": "information_budget",
     "local_slope": "local_slope",
-    "peak_spacing": "peak_detection",
 }
 
 ANALYSIS_TO_PLOT: dict[str, str] = {
+    "linear": "linear",
+    "semilog": "semilog",
     "guinier": "guinier",
+    "loglog": "loglog",
     "power_law": "loglog",
     "local_slope": "local_slope",
-    "peak_detection": "peak_spacing",
     "invariant": "invariant",
-    "information_budget": "invariant_contribution",
+    "information_budget": "invariant",
+    "kratky": "kratky",
     "kratky_metrics": "kratky",
+    "porod": "porod",
     "porod_metrics": "porod",
 }
 

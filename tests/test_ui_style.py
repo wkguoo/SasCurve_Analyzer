@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QCheckBox, QDoubleSpinBox, QGroupBox, QPushButton, QTableWidget, QTabWidget
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QLineEdit, QPushButton, QTableWidget, QTabWidget
 
 from app.core.data_model import CurveData
 from app.ui.main_window import MainWindow
@@ -80,11 +81,30 @@ def test_export_tab_exposes_origin_export_buttons() -> None:
     window = MainWindow()
     try:
         labels = {button.text() for button in window.export_tab.findChildren(QPushButton)}
+        all_text = window.export_tab.findChildren(QPushButton)
+        visible_text = "\n".join(button.text() for button in all_text)
 
+        assert "导出当前曲线 CSV" in labels
+        assert "导出 feature_table.csv" in labels
         assert "导出 Origin 长表" in labels
         assert "导出 Origin 矩阵表" in labels
-        assert "项目另存为..." in labels
+        assert "导出当前曲线转换数据 CSV..." in labels
+        assert "导出当前曲线转换数据表..." not in labels
+        assert "导出转换数据长表..." not in labels
+        assert "导出转换数据矩阵表..." not in labels
+        assert "导出 Markdown 报告" not in labels
+        assert "导出完整分析包" not in labels
+        assert "项目另存为..." not in labels
         assert "保存项目文件夹" not in labels
+        for removed_text in ["alpha", "Rg", "D", "R", "reference curve"]:
+            assert removed_text not in visible_text
+        assert window.export_tab.findChildren(QLineEdit) == []
+        assert window.export_tab.findChildren(QComboBox) == []
+        assert not hasattr(window.export_tab, "export_derived_long_table")
+        assert not hasattr(window.export_tab, "export_derived_matrix_table")
+        assert not hasattr(window.export_tab, "export_report")
+        assert not hasattr(window.export_tab, "export_analysis_bundle")
+        assert not hasattr(window.export_tab, "save_project_folder")
     finally:
         window.close()
 
@@ -125,14 +145,14 @@ def test_plot_analysis_link_buttons_switch_tabs_and_types() -> None:
         plot_buttons = {button.text(): button for button in window.plotting_tab.findChildren(QPushButton)}
         plot_buttons["Use this view for analysis"].click()
 
-        assert window.tabs.currentWidget() is window.analysis_tab
-        assert window.analysis_tab.analysis_type.currentData() == "power_law"
+        assert window.tabs.currentWidget() is window.curve_workspace_tab
+        assert window.analysis_tab.analysis_type.currentData() == "loglog"
 
         window.set_analysis_type("guinier")
         analysis_buttons = {button.text(): button for button in window.analysis_tab.findChildren(QPushButton)}
         analysis_buttons["查看对应图"].click()
 
-        assert window.tabs.currentWidget() is window.plotting_tab
+        assert window.tabs.currentWidget() is window.curve_workspace_tab
         assert window.plotting_tab.plot_type.currentData() == "guinier"
     finally:
         window.close()
@@ -151,6 +171,44 @@ def test_project_output_uses_nested_tabs_for_low_frequency_pages() -> None:
         assert isinstance(window.output_tabs, QTabWidget)
         output_names = [window.output_tabs.tabText(index) for index in range(window.output_tabs.count())]
         assert output_names == ["历史与正式记录", "导出报告", "分析模板"]
+    finally:
+        window.close()
+
+
+def test_main_window_uses_four_top_level_workspaces() -> None:
+    _app()
+    window = MainWindow()
+    try:
+        top_level_names = [window.tabs.tabText(index) for index in range(window.tabs.count())]
+        assert top_level_names == ["数据导入", "曲线工作台", "高级功能", "项目与输出"]
+        assert "数据检查" not in top_level_names
+        assert "曲线绘图" not in top_level_names
+        assert "无模型分析" not in top_level_names
+        assert "批量比较" not in top_level_names
+
+        import_names = [
+            window.data_import_workspace_tab.tabs.tabText(index)
+            for index in range(window.data_import_workspace_tab.tabs.count())
+        ]
+        advanced_names = [
+            window.advanced_workspace_tab.tabs.tabText(index)
+            for index in range(window.advanced_workspace_tab.tabs.count())
+        ]
+        assert import_names == ["导入数据", "数据检查"]
+        assert "深度分析" in advanced_names
+        assert "批量比较" in advanced_names
+        assert window.curve_workspace_tab.plotting_tab is window.plotting_tab
+        assert window.curve_workspace_tab.analysis_tab is window.analysis_tab
+        assert window.curve_workspace_tab.splitter.count() == 2
+        assert window.plotting_tab.plot_type.parent() is window.plotting_tab
+        assert window.plotting_tab.canvas.parent() is window.plotting_tab
+        assert window.plotting_tab.cursor_label.parent() is window.plotting_tab
+        assert window.analysis_tab.analysis_type.parent() is window.analysis_tab
+        assert window.analysis_tab.q_min.parent() is window.analysis_tab
+        assert window.analysis_tab.q_max.parent() is window.analysis_tab
+        assert window.analysis_tab.output.parent() is window.analysis_tab
+        assert window.plotting_tab.layout().count() > 0
+        assert window.analysis_tab.layout().count() > 0
     finally:
         window.close()
 
@@ -205,7 +263,7 @@ def test_combo_boxes_use_researcher_labels_with_core_keys_in_user_data() -> None
             assert all("_" not in label for label in visible_labels)
             assert all(combo.itemData(index) for index in range(combo.count()))
 
-        assert window.analysis_tab.analysis_type.currentData() == "guinier"
+        assert window.analysis_tab.analysis_type.currentData() == "linear"
         assert window.plotting_tab.plot_type.currentData() == "linear"
         assert window.batch_tab.comparison_type.currentData() == "difference"
 
@@ -222,10 +280,9 @@ def test_combo_boxes_use_researcher_labels_with_core_keys_in_user_data() -> None
         assert "alpha(q)" not in joined
         assert "2*pi" not in joined
         assert "q\u00b2" in joined
-        assert "q\u00b3" in joined
         assert "q\u2074" in joined
         assert "\u03b1(q)" in joined
-        assert "2\u03c0/q" in joined
+        assert "q\u00b3I(q) vs ln q" not in joined
     finally:
         window.close()
 
@@ -234,10 +291,26 @@ def test_deep_analysis_controls_are_visually_separated_from_standard_analysis() 
     _app()
     window = MainWindow()
     try:
-        groups = {group.title() for group in window.analysis_tab.findChildren(QGroupBox)}
-        assert "深度分析参数" in groups
+        analysis_buttons = {button.text() for button in window.analysis_tab.findChildren(QPushButton)}
+        deep_buttons = {button.text() for button in window.deep_analysis_tab.findChildren(QPushButton)}
+        assert "一键深度分析" not in analysis_buttons
+        assert "一键深度分析" in deep_buttons
     finally:
         window.close()
+
+
+def test_user_manual_documents_current_four_workspace_navigation() -> None:
+    manual = (Path(__file__).resolve().parents[1] / "docs" / "user_manual_zh.md").read_text(encoding="utf-8")
+
+    assert "当前顶层页签包括" not in manual
+    assert "进入 `数据检查` 页" not in manual
+    assert "进入 `曲线绘图` 页" not in manual
+    assert "进入 `无模型分析` 页" not in manual
+    assert "回到 `无模型分析` 页" not in manual
+    for workspace in ["`数据导入`", "`曲线工作台`", "`高级功能`", "`项目与输出`"]:
+        assert workspace in manual
+    assert "`曲线工作台`：左侧是 `曲线绘图`，右侧是 `曲线分析`" in manual
+    assert "2π" in manual
 
 
 def test_analysis_tab_exposes_preflight_button() -> None:
@@ -250,6 +323,17 @@ def test_analysis_tab_exposes_preflight_button() -> None:
         buttons["检查当前 q 范围"].click()
         assert "分析前 q 范围预检" in window.analysis_tab.output.toPlainText()
         assert "当前没有选中的曲线" in window.analysis_tab.output.toPlainText()
+    finally:
+        window.close()
+
+
+def test_analysis_tab_preflight_uses_current_plot_analysis_key() -> None:
+    _app()
+    window = MainWindow()
+    try:
+        for key in ["linear", "semilog", "loglog", "guinier", "kratky", "porod", "invariant", "local_slope"]:
+            window.set_analysis_type(key)
+            assert window.analysis_tab._current_preflight().analysis_type == key
     finally:
         window.close()
 
