@@ -6,6 +6,7 @@ import numpy as np
 
 from app.core.array_utils import sort_arrays_by_q
 from app.core.data_model import ComparisonResult, CurveData
+from app.core.unit_checks import validate_compatible_curve_units
 
 
 def _aligned_values(curve_a: CurveData, curve_b: CurveData, *, interpolate: bool) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
@@ -27,6 +28,7 @@ def _aligned_values(curve_a: CurveData, curve_b: CurveData, *, interpolate: bool
 
 
 def compare_curves(curve_a: CurveData, curve_b: CurveData, comparison_type: str, *, interpolate: bool = True) -> ComparisonResult:
+    validate_compatible_curve_units([curve_a, curve_b], operation="curve comparison")
     q, a_values, b_values, warnings = _aligned_values(curve_a, curve_b, interpolate=interpolate)
     if comparison_type == "difference":
         values = b_values - a_values

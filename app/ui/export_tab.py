@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QFileDialog, QGroupBox, QLabel, QTextEdit, QVBoxLayout, QWidget
+from pathlib import Path
+
+from PySide6.QtWidgets import QFileDialog, QGroupBox, QLabel, QMessageBox, QTextEdit, QVBoxLayout, QWidget
 
 from app.core.export import (
     export_curve_csv,
@@ -86,6 +88,18 @@ class ExportTab(QWidget):
         folder = QFileDialog.getExistingDirectory(self, "选择导出文件夹", self.main_window.settings.default_export_dir)
         return Path(folder) if folder else None
 
+    def _confirm_overwrite(self, path: Path) -> bool:
+        if not path.exists():
+            return True
+        response = QMessageBox.question(
+            self,
+            "确认覆盖导出文件",
+            f"目标文件已存在:\n{path}\n\n是否覆盖这个旧结果文件？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return response == QMessageBox.Yes
+
     def export_current_curve(self) -> None:
         curve = self.main_window.current_curve()
         folder = self._choose_folder()
@@ -104,8 +118,12 @@ class ExportTab(QWidget):
                 )
             )
             return
+        target = folder / f"{curve.name}_curve.csv"
+        if not self._confirm_overwrite(target):
+            self.output.setPlainText(f"已取消导出，未覆盖已有文件:\n{target}")
+            return
         try:
-            path = export_curve_csv(curve, folder / f"{curve.name}_curve.csv")
+            path = export_curve_csv(curve, target)
         except Exception as exc:
             self.output.setPlainText(
                 format_user_message(
@@ -131,8 +149,12 @@ class ExportTab(QWidget):
         if folder is None:
             self.output.setPlainText("导出未执行：没有选择导出文件夹。")
             return
+        target = folder / "feature_table.csv"
+        if not self._confirm_overwrite(target):
+            self.output.setPlainText(f"已取消导出，未覆盖已有文件:\n{target}")
+            return
         try:
-            path = export_feature_table(self.main_window.project.curves, self.main_window.project.analysis_results, folder / "feature_table.csv")
+            path = export_feature_table(self.main_window.project.curves, self.main_window.project.analysis_results, target)
         except Exception as exc:
             self.output.setPlainText(
                 format_user_message(
@@ -160,8 +182,12 @@ class ExportTab(QWidget):
         if folder is None:
             self.output.setPlainText("导出未执行：没有选择导出文件夹。")
             return
+        target = folder / "curves_long.csv"
+        if not self._confirm_overwrite(target):
+            self.output.setPlainText(f"已取消导出，未覆盖已有文件:\n{target}")
+            return
         try:
-            path = export_origin_long_csv(self.main_window.project.curves, folder / "curves_long.csv")
+            path = export_origin_long_csv(self.main_window.project.curves, target)
         except Exception as exc:
             self.output.setPlainText(
                 format_user_message(
@@ -192,8 +218,12 @@ class ExportTab(QWidget):
         if curve is None or folder is None:
             self.output.setPlainText("当前曲线转换数据 CSV 未导出：没有当前曲线或没有选择导出文件夹。")
             return
+        target = folder / f"{curve.name}_transformed_data.csv"
+        if not self._confirm_overwrite(target):
+            self.output.setPlainText(f"已取消导出，未覆盖已有文件:\n{target}")
+            return
         try:
-            path = export_first_hand_transform_csv(curve, folder / f"{curve.name}_transformed_data.csv")
+            path = export_first_hand_transform_csv(curve, target)
         except Exception as exc:
             self.output.setPlainText(
                 format_user_message(
@@ -224,8 +254,12 @@ class ExportTab(QWidget):
         if folder is None:
             self.output.setPlainText("导出未执行：没有选择导出文件夹。")
             return
+        target = folder / "curves_matrix.csv"
+        if not self._confirm_overwrite(target):
+            self.output.setPlainText(f"已取消导出，未覆盖已有文件:\n{target}")
+            return
         try:
-            path, warnings = export_origin_matrix_csv(self.main_window.project.curves, folder / "curves_matrix.csv")
+            path, warnings = export_origin_matrix_csv(self.main_window.project.curves, target)
         except Exception as exc:
             self.output.setPlainText(
                 format_user_message(

@@ -29,6 +29,19 @@ def test_finite_q_invariant_sorts_q_before_integrating() -> None:
     assert np.isclose(reversed_result.results["Q_measured"], sorted_result.results["Q_measured"])
 
 
+def test_invariant_reports_negative_intensity_contribution() -> None:
+    q = np.array([0.1, 0.2, 0.3, 0.4])
+    intensity = np.array([10.0, 8.0, -2.0, -1.0])
+    curve = CurveData.create(name="negative_tail", q=q, intensity=intensity)
+
+    result = invariant_measured(curve, (0.1, 0.4))
+
+    assert result.results["negative_intensity_points"] == 2
+    assert result.results["negative_contribution_area"] < 0.0
+    assert result.results["negative_contribution_fraction"] > 0.0
+    assert any("negative" in warning.lower() for warning in result.warnings)
+
+
 def test_kratky_metrics_reports_maximum() -> None:
     q = np.array([0.1, 0.2, 0.3])
     intensity = np.array([1.0, 10.0, 1.0])

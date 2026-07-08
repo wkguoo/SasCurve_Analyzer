@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from app.core.batch import SEQUENCE_INDEX_COLUMNS, average_replicates, build_sequence_index, create_curve_group, export_sequence_index_csv
 from app.core.comparison import compare_curves
 from app.core.records import create_history_record
+from app.core.user_messages import UserMessage, exception_detail, format_user_message
 from app.ui.style import action_button, apply_help
 
 
@@ -234,7 +235,21 @@ class BatchTab(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, "导出序列索引 CSV", str(default_path), "CSV files (*.csv);;All files (*)")
         if not path:
             return
-        output_path = export_sequence_index_csv(self.main_window.project.curves, path)
+        try:
+            output_path = export_sequence_index_csv(self.main_window.project.curves, path)
+        except Exception as exc:
+            self.output.setPlainText(
+                format_user_message(
+                    UserMessage(
+                        title="序列索引 CSV 导出失败",
+                        what_happened="当前序列索引没有写入目标文件。",
+                        facts=(f"target_path: {path}", f"curve_count: {len(self.main_window.project.curves)}"),
+                        technical_detail=exception_detail(exc),
+                        severity="error",
+                    )
+                )
+            )
+            return
         self.main_window.project.add_history_record(
             create_history_record("export_sequence_index_csv", parameters={"path": str(output_path), "curve_count": len(self.main_window.project.curves)})
         )
@@ -293,7 +308,21 @@ class BatchTab(QWidget):
         if curve_a.curve_id == curve_b.curve_id:
             self.output.setPlainText("不能比较同一条曲线。")
             return
-        result = compare_curves(curve_a, curve_b, self.comparison_type.currentData(), interpolate=True)
+        try:
+            result = compare_curves(curve_a, curve_b, self.comparison_type.currentData(), interpolate=True)
+        except Exception as exc:
+            self.output.setPlainText(
+                format_user_message(
+                    UserMessage(
+                        title="曲线 A/B 比较失败",
+                        what_happened="当前两条曲线没有生成比较结果。",
+                        facts=(f"curve_a: {curve_a.name}", f"curve_b: {curve_b.name}", "原始导入曲线未被修改。"),
+                        technical_detail=exception_detail(exc),
+                        severity="error",
+                    )
+                )
+            )
+            return
         self.main_window.project.add_comparison_result(result)
         record = create_history_record(
             f"comparison:{result.comparison_type}",

@@ -35,6 +35,7 @@ def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: 
             left = max(0, int(math.floor(left_ip)))
             right = min(q.size - 1, int(math.ceil(right_ip)))
             area = None
+            baseline_corrected_area = None
             if fwhm is not None and right > left:
                 left_i = float(np.interp(left_ip, sample_positions, intensity))
                 right_i = float(np.interp(right_ip, sample_positions, intensity))
@@ -42,6 +43,8 @@ def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: 
                 area_q = np.concatenate(([left_q], q[inside], [right_q]))
                 area_i = np.concatenate(([left_i], intensity[inside], [right_i]))
                 area = float(np.trapezoid(area_i, area_q))
+                baseline_i = np.interp(area_q, [left_q, right_q], [left_i, right_i])
+                baseline_corrected_area = float(np.trapezoid(area_i - baseline_i, area_q))
             peak_results.append(
                 {
                     "peak_q": peak_q,
@@ -49,6 +52,8 @@ def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: 
                     "peak_index": int(peak_index),
                     "FWHM": fwhm,
                     "peak_area": area,
+                    "raw_area_within_fwhm": area,
+                    "baseline_corrected_peak_area": baseline_corrected_area,
                     "d": float(2.0 * math.pi / peak_q) if peak_q > 0 else None,
                 }
             )

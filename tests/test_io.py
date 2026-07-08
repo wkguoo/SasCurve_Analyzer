@@ -39,3 +39,23 @@ def test_blank_error_column_is_treated_as_missing(tmp_path: Path) -> None:
     curve = load_curve(csv_path, q_column="q", intensity_column="I", error_column="")
     assert curve.error is None
 
+
+def test_import_reads_gbk_encoded_curve(tmp_path: Path) -> None:
+    csv_path = tmp_path / "curve_gbk.csv"
+    csv_path.write_bytes("# 样品\nq,I\n0.1,10\n0.2,5\n".encode("gbk"))
+
+    curve = load_curve(csv_path, q_column="q", intensity_column="I")
+
+    assert np.allclose(curve.q, [0.1, 0.2])
+    assert np.allclose(curve.intensity, [10.0, 5.0])
+
+
+def test_import_reads_utf16_encoded_curve(tmp_path: Path) -> None:
+    csv_path = tmp_path / "curve_utf16.csv"
+    csv_path.write_text("# sample\nq,I\n0.1,10\n0.2,5\n", encoding="utf-16")
+
+    curve = load_curve(csv_path, q_column="q", intensity_column="I")
+
+    assert np.allclose(curve.q, [0.1, 0.2])
+    assert np.allclose(curve.intensity, [10.0, 5.0])
+

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from app.core.comparison import compare_curves, normalized_intensity
 from app.core.data_model import CurveData
@@ -37,6 +38,22 @@ def test_comparison_interpolates_after_sorting_unsorted_q() -> None:
 
     assert np.allclose(result.q, [0.1, 0.2, 0.3])
     assert np.allclose(result.values, [1, 2, 3])
+
+
+def test_compare_rejects_mismatched_q_units() -> None:
+    a = CurveData.create(name="a", q=[0.1, 0.2], intensity=[10, 20], q_unit="A^-1")
+    b = CurveData.create(name="b", q=[0.1, 0.2], intensity=[12, 17], q_unit="nm^-1")
+
+    with pytest.raises(ValueError, match="q units differ"):
+        compare_curves(a, b, "difference")
+
+
+def test_compare_rejects_mismatched_intensity_units() -> None:
+    a = CurveData.create(name="a", q=[0.1, 0.2], intensity=[10, 20], intensity_unit="cm^-1")
+    b = CurveData.create(name="b", q=[0.1, 0.2], intensity=[12, 17], intensity_unit="a.u.")
+
+    with pytest.raises(ValueError, match="intensity units differ"):
+        compare_curves(a, b, "difference")
 
 
 def test_display_normalization() -> None:

@@ -10,11 +10,25 @@ from app.core.data_model import CurveData
 
 
 COMMENT_PREFIXES = ("#", ";", "//")
+TEXT_ENCODINGS = ("utf-8-sig", "utf-8", "gbk", "utf-16")
+
+
+def read_text_with_encoding_fallback(path: str | Path) -> tuple[str, str]:
+    file_path = Path(path)
+    errors: list[str] = []
+    for encoding in TEXT_ENCODINGS:
+        try:
+            return file_path.read_text(encoding=encoding), encoding
+        except UnicodeError as exc:
+            errors.append(f"{encoding}: {exc}")
+    tried = ", ".join(TEXT_ENCODINGS)
+    raise UnicodeError(f"Could not decode {file_path} with supported encodings: {tried}. Details: {' | '.join(errors)}")
 
 
 def _read_text_without_comments(path: Path) -> str:
     kept_lines: list[str] = []
-    for line in path.read_text(encoding="utf-8-sig").splitlines():
+    text, _encoding = read_text_with_encoding_fallback(path)
+    for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
             continue

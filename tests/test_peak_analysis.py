@@ -47,3 +47,18 @@ def test_peak_fwhm_uses_q_positions_on_nonuniform_grid() -> None:
     expected_fwhm = 2.0 * np.sqrt(2.0 * np.log(2.0)) * sigma
     assert np.isclose(peak["FWHM"], expected_fwhm, rtol=0.03)
 
+
+def test_peak_reports_raw_and_baseline_corrected_area() -> None:
+    q = np.linspace(0.1, 1.0, 600)
+    peak_q = 0.42
+    sigma = 0.02
+    background = 8.0 + 0.5 * q
+    peak_signal = 20.0 * np.exp(-((q - peak_q) ** 2) / (2 * sigma**2))
+    curve = CurveData.create(name="baseline_peak", q=q, intensity=background + peak_signal)
+
+    peak = detect_peaks(curve, (0.1, 1.0), prominence=5.0).results["peaks"][0]
+
+    assert peak["raw_area_within_fwhm"] == peak["peak_area"]
+    assert peak["baseline_corrected_peak_area"] is not None
+    assert peak["baseline_corrected_peak_area"] < peak["raw_area_within_fwhm"]
+

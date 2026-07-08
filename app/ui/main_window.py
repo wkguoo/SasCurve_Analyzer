@@ -314,7 +314,7 @@ class MainWindow(QMainWindow):
         if self.current_project_folder is None:
             return self.save_project_as_dialog()
         try:
-            self.save_project_to_folder(self.current_project_folder)
+            path = self.save_project_to_folder(self.current_project_folder)
         except Exception as exc:
             self._show_project_operation_message(
                 UserMessage(
@@ -329,14 +329,14 @@ class MainWindow(QMainWindow):
                 )
             )
             return False
-        return True
+        return path is not None
 
     def save_project_as_dialog(self) -> bool:
         folder = QFileDialog.getExistingDirectory(self, "选择项目保存文件夹", self.settings.default_export_dir)
         if not folder:
             return False
         try:
-            self.save_project_to_folder(Path(folder))
+            path = self.save_project_to_folder(Path(folder))
         except Exception as exc:
             self._show_project_operation_message(
                 UserMessage(
@@ -351,10 +351,42 @@ class MainWindow(QMainWindow):
                 )
             )
             return False
-        return True
+        return path is not None
 
-    def save_project_to_folder(self, folder: str | Path) -> Path:
+    def _project_folder_write_risks(self, folder: Path) -> list[str]:
+        risks: list[str] = []
+        if self.current_project_folder is not None and folder.resolve() == self.current_project_folder.resolve():
+            return risks
+        if (folder / "project.json").exists():
+            risks.append("目标文件夹中已存在 project.json，继续保存会覆盖项目入口文件。")
+        if (folder / "curves").exists():
+            risks.append("目标文件夹中已存在 curves 子文件夹，继续保存可能混入旧项目曲线文件。")
+        raw_suffixes = {".csv", ".txt", ".dat"}
+        raw_like_files = [path.name for path in folder.iterdir() if path.is_file() and path.suffix.lower() in raw_suffixes] if folder.exists() else []
+        if raw_like_files:
+            preview = ", ".join(raw_like_files[:5])
+            risks.append(f"目标文件夹包含疑似原始数据文件: {preview}。建议另选新的项目文件夹。")
+        return risks
+
+    def _confirm_project_folder_write(self, folder: Path, reasons: list[str]) -> bool:
+        if not reasons:
+            return True
+        detail = "\n".join(f"- {reason}" for reason in reasons)
+        response = QMessageBox.question(
+            self,
+            "确认项目保存文件夹",
+            f"所选文件夹可能不是空项目文件夹:\n{folder}\n\n{detail}\n\n是否仍然写入项目文件？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return response == QMessageBox.Yes
+
+    def save_project_to_folder(self, folder: str | Path) -> Path | None:
         project_folder = Path(folder)
+        risks = self._project_folder_write_risks(project_folder)
+        if not self._confirm_project_folder_write(project_folder, risks):
+            self.statusBar().showMessage("已取消项目保存，未写入所选文件夹。")
+            return None
         expected_path = project_folder / "project.json"
         self.project.add_history_record(
             create_history_record("project_save", parameters={"path": str(expected_path), "format": "project_folder"})

@@ -190,6 +190,12 @@ def power_law_analysis(curve: CurveData, q_range: tuple[float, float], *, min_po
 def local_slope(curve: CurveData, q_range: tuple[float, float], *, window_length: int = 5, std_threshold: float = 0.15) -> AnalysisResult:
     mask, warnings = _valid_log_mask(curve, q_range, require_q_positive=True)
     q, intensity = sort_arrays_by_q(curve.q[mask], curve.intensity[mask])
+    if q.size:
+        unique_q, unique_indices = np.unique(q, return_index=True)
+        if unique_q.size != q.size:
+            warnings.append(f"Excluded {int(q.size - unique_q.size)} duplicate q points before local-slope calculation.")
+            q = q[unique_indices]
+            intensity = intensity[unique_indices]
     if window_length % 2 == 0:
         raise ValueError("window_length must be odd.")
     if q.size <= window_length:
@@ -229,7 +235,32 @@ def invariant_measured(curve: CurveData, q_range: tuple[float, float]) -> Analys
     warnings: list[str] = []
     integrand = q**2 * intensity
     q_measured = float(np.trapezoid(integrand, q)) if q.size >= 2 else float("nan")
-    results = {"Q_measured": q_measured, "q_min": q_range[0], "q_max": q_range[1], "integration_points": int(q.size)}
+    negative_intensity_points = int(np.sum(intensity < 0))
+    negative_contribution_area = 0.0
+    positive_contribution_area = 0.0
+    if q.size >= 2:
+        interval_contributions = 0.5 * (integrand[:-1] + integrand[1:]) * np.diff(q)
+        negative_contribution_area = float(np.sum(interval_contributions[interval_contributions < 0.0]))
+        positive_contribution_area = float(np.sum(interval_contributions[interval_contributions > 0.0]))
+    negative_fraction = (
+        abs(negative_contribution_area) / positive_contribution_area
+        if positive_contribution_area > 0.0 and negative_contribution_area < 0.0
+        else 0.0
+    )
+    if negative_intensity_points:
+        warnings.append(
+            f"Negative intensity affected the measured invariant: {negative_intensity_points} points had I(q) < 0; "
+            "do not interpret this finite-range value as a volume fraction without reviewing background subtraction."
+        )
+    results = {
+        "Q_measured": q_measured,
+        "q_min": q_range[0],
+        "q_max": q_range[1],
+        "integration_points": int(q.size),
+        "negative_intensity_points": negative_intensity_points,
+        "negative_contribution_area": negative_contribution_area,
+        "negative_contribution_fraction": negative_fraction,
+    }
     return _create_result_with_method_warnings(curve=curve, analysis_type="invariant_measured", q_range=q_range, parameters={"extrapolation": "disabled"}, results=results, warnings=warnings, method_warnings=invariant_warnings())
 
 

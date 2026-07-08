@@ -1,5 +1,93 @@
 # CHANGELOG
 
+## 2026-07-08 19:10:28 +08:00 - Fix P1/P2 Data Safety And Analysis Bugs
+
+### Task Objective
+
+Implement the requested P1/P2 bug-fix plan: prevent unit-mismatched curve averaging/comparison, add safer GUI write handling, improve Windows text import compatibility, and add clearer warnings for interpretation-sensitive SAS calculations.
+
+### Added Files
+
+- `app/core/unit_checks.py`
+- `tests/test_ui_safety.py`
+
+### Modified Files
+
+- `app/core/batch.py`
+- `app/core/comparison.py`
+- `app/core/io.py`
+- `app/core/feature_extraction.py`
+- `app/core/model_free.py`
+- `app/core/model_fitting.py`
+- `app/ui/export_tab.py`
+- `app/ui/main_window.py`
+- `app/ui/batch_tab.py`
+- `tests/test_batch.py`
+- `tests/test_comparison.py`
+- `tests/test_io.py`
+- `tests/test_peak_analysis.py`
+- `tests/test_local_slope.py`
+- `tests/test_invariant.py`
+- `tests/test_model_fitting.py`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added shared curve-unit validation before replicate averaging and A/B comparison.
+- Added text decoding fallback for `utf-8-sig`, `utf-8`, `gbk`, and `utf-16` curve imports.
+- Added raw and baseline-corrected peak area fields while keeping `peak_area` for compatibility.
+- Made local-slope analysis exclude duplicate q points with an explicit warning.
+- Added negative-intensity and negative-contribution reporting to finite measured invariant results.
+- Resolved model-fit length parameter units from current q units and warned when invalid error values force unweighted fitting.
+- Added GUI overwrite cancellation for fixed-name exports.
+- Added project-folder risk confirmation before saving into folders that contain existing projects or likely raw data files.
+- Converted batch comparison and sequence-index export failures into user-facing messages instead of uncaught GUI exceptions.
+- Added regression tests for all above behaviors.
+
+### Reason
+
+The reviewed bugs could silently mix incompatible physical units, overwrite previous analysis outputs, fail on common Windows instrument encodings, or present interpretation-sensitive calculations without enough context. These changes make the workflow safer for beginner materials researchers while preserving non-destructive raw-data handling.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+```
+
+Focused regression check:
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_batch.py tests\test_comparison.py tests\test_io.py tests\test_peak_analysis.py tests\test_local_slope.py tests\test_invariant.py tests\test_model_fitting.py tests\test_ui_safety.py
+```
+
+### Generated Output Files
+
+- No research output files, processed data, figures, packages, commits, or pushes were generated intentionally.
+- Test execution may create transient pytest or Python cache files, which are ignored by project `.gitignore`.
+
+### How To Check Success
+
+- Unit-mismatched averaging/comparison raises a clear `ValueError`.
+- Existing export files are not overwritten when the GUI confirmation is cancelled.
+- GBK and UTF-16 text curve files import successfully.
+- Peak, local-slope, invariant, and model-fitting results include the new safety fields or warnings.
+- Focused and full pytest suites pass.
+
+### Notes And Risks
+
+- Original imported curve arrays and raw experimental files are not modified, moved, deleted, renamed, smoothed, background-subtracted, or unit-converted by these fixes.
+- `peak_area` remains as a compatibility alias for the raw FWHM area; use `baseline_corrected_peak_area` for baseline-corrected comparisons.
+- GUI overwrite protection is intentionally at the UI layer; core export functions still write to explicit paths for programmatic workflows.
+- No packaging was performed.
+
 ## 2026-07-08 16:23:57 +08:00 - Simplify Export Report Page And First-Hand Transform CSV
 
 ### Task Objective

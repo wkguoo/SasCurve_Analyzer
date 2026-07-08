@@ -42,6 +42,29 @@ def _parameter_dict(names: list[str], values: np.ndarray, errors: np.ndarray | N
     return payload
 
 
+def _length_unit_from_q_unit(q_unit: str) -> str:
+    cleaned = q_unit.strip()
+    if cleaned == "A^-1":
+        return "A"
+    if cleaned == "nm^-1":
+        return "nm"
+    return f"1/({q_unit})"
+
+
+def _parameter_units_for_curve(units: dict[str, str], curve: CurveData) -> dict[str, str]:
+    length_unit = _length_unit_from_q_unit(curve.q_unit)
+    q_unit = curve.q_unit
+    resolved: dict[str, str] = {}
+    for name, unit in units.items():
+        if unit == "1/q":
+            resolved[name] = length_unit
+        elif unit == "q":
+            resolved[name] = q_unit
+        else:
+            resolved[name] = unit
+    return resolved
+
+
 def fit_shape_model(
     curve: CurveData,
     q_range: tuple[float, float],
@@ -63,10 +86,13 @@ def fit_shape_model(
     q = curve.q[mask]
     y = curve.intensity[mask]
     sigma = None
+    warnings: list[str] = []
     if curve.error is not None:
         err = curve.error[mask]
         if np.all(np.isfinite(err) & (err > 0)):
             sigma = err
+        else:
+            warnings.append("Invalid error values were found; unweighted curve_fit was used.")
 
     p0 = _initial_from_curve(curve, model_name)
     for key, value in (initial_parameters or {}).items():
@@ -144,7 +170,7 @@ def fit_shape_model(
     results = {
         "model_name": model_name,
         "model_description": spec.description,
-        "parameters": _parameter_dict(spec.parameter_names, popt, perr, spec.units),
+        "parameters": _parameter_dict(spec.parameter_names, popt, perr, _parameter_units_for_curve(spec.units, curve)),
         "parameter_at_bounds": at_bounds,
         "fit_points": n,
         "R2": r2,
@@ -177,5 +203,5 @@ def fit_shape_model(
         q_range=q_range,
         parameters={"model_name": model_name, "initial_parameters": initial_parameters or {}, "fit_background": fit_background},
         results=results,
-        warnings=warning_messages_from_checks(checks),
+        warnings=[*warnings, *warning_messages_from_checks(checks)],
     )

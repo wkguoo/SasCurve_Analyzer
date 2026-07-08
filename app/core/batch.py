@@ -8,6 +8,7 @@ import pandas as pd
 
 from app.core.array_utils import sort_arrays_by_q
 from app.core.data_model import CurveData, CurveGroup, HistoryRecord, utc_now_iso
+from app.core.unit_checks import validate_compatible_curve_units
 
 
 def create_curve_group(name: str, curves: list[CurveData], metadata: dict | None = None) -> CurveGroup:
@@ -106,6 +107,7 @@ def export_sequence_index_csv(curves: list[CurveData], path: str | Path) -> Path
 def average_replicates(curves: list[CurveData], *, interpolate: bool = True, name: str = "average_curve") -> tuple[CurveData, HistoryRecord]:
     if len(curves) < 2:
         raise ValueError("At least two curves are required for replicate averaging.")
+    validate_compatible_curve_units(curves, operation="replicate averaging")
 
     warnings: list[str] = []
     if q_grids_match(curves):

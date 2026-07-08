@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 import pandas as pd
+import pytest
 
 from app.core.batch import average_replicates, build_sequence_index, export_sequence_index_csv
 from app.core.data_model import CurveData
@@ -44,6 +45,22 @@ def test_average_does_not_modify_original_curves() -> None:
     averaged, _record = average_replicates([c1, c2])
     assert np.allclose(c1.intensity, original)
     assert averaged.curve_id != c1.curve_id
+
+
+def test_average_rejects_mismatched_q_units() -> None:
+    c1 = CurveData.create(name="a", q=[0.1, 0.2], intensity=[10, 20], q_unit="A^-1")
+    c2 = CurveData.create(name="b", q=[0.1, 0.2], intensity=[14, 22], q_unit="nm^-1")
+
+    with pytest.raises(ValueError, match="q units differ"):
+        average_replicates([c1, c2])
+
+
+def test_average_rejects_mismatched_intensity_units() -> None:
+    c1 = CurveData.create(name="a", q=[0.1, 0.2], intensity=[10, 20], intensity_unit="cm^-1")
+    c2 = CurveData.create(name="b", q=[0.1, 0.2], intensity=[14, 22], intensity_unit="a.u.")
+
+    with pytest.raises(ValueError, match="intensity units differ"):
+        average_replicates([c1, c2])
 
 
 def test_build_sequence_index_uses_metadata_and_warns_about_q_grid() -> None:

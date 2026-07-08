@@ -30,3 +30,17 @@ def test_local_slope_sorts_unsorted_q_before_gradient() -> None:
     assert np.all(np.diff(q_mid) > 0)
     assert np.allclose(alpha[5:-5], alpha_true, rtol=1e-3)
 
+
+def test_local_slope_warns_and_excludes_duplicate_q() -> None:
+    q = np.array([0.1, 0.2, 0.2, 0.4, 0.8])
+    intensity = 5.0 * q ** -2
+    curve = CurveData.create(name="duplicate_q", q=q, intensity=intensity)
+
+    result = local_slope(curve, (0.1, 0.8), window_length=3)
+    q_mid = np.asarray(result.results["q_mid"])
+    alpha = np.asarray(result.results["alpha"])
+
+    assert np.all(np.diff(q_mid) > 0)
+    assert np.all(np.isfinite(alpha))
+    assert any("duplicate q" in warning for warning in result.warnings)
+
