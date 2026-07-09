@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from app.core.data_model import CurveData, CurveGroup, HistoryRecord
-from app.core.io import load_curve, read_table
+from app.core.io import load_curve, QImportRangeFilterError, read_table
 from app.core.project import ProjectState
 
 
@@ -115,11 +115,28 @@ def infer_curve_columns(columns: Iterable[str]) -> ColumnInference:
     )
 
 
-def import_in_situ_series(paths: Iterable[str | Path]) -> BatchImportResult:
+def import_in_situ_series(
+    paths: Iterable[str | Path],
+    *,
+    limit_q_range: bool = False,
+    q_min: float | None = None,
+    q_max: float | None = None,
+) -> BatchImportResult:
     file_paths = sorted([Path(path) for path in paths], key=natural_sort_key)
     result = BatchImportResult()
     first_columns: ColumnInference | None = None
     series_id: str | None = None
+    raw_total_points = 0
+    imported_total_points = 0
+    filtered_out_total_points = 0
+    created_curve_total_points = 0
+    failed_q_range_would_import_total_points = 0
+
+    def accumulate_q_filter_diagnostics(diagnostics: dict[str, Any]) -> None:
+        nonlocal raw_total_points, imported_total_points, filtered_out_total_points
+        raw_total_points += int(diagnostics.get("raw_point_count", 0))
+        imported_total_points += int(diagnostics.get("imported_point_count", 0))
+        filtered_out_total_points += int(diagnostics.get("filtered_out_point_count", 0))
 
     for sequence_order, file_path in enumerate(file_paths):
         try:
@@ -142,9 +159,36 @@ def import_in_situ_series(paths: Iterable[str | Path]) -> BatchImportResult:
                 q_unit=columns.q_unit,
                 intensity_unit=columns.intensity_unit,
                 metadata=metadata,
+                limit_q_range=limit_q_range,
+                q_min=q_min,
+                q_max=q_max,
             )
             result.imported_curves.append(curve)
             result.warnings.extend(columns.warnings)
+            q_filter = curve.metadata.get("import_q_range_filter")
+            if q_filter:
+                accumulate_q_filter_diagnostics(q_filter)
+            else:
+                raw_total_points += int(curve.q.size)
+                imported_total_points += int(curve.q.size)
+            created_curve_total_points += int(curve.q.size)
+        except QImportRangeFilterError as exc:
+            diagnostics = exc.diagnostics
+            accumulate_q_filter_diagnostics(diagnostics)
+            failed_q_range_would_import_total_points += int(diagnostics.get("imported_point_count", 0))
+            result.failed_files.append(
+                {
+                    "file": file_path.name,
+                    "error": f"q range filter failed for file {file_path.name}: {exc}",
+                    "failure_type": "q_range_filter_too_few_points",
+                    "q_range_filter_enabled": str(diagnostics.get("q_range_filter_enabled")),
+                    "q_range_filter_min": str(diagnostics.get("q_range_filter_min")),
+                    "q_range_filter_max": str(diagnostics.get("q_range_filter_max")),
+                    "raw_point_count": str(diagnostics.get("raw_point_count")),
+                    "would_import_point_count": str(diagnostics.get("imported_point_count")),
+                    "filtered_out_point_count": str(diagnostics.get("filtered_out_point_count")),
+                }
+            )
         except Exception as exc:
             result.failed_files.append({"file": file_path.name, "error": str(exc)})
 
@@ -158,6 +202,14 @@ def import_in_situ_series(paths: Iterable[str | Path]) -> BatchImportResult:
         "q_unit": None if first_columns is None else first_columns.q_unit,
         "intensity_unit": None if first_columns is None else first_columns.intensity_unit,
         "series_id": series_id,
+        "q_range_filter_enabled": bool(limit_q_range),
+        "q_range_filter_min": q_min if limit_q_range else None,
+        "q_range_filter_max": q_max if limit_q_range else None,
+        "raw_total_points": raw_total_points,
+        "imported_total_points": imported_total_points,
+        "filtered_out_total_points": filtered_out_total_points,
+        "created_curve_total_points": created_curve_total_points,
+        "failed_q_range_would_import_total_points": failed_q_range_would_import_total_points,
     }
     return result
 

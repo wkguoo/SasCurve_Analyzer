@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
@@ -50,6 +52,17 @@ class ImportTab(QWidget):
         self.error_column.setPlaceholderText("留空表示无误差列")
         self.q_unit = QLineEdit(self.main_window.settings.default_q_unit)
         self.intensity_unit = QLineEdit("cm^-1")
+        self.limit_q_range = QCheckBox("导入时限制 q 范围")
+        self.limit_q_range.setChecked(True)
+        self.import_q_min = QDoubleSpinBox()
+        self.import_q_max = QDoubleSpinBox()
+        for spinbox, value in ((self.import_q_min, 0.01), (self.import_q_max, 0.05)):
+            spinbox.setDecimals(6)
+            spinbox.setRange(0.0, 1_000_000.0)
+            spinbox.setSingleStep(0.001)
+            spinbox.setValue(value)
+        self.limit_q_range.toggled.connect(self._sync_q_range_filter_enabled)
+        self._sync_q_range_filter_enabled(self.limit_q_range.isChecked())
         apply_help(
             self.q_column,
             tooltip="q 列名。",
@@ -74,6 +87,22 @@ class ImportTab(QWidget):
             self.intensity_unit,
             tooltip="强度单位。",
             status_tip="记录强度单位用于导出和报告；不会执行强度校准。",
+        )
+
+        apply_help(
+            self.limit_q_range,
+            tooltip="导入时只保留指定 raw q 范围内的数据点。",
+            status_tip="启用后，导入时只保留 raw q 在 q_min 到 q_max 之间的数据点；不会修改源文件。",
+        )
+        apply_help(
+            self.import_q_min,
+            tooltip="导入过滤下限，默认 0.01。",
+            status_tip="启用 q 范围限制时，保留 q >= q_min 的点。",
+        )
+        apply_help(
+            self.import_q_max,
+            tooltip="导入过滤上限，默认 0.05。",
+            status_tip="启用 q 范围限制时，保留 q <= q_max 的点。",
         )
 
         import_button = action_button(
@@ -129,6 +158,10 @@ class ImportTab(QWidget):
         form.addRow("q 单位", self.q_unit)
         form.addRow("强度单位", self.intensity_unit)
 
+        form.addRow("", self.limit_q_range)
+        form.addRow("q_min", self.import_q_min)
+        form.addRow("q_max", self.import_q_max)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(10)
@@ -141,6 +174,46 @@ class ImportTab(QWidget):
         layout.addWidget(convert_to_nm_button)
         layout.addWidget(convert_to_a_button)
         layout.addWidget(self.log, 1)
+
+    def _sync_q_range_filter_enabled(self, enabled: bool) -> None:
+        self.import_q_min.setEnabled(enabled)
+        self.import_q_max.setEnabled(enabled)
+
+    def _q_range_filter_settings(self) -> tuple[bool, float | None, float | None]:
+        enabled = self.limit_q_range.isChecked()
+        return enabled, self.import_q_min.value() if enabled else None, self.import_q_max.value() if enabled else None
+
+    def _q_range_history_parameters(self, curve) -> dict[str, object]:
+        enabled, q_min, q_max = self._q_range_filter_settings()
+        q_filter = curve.metadata.get("import_q_range_filter", {})
+        if enabled and q_filter:
+            return {
+                "q_range_filter_enabled": True,
+                "q_range_filter_min": q_filter.get("q_min"),
+                "q_range_filter_max": q_filter.get("q_max"),
+                "raw_point_count": q_filter.get("raw_point_count"),
+                "imported_point_count": q_filter.get("imported_point_count"),
+                "filtered_out_point_count": q_filter.get("filtered_out_point_count"),
+            }
+        return {
+            "q_range_filter_enabled": False,
+            "q_range_filter_min": q_min,
+            "q_range_filter_max": q_max,
+            "raw_point_count": int(curve.q.size),
+            "imported_point_count": int(curve.q.size),
+            "filtered_out_point_count": 0,
+        }
+
+    def _q_range_log_text(self, curve) -> str:
+        q_filter = curve.metadata.get("import_q_range_filter")
+        if not q_filter:
+            return "q范围过滤=关闭"
+        return (
+            "q范围过滤=启用, "
+            f"q=[{q_filter.get('q_min')}, {q_filter.get('q_max')}], "
+            f"原始点数={q_filter.get('raw_point_count')}, "
+            f"导入点数={q_filter.get('imported_point_count')}"
+        )
 
     def choose_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -199,6 +272,7 @@ class ImportTab(QWidget):
             self.preview_output.setPlainText("请先选择 csv、txt 或 dat 文件。")
             return
         error_text = self.error_column.text().strip()
+        limit_q_range, q_min, q_max = self._q_range_filter_settings()
         preview = preview_curve_file(
             self.selected_file,
             q_column=self.q_column.text().strip() or None,
@@ -206,6 +280,9 @@ class ImportTab(QWidget):
             error_column=error_text if error_text else None,
             q_unit=self.q_unit.text().strip() or None,
             intensity_unit=self.intensity_unit.text().strip() or None,
+            limit_q_range=limit_q_range,
+            q_min=q_min,
+            q_max=q_max,
         )
         self.preview_output.setPlainText(format_import_preview(preview))
 
@@ -228,6 +305,7 @@ class ImportTab(QWidget):
 
         error_text = self.error_column.text().strip()
         error_column = error_text if error_text else None
+        limit_q_range, q_min, q_max = self._q_range_filter_settings()
         try:
             curve = load_curve(
                 self.selected_file,
@@ -236,6 +314,9 @@ class ImportTab(QWidget):
                 error_column=error_column,
                 q_unit=self.q_unit.text().strip(),
                 intensity_unit=self.intensity_unit.text().strip(),
+                limit_q_range=limit_q_range,
+                q_min=q_min,
+                q_max=q_max,
             )
         except Exception as exc:
             self.log.append(
@@ -256,6 +337,7 @@ class ImportTab(QWidget):
             return
 
         self.main_window.add_curve(curve)
+        q_range_parameters = self._q_range_history_parameters(curve)
         self.main_window.project.add_history_record(
             create_history_record(
                 "import_curve",
@@ -267,11 +349,15 @@ class ImportTab(QWidget):
                     "error_column": error_column,
                     "q_unit": self.q_unit.text().strip(),
                     "intensity_unit": self.intensity_unit.text().strip(),
+                    **q_range_parameters,
                 },
             )
         )
         self.main_window.records_tab.refresh()
-        self.log.append(f"导入成功: {curve.name}, 点数={curve.q.size}, error={'有' if curve.error is not None else '无'}")
+        self.log.append(
+            f"导入成功: {curve.name}, 点数={curve.q.size}, "
+            f"error={'有' if curve.error is not None else '无'}, {self._q_range_log_text(curve)}"
+        )
 
     def import_batch_files(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
@@ -283,7 +369,8 @@ class ImportTab(QWidget):
         if not paths:
             return
         start_row = len(self.main_window.project.curves)
-        result = import_in_situ_series(paths)
+        limit_q_range, q_min, q_max = self._q_range_filter_settings()
+        result = import_in_situ_series(paths, limit_q_range=limit_q_range, q_min=q_min, q_max=q_max)
         if result.imported_curves:
             group, record = create_in_situ_group(self.main_window.project, result)
             self.main_window.refresh_curve_list(selected_row=start_row)
@@ -298,6 +385,14 @@ class ImportTab(QWidget):
                         f"error column: {summary.get('error_column')}",
                         f"q unit: {summary.get('q_unit')}",
                         f"intensity unit: {summary.get('intensity_unit')}",
+                        (
+                            f"q范围过滤: 启用, q=[{summary.get('q_range_filter_min')}, {summary.get('q_range_filter_max')}]"
+                            if summary.get("q_range_filter_enabled")
+                            else "q范围过滤: 关闭"
+                        ),
+                        f"过滤前总点数: {summary.get('raw_total_points')}",
+                        f"过滤后总点数: {summary.get('imported_total_points')}",
+                        f"过滤掉总点数: {summary.get('filtered_out_total_points')}",
                         f"曲线组: {group.name}",
                         f"history record: {record.record_id}",
                     ]

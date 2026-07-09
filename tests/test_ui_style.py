@@ -213,6 +213,20 @@ def test_main_window_uses_four_top_level_workspaces() -> None:
         window.close()
 
 
+def test_import_tab_q_range_filter_defaults_to_enabled() -> None:
+    _app()
+    window = MainWindow()
+    try:
+        assert window.import_tab.limit_q_range.isChecked()
+        assert window.import_tab.import_q_min.value() == 0.01
+        assert window.import_tab.import_q_max.value() == 0.05
+        window.import_tab.limit_q_range.setChecked(False)
+        assert not window.import_tab.import_q_min.isEnabled()
+        assert not window.import_tab.import_q_max.isEnabled()
+    finally:
+        window.close()
+
+
 def test_batch_tab_exposes_sequence_management_table_and_buttons() -> None:
     _app()
     window = MainWindow()

@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from app.core.batch_import import infer_curve_columns
-from app.core.io import read_table
+from app.core.io import apply_q_import_range_filter, read_table
 
 
 @dataclass(frozen=True)
@@ -61,6 +61,9 @@ def preview_curve_file(
     error_column: str | None = None,
     q_unit: str | None = None,
     intensity_unit: str | None = None,
+    limit_q_range: bool = False,
+    q_min: float | None = None,
+    q_max: float | None = None,
     max_rows: int = 5,
 ) -> ImportPreview:
     file_path = Path(path)
@@ -131,7 +134,7 @@ def preview_curve_file(
             messages=["当前列映射下无法导入。", f"q_column={q_column}", f"intensity_column={intensity_column}", f"error_column={error_column}", f"技术细节：{exc}"],
         )
 
-    q_min, q_max = _finite_min_max(q)
+    q_data_min, q_data_max = _finite_min_max(q)
     i_min, i_max = _finite_min_max(intensity)
     diagnostics.update(
         {
@@ -140,8 +143,8 @@ def preview_curve_file(
             "error_column": error_column,
             "q_unit": q_unit,
             "intensity_unit": intensity_unit,
-            "q_min": q_min,
-            "q_max": q_max,
+            "q_min": q_data_min,
+            "q_max": q_data_max,
             "intensity_min": i_min,
             "intensity_max": i_max,
             "q_nan_count": int(np.sum(~np.isfinite(q))),
@@ -165,9 +168,73 @@ def preview_curve_file(
         diagnostics["error_nan_count"] = None
         diagnostics["error_negative_count"] = None
 
+    q_range_blocks_import = False
+    diagnostics.update(
+        {
+            "q_range_filter_enabled": bool(limit_q_range),
+            "q_range_filter_min": None,
+            "q_range_filter_max": None,
+            "raw_point_count": int(q.size),
+            "would_import_point_count": int(q.size),
+            "would_filter_out_point_count": 0,
+            "would_import_q_min": q_data_min,
+            "would_import_q_max": q_data_max,
+        }
+    )
+    if limit_q_range:
+        try:
+            _q_preview, _intensity_preview, _error_preview, q_filter_diagnostics = apply_q_import_range_filter(
+                q,
+                intensity,
+                error,
+                limit_q_range=True,
+                q_min=q_min,
+                q_max=q_max,
+                minimum_points=0,
+            )
+        except ValueError as exc:
+            diagnostics.update(
+                {
+                    "q_range_filter_min": q_min,
+                    "q_range_filter_max": q_max,
+                    "would_import_point_count": 0,
+                    "would_filter_out_point_count": int(q.size),
+                    "would_import_q_min": None,
+                    "would_import_q_max": None,
+                }
+            )
+            messages.append(f"q 范围设置无效：{exc}")
+            q_range_blocks_import = True
+        else:
+            diagnostics.update(
+                {
+                    "q_range_filter_min": q_filter_diagnostics["q_range_filter_min"],
+                    "q_range_filter_max": q_filter_diagnostics["q_range_filter_max"],
+                    "raw_point_count": q_filter_diagnostics["raw_point_count"],
+                    "finite_qi_point_count": q_filter_diagnostics["finite_qi_point_count"],
+                    "would_import_point_count": q_filter_diagnostics["imported_point_count"],
+                    "would_filter_out_point_count": q_filter_diagnostics["filtered_out_point_count"],
+                    "would_import_q_min": q_filter_diagnostics["q_min_imported"],
+                    "would_import_q_max": q_filter_diagnostics["q_max_imported"],
+                }
+            )
+            messages.append(
+                "q 范围过滤启用：将只导入 "
+                f"{q_filter_diagnostics['q_range_filter_min']} <= q <= {q_filter_diagnostics['q_range_filter_max']} 的点。"
+            )
+            messages.append(
+                f"过滤前点数：{q_filter_diagnostics['raw_point_count']}；"
+                f"过滤后点数：{q_filter_diagnostics['imported_point_count']}。"
+            )
+            if q_filter_diagnostics["imported_point_count"] < 2:
+                messages.append("当前 q 范围过滤后可导入数据点不足；请调整 q_min/q_max 或关闭导入 q 范围限制。")
+                q_range_blocks_import = True
+
     if diagnostics["finite_q_count"] == 0 or diagnostics["finite_intensity_count"] == 0:
         messages.append("q 或 I(q) 没有可用数值点。")
         messages.append(f"finite_q_count={diagnostics['finite_q_count']}, finite_intensity_count={diagnostics['finite_intensity_count']}")
+        status = "error"
+    elif q_range_blocks_import:
         status = "error"
     else:
         if diagnostics["q_nan_count"] or diagnostics["intensity_nan_count"]:

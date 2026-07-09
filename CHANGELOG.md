@@ -1,5 +1,148 @@
 # CHANGELOG
 
+## 2026-07-09 13:46:11 +08:00 - Fix Batch Import q Range Summary Totals
+
+### Task Objective
+
+Execute `.ai-bridge/current-plan.md`返工计划：修正批量导入 q 范围过滤统计口径，使因 q range filter 后点数不足而失败的文件也纳入 summary 总点数统计，并保留可追溯 diagnostics。
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/io.py`
+- `app/core/batch_import.py`
+- `tests/test_io.py`
+- `tests/test_batch_import.py`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added `QImportRangeFilterError`, a `ValueError` subclass that carries q range filter diagnostics.
+- Changed `apply_q_import_range_filter()` to raise `QImportRangeFilterError` when enabled filtering leaves fewer than the required point count.
+- Updated `import_in_situ_series()` to catch `QImportRangeFilterError` directly instead of matching error strings.
+- Updated batch summary totals so q range filter failure files contribute their `raw_point_count`, `imported_point_count`, and `filtered_out_point_count`.
+- Added `created_curve_total_points` and `failed_q_range_would_import_total_points` to `import_summary`.
+- Added q range failure diagnostics to `failed_files`: `failure_type`, q range bounds, raw point count, would-import point count, and filtered-out point count.
+- Added tests confirming `QImportRangeFilterError` remains compatible with `ValueError` and exposes diagnostics.
+- Extended batch import tests so a success+q-range-failure batch reports `raw_total_points=7`, `imported_total_points=2`, and `filtered_out_total_points=5`.
+
+### Reason
+
+The previous implementation counted batch summary totals only after `load_curve()` succeeded. Files that were readable and column-inferred but failed because q filtering kept fewer than 2 points were omitted from the summary totals, making UI/history totals misleading.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider tests\test_io.py tests\test_batch_import.py
+python -B -m pytest -q -p no:cacheprovider tests\test_io.py tests\test_import_preview.py tests\test_batch_import.py tests\test_ui_style.py
+python -B -m pytest -q -p no:cacheprovider
+python -B -m compileall -q main.py app\core app\ui
+```
+
+### Generated Output Files
+
+- No research output files, processed data, figures, packages, or build artifacts were generated.
+
+### How To Check Success
+
+- `tests\test_io.py tests\test_batch_import.py` should report `18 passed`.
+- Related focused tests should report `47 passed`.
+- Full pytest should report `253 passed`.
+- `compileall` should exit with code 0.
+- In a batch import where one file imports and one file fails due to q filtering, `raw_total_points`, `imported_total_points`, and `filtered_out_total_points` should include both files that reached the filter.
+
+### Notes And Risks
+
+- This is a narrow bugfix; it does not change q range defaults, UI layout, single-file import behavior, or preview behavior.
+- No source experimental files were modified, moved, renamed, overwritten, smoothed, interpolated, background-subtracted, or unit-converted.
+- Already imported curves were not retroactively cropped.
+- No packaging, Git commit, or Git push was performed.
+
+## 2026-07-09 12:18:47 +08:00 - Add Import-Time Raw q Range Filter
+
+### Task Objective
+
+Execute `.ai-bridge/current-plan.md` for `导入数据时支持 q 范围限制`: add an import-time raw q filter with default enabled range `q_min=0.01` and `q_max=0.05`, while preserving old behavior when the filter is disabled.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/io.py`
+- `app/core/import_preview.py`
+- `app/core/batch_import.py`
+- `app/ui/import_tab.py`
+- `tests/test_io.py`
+- `tests/test_import_preview.py`
+- `tests/test_batch_import.py`
+- `tests/test_ui_style.py`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added `validate_q_import_range()` and `apply_q_import_range_filter()` for import-time raw q filtering.
+- Extended `load_curve()` with `limit_q_range`, `q_min`, and `q_max`; filtering is inclusive and happens before `CurveData.create()`.
+- Synchronized q/I/error filtering with one mask and rejected enabled filters that leave fewer than 2 points.
+- Recorded enabled filter diagnostics in curve `metadata["import_q_range_filter"]` and import `processing_history`.
+- Extended import preview diagnostics with raw point count, would-import point count, filtered-out count, and filtered q min/max.
+- Extended batch import to apply the same q range to every file and summarize raw/imported/filtered point totals.
+- Added ImportTab q range controls: checkbox default enabled, `q_min=0.01`, `q_max=0.05`.
+- Passed the UI q range settings into preview, single-file import, and batch import.
+- Added focused tests for closed-interval filtering, error-column synchronization, disabled-filter old behavior, invalid ranges, preview blocking, batch partial failures, and UI defaults.
+
+### Reason
+
+Users need to crop imported SAS curves to a stable raw q interval at import time, without modifying source files, already imported curves, analysis-page q ranges, or downstream fitting logic.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider tests\test_io.py tests\test_import_preview.py tests\test_batch_import.py tests\test_ui_style.py
+python -B -m pytest -q -p no:cacheprovider
+python -B -m compileall -q main.py app\core app\ui
+python main.py
+```
+
+### Generated Output Files
+
+- No research output files, processed data, figures, packages, or build artifacts were generated.
+
+### How To Check Success
+
+- Focused tests should report `46 passed`.
+- Full pytest should report `252 passed`.
+- `compileall` should exit with code 0.
+- In the GUI import page, `导入时限制 q 范围` should be checked by default with `q_min=0.01` and `q_max=0.05`.
+- Preview diagnostics should show `raw_point_count`, `would_import_point_count`, and `would_filter_out_point_count`.
+
+### Notes And Risks
+
+- The filter applies to raw q only; it does not use `ln(q)`, `q^2`, plot transforms, or analysis-page q ranges.
+- No source experimental files were modified, moved, renamed, overwritten, smoothed, interpolated, background-subtracted, or unit-converted.
+- Existing programmatic behavior is preserved when `limit_q_range=False`.
+- No packaging, Git commit, or Git push was performed.
+
 ## 2026-07-08 23:35:41 +08:00 - Refine Automatic q-Region Detection Safety
 
 ### Task Objective
