@@ -1,5 +1,31 @@
 # CHANGELOG
 
+## 2026-07-11 - Batch run.status scientific completeness
+
+### Task Objective
+
+避免批处理在大量 `missing_prerequisite` / `assumption_dependent` 时仍报告误导性的 `completed`。
+
+### Modified Files
+
+- `app/core/auto_batch.py`
+- `app/ui/auto_batch_tab.py`
+- `app/core/result_package.py`
+- `tests/test_auto_batch.py`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Changes
+
+- 新增 `_finalize_batch_status`：`completed` / `completed_with_limitations` / `partial_success` / `failed`（`cancelled` 不变）。
+- `missing_prerequisite` / `assumption_dependent` / `not_applicable` 记为方法限制，不再伪装成全成功 `completed`。
+- 无可报告结果（无 `success` 且无 `assumption_dependent`）→ `failed`。
+- GUI 与结果包 README 展示各 status 中文/说明。
+
+### Tests
+
+- 覆盖：限制+成功、全 missing、仅 assumption、全 hard fail、hard+成功。
+
 ## 2026-07-11 - Ti15 instance P0: slim run_summary + status/reliability consistency
 
 ### Task Objective

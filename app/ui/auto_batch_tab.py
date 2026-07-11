@@ -222,7 +222,14 @@ class AutoBatchTab(QWidget):
     def on_completed(self, path: str, status: str, successes: int, failures: int) -> None:
         self.run_button.setEnabled(True)
         self.cancel_button.setEnabled(False)
-        heading = "分析已取消" if status == "cancelled" else "分析完成"
+        headings = {
+            "cancelled": "分析已取消",
+            "completed": "分析完成（全部成功）",
+            "completed_with_limitations": "分析完成（存在方法限制）",
+            "partial_success": "分析部分成功（存在失败项）",
+            "failed": "分析失败",
+        }
+        heading = headings.get(status, "分析结束")
         self.output.setPlainText(
             f"{heading}。\n状态：{status}\n成功结果：{successes}\n失败或未完成：{failures}\n结果包：{path}"
         )

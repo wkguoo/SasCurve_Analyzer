@@ -696,3 +696,94 @@ def test_completed_batch_keeps_one_main_model_and_records_three_frame_transition
     assert {row["model_name"] for row in run.rankings} == {"sphere", "cylinder"}
     assert [row["possible_model_transition"] for row in run.transition_flags] == [False, False, True, False, False, False, False]
     assert all(row["main_model"] == "sphere" for row in run.transition_flags)
+
+
+def test_missing_prerequisite_with_success_marks_completed_with_limitations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_curve(tmp_path / "s_001.csv", 1)
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+
+    def runner(curve, method_id, q_range, config):
+        envelope = _success_envelope(curve, method_id, q_range)
+        if method_id == "guinier":
+            envelope.status = AnalysisStatus.MISSING_PREREQUISITE
+        return [envelope]
+
+    run = run_auto_batch(tmp_path, AutoBatchConfig(batch_id="limits"), analysis_runner=runner)
+
+    assert run.status == "completed_with_limitations"
+    assert any(item.status is AnalysisStatus.SUCCESS for item in run.analyses)
+    assert any(item.status is AnalysisStatus.MISSING_PREREQUISITE for item in run.analyses)
+
+
+def test_all_missing_prerequisite_marks_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_curve(tmp_path / "s_001.csv", 1)
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+
+    def runner(curve, method_id, q_range, config):
+        envelope = _success_envelope(curve, method_id, q_range)
+        envelope.status = AnalysisStatus.MISSING_PREREQUISITE
+        return [envelope]
+
+    run = run_auto_batch(tmp_path, AutoBatchConfig(batch_id="no-usable"), analysis_runner=runner)
+
+    assert run.status == "failed"
+    assert run.analyses
+    assert all(item.status is AnalysisStatus.MISSING_PREREQUISITE for item in run.analyses)
+
+
+def test_assumption_dependent_only_marks_completed_with_limitations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_curve(tmp_path / "s_001.csv", 1)
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+
+    def runner(curve, method_id, q_range, config):
+        envelope = _success_envelope(curve, method_id, q_range)
+        envelope.status = AnalysisStatus.ASSUMPTION_DEPENDENT
+        return [envelope]
+
+    run = run_auto_batch(tmp_path, AutoBatchConfig(batch_id="assumptions"), analysis_runner=runner)
+
+    assert run.status == "completed_with_limitations"
+
+
+def test_all_hard_failures_mark_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_curve(tmp_path / "s_001.csv", 1)
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+
+    def runner(curve, method_id, q_range, config):
+        envelope = _success_envelope(curve, method_id, q_range)
+        envelope.status = AnalysisStatus.FIT_FAILED
+        return [envelope]
+
+    run = run_auto_batch(tmp_path, AutoBatchConfig(batch_id="all-fail"), analysis_runner=runner)
+
+    assert run.status == "failed"
+
+
+def test_hard_failure_with_success_remains_partial_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_curve(tmp_path / "s_001.csv", 1)
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+
+    def runner(curve, method_id, q_range, config):
+        envelope = _success_envelope(curve, method_id, q_range)
+        if method_id == "guinier":
+            envelope.status = AnalysisStatus.INVALID
+        return [envelope]
+
+    run = run_auto_batch(tmp_path, AutoBatchConfig(batch_id="mixed-hard"), analysis_runner=runner)
+
+    assert run.status == "partial_success"

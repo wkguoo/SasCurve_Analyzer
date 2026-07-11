@@ -825,7 +825,13 @@ run_auto_batch(
 
 ### Failure, Progress, And Cancellation Semantics
 
-- A failed input row, consensus-resolution failure, malformed consensus value, runner exception, invalid runner result type, or returned `FIT_FAILED`/`INVALID` envelope makes the completed run `partial_success` while preserving all unaffected envelopes.
+- Finished-batch `run.status` is scientific completeness, not merely “jobs finished”:
+  - `completed`: every envelope is `success`.
+  - `completed_with_limitations`: usable results exist (`success` or `assumption_dependent`) and only limitation statuses remain (`missing_prerequisite` / `assumption_dependent` / `not_applicable`).
+  - `partial_success`: hard failures (`fit_failed` / `invalid` / envelope `cancelled`) or orchestration failures are mixed with at least one usable result.
+  - `failed`: no usable results (including empty analyses, or only missing-prerequisite/not-applicable).
+  - `cancelled`: user cancellation path (unchanged).
+- A failed input row, consensus-resolution failure, malformed consensus value, runner exception, invalid runner result type, or returned `FIT_FAILED`/`INVALID` envelope contributes hard/orchestration failure flags used by `_finalize_batch_status` while preserving all unaffected envelopes.
 - A runner exception or contract violation becomes exactly one `FIT_FAILED` envelope for that curve/method. Non-list outputs, empty lists, and list elements that are not `AnalysisEnvelope` instances are visible errors rather than silent omissions.
 - A failing progress callback records a warning and cannot interrupt later analysis jobs. A failing or truthy cancellation callback safely stops input collection, consensus resolution, and later analysis jobs, sets `status="cancelled"`, sets `finished_at`, and records the reason. No skipped job receives a fabricated envelope.
 - Progress events are emitted only after a completed method job and use `completed_units`/`total_units` based on the scheduled curve-method job count. Multiple envelopes for one job do not inflate progress totals.

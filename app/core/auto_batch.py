@@ -42,11 +42,26 @@ _METHOD_REGION_TYPES = {
     "oscillations": "peak",
     "lamellar": "peak",
 }
-_PARTIAL_FAILURE_STATUSES = {
+# Hard failures: numerical/envelope-level problems that block treating the batch
+# as scientifically complete even if the runner finished every job.
+_HARD_FAILURE_STATUSES = {
     AnalysisStatus.FIT_FAILED,
     AnalysisStatus.INVALID,
     AnalysisStatus.CANCELLED,
 }
+# Limitations: method not applicable or depends on assumptions — not hard crashes.
+_LIMITATION_STATUSES = {
+    AnalysisStatus.MISSING_PREREQUISITE,
+    AnalysisStatus.ASSUMPTION_DEPENDENT,
+    AnalysisStatus.NOT_APPLICABLE,
+}
+# Usable for reporting: explicit success or assumption-dependent results.
+_USABLE_STATUSES = {
+    AnalysisStatus.SUCCESS,
+    AnalysisStatus.ASSUMPTION_DEPENDENT,
+}
+# Backward-compatible alias used when accumulating orchestration had_failure flags.
+_PARTIAL_FAILURE_STATUSES = _HARD_FAILURE_STATUSES
 
 
 def _exception_text(exc: Exception) -> str:
@@ -79,6 +94,33 @@ def _finish_cancelled(run: AutoBatchRun) -> AutoBatchRun:
     run.finished_at = utc_now_iso()
     _append_warning_once(run, "Cancellation requested; remaining analysis jobs were not run.")
     return run
+
+
+def _finalize_batch_status(run: AutoBatchRun, *, had_failure: bool) -> str:
+    """Classify finished-batch scientific completeness (not merely that jobs ran).
+
+    - ``completed``: every envelope is success.
+    - ``completed_with_limitations``: usable results exist, and only limitations
+      (missing prerequisite / assumption-dependent / not applicable) remain.
+    - ``partial_success``: hard failures (or orchestration failures) mixed with
+      at least one usable result.
+    - ``failed``: no usable results (including empty analyses).
+
+    Cancellation is handled separately via :func:`_finish_cancelled`.
+    """
+
+    statuses = [_normalize_envelope_status(item.status) for item in run.analyses]
+    has_hard = had_failure or any(status in _HARD_FAILURE_STATUSES for status in statuses)
+    has_limit = any(status in _LIMITATION_STATUSES for status in statuses)
+    has_usable = any(status in _USABLE_STATUSES for status in statuses)
+
+    if not statuses or not has_usable:
+        return "failed"
+    if has_hard:
+        return "partial_success"
+    if has_limit:
+        return "completed_with_limitations"
+    return "completed"
 
 
 def _valid_q_range(value: object) -> tuple[float, float] | None:
@@ -408,7 +450,7 @@ def run_auto_batch(
             run.sequence_results = {"status": "invalid", "invalid_reason": _exception_text(exc)}
             _append_warning_once(run, f"Sequence analysis failed: {_exception_text(exc)}.")
 
-    run.status = "partial_success" if had_failure else "completed"
+    run.status = _finalize_batch_status(run, had_failure=had_failure)
     run.finished_at = utc_now_iso()
     return run
 
