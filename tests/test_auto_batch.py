@@ -680,6 +680,8 @@ def test_completed_batch_keeps_one_main_model_and_records_three_frame_transition
                 ParameterValue(name="radius", value=10.0, stderr=0.2, bound_hit=False),
             ],
             fit_quality={"AICc": aicc, "BIC": aicc + 1.0, "residual_pass": True, "uncertainty_score": 0.02},
+            reliability_label="medium",
+            reliability_score=0.8,
         )
 
     def runner(curve, method_id, q_range, config):

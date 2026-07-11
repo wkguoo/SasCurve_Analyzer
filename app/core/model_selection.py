@@ -16,6 +16,11 @@ from app.core.auto_batch_schema import AnalysisEnvelope, AnalysisStatus, Paramet
 
 
 MIN_MAIN_MODEL_COVERAGE = 0.70
+MIN_MAIN_MODEL_RESIDUAL_PASS_RATE = 0.70
+MAX_MAIN_MODEL_BOUND_HIT_RATE = 0.30
+MAX_MAIN_MODEL_UNCERTAINTY = 1.0
+MIN_MAIN_MODEL_RELIABILITY_PASS_RATE = 0.70
+MIN_MAIN_MODEL_RELIABILITY_SCORE = 0.50
 
 
 def _finite_float(value: Any) -> float | None:
@@ -111,6 +116,27 @@ def _residual_pass(item: AnalysisEnvelope | Mapping[str, Any]) -> bool:
     return False
 
 
+def _reliability_ok(item: AnalysisEnvelope | Mapping[str, Any]) -> bool:
+    """Return whether one frame-level fit is reliable enough for main-model evidence."""
+
+    if isinstance(item, AnalysisEnvelope):
+        label = str(item.reliability_label or "")
+        score = _finite_float(item.reliability_score)
+    else:
+        label = str(item.get("reliability_label") or "")
+        score = _finite_float(item.get("reliability_score"))
+    quality = _fit_quality(item)
+    if not label:
+        label = str(quality.get("reliability_label") or "medium")
+    if score is None:
+        score = _finite_float(quality.get("reliability_score"))
+    if label in {"invalid", "low"}:
+        return False
+    if score is not None and score < MIN_MAIN_MODEL_RELIABILITY_SCORE:
+        return False
+    return True
+
+
 def _bound_hit(item: AnalysisEnvelope | Mapping[str, Any]) -> bool:
     for parameter in _parameters(item):
         if isinstance(parameter, ParameterValue) and parameter.bound_hit is True:
@@ -175,19 +201,47 @@ def _frame_count(items: Sequence[AnalysisEnvelope | Mapping[str, Any]], total_fr
     return len({_curve_id(item) for item in items if _is_shape_model(item)})
 
 
+def _main_model_eligibility(
+    *,
+    coverage: float,
+    residual_pass_rate: float,
+    bound_hit_rate: float,
+    uncertainty: float | None,
+    reliability_pass_rate: float,
+    coverage_threshold: float,
+) -> tuple[bool, list[str]]:
+    """Return eligibility and explicit failure reasons for batch main-model selection."""
+
+    reasons: list[str] = []
+    if coverage < coverage_threshold:
+        reasons.append("coverage_below_threshold")
+    if residual_pass_rate < MIN_MAIN_MODEL_RESIDUAL_PASS_RATE:
+        reasons.append("residual_pass_rate_below_threshold")
+    if bound_hit_rate > MAX_MAIN_MODEL_BOUND_HIT_RATE:
+        reasons.append("bound_hit_rate_above_threshold")
+    if uncertainty is None:
+        reasons.append("uncertainty_missing")
+    elif uncertainty > MAX_MAIN_MODEL_UNCERTAINTY:
+        reasons.append("uncertainty_above_threshold")
+    if reliability_pass_rate < MIN_MAIN_MODEL_RELIABILITY_PASS_RATE:
+        reasons.append("reliability_pass_rate_below_threshold")
+    return not reasons, reasons
+
+
 def rank_models(
     analyses: Sequence[AnalysisEnvelope | Mapping[str, Any]],
     *,
     total_frames: int | None = None,
     coverage_threshold: float = MIN_MAIN_MODEL_COVERAGE,
 ) -> list[dict[str, Any]]:
-    """Rank valid model fits without discarding low-coverage evidence.
+    """Rank valid model fits without discarding low-quality evidence.
 
     The ordering is deterministic: coverage (descending), median AICc rank,
     median BIC rank, residual-pass rate (descending), bound-hit rate
-    (ascending), uncertainty (ascending), then model name.  Models below the
-    coverage threshold remain visible but are marked ineligible as the batch
-    main model.
+    (ascending), uncertainty (ascending), then model name.  Models that fail
+    main-model gates (coverage, residual pass rate, bound hits, uncertainty,
+    reliability) remain visible but are marked ineligible as the batch main
+    model.
     """
 
     if not 0.0 <= coverage_threshold <= 1.0:
@@ -218,6 +272,20 @@ def rank_models(
         uncertainty_values = [value for item in valid if (value := _uncertainty(item)) is not None]
         valid_count = len(valid)
         coverage = valid_count / frame_total if frame_total else 0.0
+        residual_pass_rate = (sum(_residual_pass(item) for item in valid) / valid_count) if valid_count else 0.0
+        bound_hit_rate = (sum(_bound_hit(item) for item in valid) / valid_count) if valid_count else 1.0
+        uncertainty = float(median(uncertainty_values)) if uncertainty_values else None
+        reliability_pass_rate = (
+            (sum(_reliability_ok(item) for item in valid) / valid_count) if valid_count else 0.0
+        )
+        eligible, eligibility_failures = _main_model_eligibility(
+            coverage=coverage,
+            residual_pass_rate=residual_pass_rate,
+            bound_hit_rate=bound_hit_rate,
+            uncertainty=uncertainty,
+            reliability_pass_rate=reliability_pass_rate,
+            coverage_threshold=coverage_threshold,
+        )
         summaries.append(
             {
                 "model_name": model_name,
@@ -226,11 +294,17 @@ def rank_models(
                 "coverage": coverage,
                 "median_aicc": float(median(aicc_values)) if aicc_values else None,
                 "median_bic": float(median(bic_values)) if bic_values else None,
-                "residual_pass_rate": (sum(_residual_pass(item) for item in valid) / valid_count) if valid_count else 0.0,
-                "bound_hit_rate": (sum(_bound_hit(item) for item in valid) / valid_count) if valid_count else 1.0,
-                "uncertainty": float(median(uncertainty_values)) if uncertainty_values else None,
-                "eligible_for_main_model": coverage >= coverage_threshold,
+                "residual_pass_rate": residual_pass_rate,
+                "bound_hit_rate": bound_hit_rate,
+                "uncertainty": uncertainty,
+                "reliability_pass_rate": reliability_pass_rate,
+                "eligible_for_main_model": eligible,
+                "eligibility_failures": eligibility_failures,
                 "coverage_threshold": coverage_threshold,
+                "residual_pass_rate_threshold": MIN_MAIN_MODEL_RESIDUAL_PASS_RATE,
+                "bound_hit_rate_threshold": MAX_MAIN_MODEL_BOUND_HIT_RATE,
+                "uncertainty_threshold": MAX_MAIN_MODEL_UNCERTAINTY,
+                "reliability_pass_rate_threshold": MIN_MAIN_MODEL_RELIABILITY_PASS_RATE,
             }
         )
 
@@ -264,7 +338,7 @@ def select_batch_main_model(
     *,
     coverage_threshold: float = MIN_MAIN_MODEL_COVERAGE,
 ) -> str | None:
-    """Choose one fixed batch-level main model; never select low coverage."""
+    """Choose one fixed batch-level main model using full eligibility gates."""
 
     if not rankings:
         return None
@@ -274,11 +348,7 @@ def select_batch_main_model(
         normalized = rank_models(rankings, coverage_threshold=coverage_threshold)
     else:
         normalized = [item for item in rankings if isinstance(item, Mapping)]
-    eligible = [
-        item
-        for item in normalized
-        if bool(item.get("eligible_for_main_model")) and float(item.get("coverage", 0.0)) >= coverage_threshold
-    ]
+    eligible = [item for item in normalized if bool(item.get("eligible_for_main_model"))]
     if not eligible:
         return None
     selected = min(eligible, key=lambda item: (int(item.get("rank", math.inf)), str(item.get("model_name", ""))))
@@ -356,7 +426,11 @@ def flag_possible_model_transitions(
 
 
 __all__ = [
+    "MAX_MAIN_MODEL_BOUND_HIT_RATE",
+    "MAX_MAIN_MODEL_UNCERTAINTY",
     "MIN_MAIN_MODEL_COVERAGE",
+    "MIN_MAIN_MODEL_RELIABILITY_PASS_RATE",
+    "MIN_MAIN_MODEL_RESIDUAL_PASS_RATE",
     "flag_possible_model_transitions",
     "rank_models",
     "select_batch_main_model",

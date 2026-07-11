@@ -18,6 +18,8 @@ def _model_envelope(
     residual_pass: bool = True,
     bound_hit: bool = False,
     uncertainty: float | None = 0.1,
+    reliability_label: str = "medium",
+    reliability_score: float = 0.8,
 ) -> AnalysisEnvelope:
     return AnalysisEnvelope(
         curve_id=f"curve-{frame}",
@@ -36,6 +38,8 @@ def _model_envelope(
             "residual_pass": residual_pass,
             "uncertainty_score": uncertainty,
         },
+        reliability_label=reliability_label,
+        reliability_score=reliability_score,
     )
 
 
@@ -52,6 +56,45 @@ def test_ranking_retains_low_coverage_model_but_never_selects_it_as_main() -> No
     assert by_name["sphere"]["eligible_for_main_model"] is True
     assert by_name["cylinder"]["coverage"] == 0.6
     assert by_name["cylinder"]["eligible_for_main_model"] is False
+    assert select_batch_main_model(rankings) == "sphere"
+
+
+def test_zero_residual_pass_rate_is_not_eligible_for_main_model() -> None:
+    """Coverage alone must not promote a model with failed residual checks."""
+
+    envelopes = [
+        *[
+            _model_envelope(frame, "lamellar_peak_stack", aicc=5.0, bic=6.0, residual_pass=False, uncertainty=0.05)
+            for frame in range(10)
+        ],
+        *[_model_envelope(frame, "sphere", aicc=20.0, bic=22.0, residual_pass=True, uncertainty=0.05) for frame in range(10)],
+    ]
+
+    rankings = rank_models(envelopes, total_frames=10)
+    by_name = {item["model_name"]: item for item in rankings}
+
+    assert by_name["lamellar_peak_stack"]["coverage"] == 1.0
+    assert by_name["lamellar_peak_stack"]["residual_pass_rate"] == 0.0
+    assert by_name["lamellar_peak_stack"]["eligible_for_main_model"] is False
+    assert "residual_pass_rate_below_threshold" in by_name["lamellar_peak_stack"]["eligibility_failures"]
+    assert by_name["sphere"]["eligible_for_main_model"] is True
+    assert select_batch_main_model(rankings) == "sphere"
+
+
+def test_high_bound_hit_or_missing_uncertainty_blocks_main_model() -> None:
+    bound_hit_model = [_model_envelope(frame, "cylinder", aicc=8.0, bic=9.0, bound_hit=True) for frame in range(10)]
+    no_uncertainty = [
+        _model_envelope(frame, "ellipsoid", aicc=7.0, bic=8.0, uncertainty=None) for frame in range(10)
+    ]
+    good = [_model_envelope(frame, "sphere", aicc=15.0, bic=16.0, uncertainty=0.05) for frame in range(10)]
+
+    rankings = rank_models([*bound_hit_model, *no_uncertainty, *good], total_frames=10)
+    by_name = {item["model_name"]: item for item in rankings}
+
+    assert by_name["cylinder"]["eligible_for_main_model"] is False
+    assert "bound_hit_rate_above_threshold" in by_name["cylinder"]["eligibility_failures"]
+    assert by_name["ellipsoid"]["eligible_for_main_model"] is False
+    assert "uncertainty_missing" in by_name["ellipsoid"]["eligibility_failures"]
     assert select_batch_main_model(rankings) == "sphere"
 
 

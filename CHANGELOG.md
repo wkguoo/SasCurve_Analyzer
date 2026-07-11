@@ -1,5 +1,28 @@
 # CHANGELOG
 
+## 2026-07-11 - Main model residual and quality gates
+
+### Task Objective
+
+防止仅因覆盖率与 AICc 将 `residual_pass_rate=0` 的模型（如 `lamellar_peak_stack`）选为 `main_model`。
+
+### Modified Files
+
+- `app/core/model_selection.py`
+- `tests/test_model_selection.py`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Changes
+
+- 主模型资格除 coverage ≥ 0.70 外，还要求 residual_pass_rate ≥ 0.70、bound_hit_rate ≤ 0.30、uncertainty 存在且 ≤ 1.0、reliability_pass_rate ≥ 0.70。
+- ranking 行增加 `eligibility_failures` 与各阈值字段，便于审计。
+- `select_batch_main_model` 仅在 `eligible_for_main_model` 为真时选取。
+
+### Tests
+
+- 零残差通过率不可为主模型；bound_hit / 缺 uncertainty 拦截；可回退到合格模型。
+
 ## 2026-07-11 - Batch run.status scientific completeness
 
 ### Task Objective
