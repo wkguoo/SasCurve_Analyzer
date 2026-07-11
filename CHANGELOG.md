@@ -1,5 +1,1397 @@
 # CHANGELOG
 
+## 2026-07-11 21:31:58 +08:00 - Repair Sequence Safety And Batch Cancellation Contracts
+
+### Task Objective
+
+修复当日代码审查确认的序列分析数值安全、失败结果字段稳定性、GUI 安全取消、不完整结果标记及中文乱码问题。
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/sequence_analysis.py`
+- `app/core/auto_batch.py`
+- `app/core/result_package.py`
+- `app/ui/auto_batch_tab.py`
+- `tests/test_sequence_analysis.py`
+- `tests/test_auto_batch.py`
+- `tests/test_result_package.py`
+- `tests/test_auto_batch_ui.py`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- 序列参考比较现在使用排序后的局部 q/I 副本进行插值和积分，避免降序或乱序 q 造成负面积或错误空值。
+- 探索性 PCA/聚类在插值前过滤非有限 q、非有限强度及非正强度；每条曲线不足两个有效点时返回明确的 `not_applicable`，不再让 NaN 进入 SVD。
+- 方法执行异常时，失败 envelope 按 `METHOD_REGISTRY` 保留全部参数名，值为 `None`，状态与失败原因明确。
+- GUI 新增线程安全取消请求和取消按钮，并把取消回调传入 `run_auto_batch()`。
+- 取消时为所有已知但未执行的 curve×method 任务生成 `cancelled` envelope；即使最后一个任务运行期间收到取消请求，也将批次标记为 cancelled。
+- 失败或取消参数保留注册表 `unit_role`，使跨帧失败行的字段元数据保持稳定。
+- GUI 完成信息改为成功结果数和失败/未完成数。
+- 已取消运行导出到带 `_incomplete` 后缀的目录，避免伪装成正式完整结果。
+- 修复自动批处理界面和结果包 README 的中文乱码。
+- 新增 reversed-q、NaN PCA、失败字段、取消导出及 GUI 取消回归测试。
+
+### Reason
+
+审查发现现有实现可能对乱序 q 产生错误面积、因单个 NaN 中止序列统计、在方法失败后丢失稳定字段，并将取消运行导出为正式结果；乱码也使 GUI 与说明文档不可读。
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+$env:PYTHONDONTWRITEBYTECODE='1'
+python -m pytest -q tests\test_sequence_analysis.py tests\test_auto_batch.py tests\test_result_package.py tests\test_auto_batch_ui.py
+python -m pytest -q
+```
+
+### Generated Output Files
+
+- 未生成科研数据、图件或打包文件。
+- 测试仅在 pytest 临时目录中创建并验证结果包。
+
+### How To Check Success
+
+- 相关测试应报告 `42 passed`。
+- 完整测试套件应全部通过。
+- `python -m py_compile ...` 与 `git diff --check` 应退出码为 0。
+- GUI 应显示可读中文和“取消”按钮；取消后的结果目录名应以 `_incomplete` 结尾。
+
+### Notes And Risks
+
+- 未修改、移动、覆盖或重命名任何原始实验数据。
+- 本次未实现路线图后续要求的完整 16-sheet Excel、图件和逐拟合目录结构；这些仍属于未完成的结果包阶段。
+- 未打包、未提交、未推送。
+
+## 2026-07-11 15:37:31 +08:00 - Complete And Audit Stage 2 Extended Numerical Feature Safeguards
+
+### Task Objective
+
+Recover the partially implemented Stage 2 / Task 3 extended-feature work without reverting existing changes, then close the remaining audit and scientific-safety gaps for peaks, Porod, Kratky, integrals, shoulders, and oscillations.
+
+### Added Files
+
+- `app/core/extended_features.py` (existing unreviewed Task 3 file completed and retained)
+- `tests/test_extended_features.py` (existing unreviewed Task 3 tests extended and retained)
+
+### Modified Files
+
+- `app/core/feature_extraction.py`
+- `app/core/porod_analysis.py`
+- `app/core/model_free.py`
+- `tests/test_peak_analysis.py`
+- `tests/test_porod_analysis.py`
+- `tests/test_invariant_analysis.py`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+- `.superpowers/sdd/stage2-task3-implementer-report.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Made intensity-peak width outputs conservative: edge-truncated or incomplete half-height support now leaves FWHM/HWHM, width-derived areas, correlation length, and asymmetry as `None`; peak rows add the requested `prominence`, `snr`, `valid`, and `validity_reason` aliases while retaining legacy fields.
+- Added stable duplicate-q collapsing before peak and Kratky width calculations, using local mean values and explicit warnings without modifying source curves.
+- Added additive `two_phase_confirmed=False` to `porod_deep_analysis`. Absolute surface candidates now require explicit two-phase confirmation as well as the existing intensity, contrast, plateau, and exponent prerequisites.
+- Prevented Kratky width/area output from being attached to an unrelated internal peak when the legacy global `q_K` maximum lies at a range boundary. New identity fields state whether a width peak matches `q_K`.
+- Made extended integrals collapse duplicate q values and turn non-finite q-weighted products/integrals into `None` plus warnings instead of exporting infinite numbers.
+- Added descriptive candidate, edge, completeness, validity, provenance, finite-prominence, and deterministic spacing fields for shoulder and oscillation rows. NaN prominence input is rejected explicitly.
+
+### Reason
+
+Feature values that depend on an incomplete q range, mismatched peak identity, invalid physical assumption, duplicate coordinate, or numeric overflow can look precise while being scientifically non-comparable. The result contract must expose those limits instead of converting them into plausible scalar values.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+python -B -m pytest -q -p no:cacheprovider tests\test_extended_features.py tests\test_peak_analysis.py tests\test_porod_analysis.py tests\test_invariant_analysis.py tests\test_plot_analysis.py tests\test_invariant.py
+
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+
+python -B -m py_compile app\core\extended_features.py app\core\feature_extraction.py app\core\porod_analysis.py app\core\model_free.py tests\test_extended_features.py tests\test_peak_analysis.py tests\test_porod_analysis.py tests\test_invariant_analysis.py
+git diff --check
+```
+
+### Generated Output Files
+
+- Updated in-memory numerical-analysis contracts, audit fields, documentation, and tests only.
+- No raw experimental data, processed data, figures, workbooks, packages, Git commits, or Git pushes were generated.
+
+### How To Check Success
+
+- Peak safeguards: two new tests first reported `2 failed` (edge peak still returned a width and duplicate q had no audit warning); after repair `tests\test_peak_analysis.py` reported `7 passed`.
+- Porod safeguard: the missing-two-phase test first reported `1 failed` because a surface candidate was emitted; after the additive gate `tests\test_porod_analysis.py` reported `6 passed`.
+- Kratky safeguards: two new tests first reported `2 failed` (an internal width was attached to a boundary q_K maximum and duplicate q was unreported); after repair Kratky-focused tests reported `4 passed`.
+- Extended-feature safeguards: four new tests first reported `4 failed` (duplicate-q audit missing, q4I overflow exported as `inf`, candidate provenance absent, and NaN prominence accepted); after repair `tests\test_extended_features.py` reported `13 passed`.
+- The requested direct focused suite reported `51 passed in 1.22s`; the full regression suite reported `380 passed in 11.97s`.
+
+### Notes And Risks
+
+- All source experimental files and `CurveData` arrays remain read-only; sorting, collapse, and calculations use local arrays only.
+- `two_phase_confirmed` is an explicit caller-provided assumption, not software inference. A confirmed flag plus a Porod-like fit still does not prove a unique interfacial morphology.
+- Width/completeness and finite-range integral indicators are numerical descriptors conditional on selected q range, grid, baseline convention, and error-free coordinate provenance. They must be reviewed alongside warnings and cannot establish a material mechanism on their own.
+
+## 2026-07-11 14:17:06 +08:00 - Correct Model-Free Weighting, Derivative, And Fit-Execution Audits
+
+### Task Objective
+
+Address the independent Stage 2 / Task 2 review findings: prevent false near-zero confidence intervals for absolute-sigma weighted fits, prevent local-slope results from claiming an OLS fit, and make q/I-eligible points that never entered a fit unambiguous in exported results.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/model_free.py`
+- `tests/test_model_free_complete.py`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+- `.superpowers/sdd/stage2-task2-implementer-report.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Changed the shared weighted-line covariance path to use the unscaled WLS covariance (`numpy.polyfit(..., cov="unscaled")`) when the supplied propagated `sigma_lnI = error/I` is absolute. Parameter standard errors and CI now remain governed by stated uncertainty even when the residual happens to be nearly zero.
+- Added a derivative-only selector mode for `local_slope()`. It does not calculate or describe fit weighting, emits no ordinary-least-squares warning for a missing error column, and records `error_audit.strategy="not_used_for_local_derivative"` with `weighting_decision="not_applicable"`.
+- Added `eligible_points`, `actual_fit_points`, `fit_points_semantics`, and `fit_not_performed_rows` to Guinier and power-law outputs. The legacy `fit_points` continues to represent selected log-domain points for compatibility; a failed/degenerate line fit now records `actual_fit_points=0`, empty residuals, diagnostics `n=0`, `weighted_fit=False`, `weighting_decision="no_fit_performed"`, and every eligible unfit raw row.
+- Added regression tests for an exact power law with non-zero known sigma, local-slope no-OLS semantics, one eligible Guinier point, duplicate log-q power-law points, and successful-fit count consistency.
+
+### Reason
+
+Absolute measurement uncertainty must not disappear merely because a synthetic or unusually exact data series has a small residual. Likewise, an export must never state that a numerical fit or weighting occurred when the method only computed a local derivative or when a requested line could not actually be established.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+python -B -m pytest -q -p no:cacheprovider tests\test_model_free_complete.py tests\test_guinier.py tests\test_power_law.py tests\test_local_slope.py tests\test_method_warnings.py tests\test_fit_diagnostics.py
+
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+
+python -B -m py_compile app\core\model_free.py tests\test_model_free_complete.py
+git diff --check
+```
+
+### Generated Output Files
+
+- Updated in-memory analysis contracts, audit fields, documentation, and regression tests only.
+- No raw experimental data, processed data, figures, workbooks, packages, Git commits, or Git pushes were generated.
+
+### How To Check Success
+
+- Four review-remediation tests were written first. The focused RED run reported `6 passed, 4 failed in 0.28s`; failures exactly exposed residual-scaled WLS covariance, the local-slope OLS warning, and absent eligible/actual fit-execution fields.
+- After the minimal repair, `tests\test_model_free_complete.py` reported `10 passed in 0.18s`; the direct model-free, warning, and diagnostics suite reported `47 passed in 0.41s`.
+- The full regression suite reported `358 passed in 8.68s`.
+- `python -B -m py_compile app\core\model_free.py tests\test_model_free_complete.py` and `git diff --check` completed with exit code `0` (Git reported only working-copy line-ending notices).
+
+### Notes And Risks
+
+- All source experimental files and input `CurveData` arrays remain read-only. The repair changes only local calculations and result metadata.
+- The unscaled covariance assumption is correct only when `sigma_lnI` represents stated absolute uncertainty in the transformed coordinate. The code records that transformation explicitly; users must still verify whether their experimental error column has that meaning.
+- `fit_points` is retained for backwards compatibility. New batch exporters should use `eligible_points`, `actual_fit_points`, `fit_not_performed_rows`, and residual rows together, rather than inferring a successful fit from the legacy field alone.
+
+## 2026-07-11 13:55:09 +08:00 - Complete Traceable Guinier, Power-Law, And Local-Slope Outputs
+
+### Task Objective
+
+Implement Stage 2 / Task 2 of the approved automated 1D SAS workflow: retain the existing model-free public APIs while making Guinier, power-law, and local-slope outputs complete, batch-exportable, and scientifically auditable.
+
+### Added Files
+
+- `tests/test_model_free_complete.py`
+
+### Modified Files
+
+- `app/core/model_free.py`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added a row-preserving log-domain selection path for Guinier and power-law fits. Every q/I-domain exclusion records original row index, q, intensity, optional error, and a clear reason; residual rows contain only actual fitted points and retain raw provenance.
+- Routed the two linear fits through `fit_diagnostics()` and `build_residual_rows()`. Results now include actual q limits, point counts, weighting status, complete parameter rows, uncertainty/covariance when finite, R2/RMSE/chi-square/AICc/BIC diagnostics, residuals, validity state, assumptions, and warnings.
+- Propagated valid absolute log-domain uncertainty as `sigma_lnI = error / I`. A fully valid selected error column enables weighted fitting; missing, mismatched, or partly invalid errors intentionally fall back to unweighted fitting over every q/I-valid point and leave an `error_audit` rather than silently excluding points or overstating weighting.
+- Preserved legacy fields and signatures (`qRg_min`/`qRg_max`, `R2`, `residuals`, `q_mid`, `alpha`, and `plateau_candidate_ranges`) for existing callers. Added explicit `qminRg`/`qmaxRg`; a non-negative Guinier slope now leaves Rg-related quantities as `None` with a documented reason.
+- Expanded local-slope output into per-point audit rows and fixed-schema plateau rows. Plateau stability is clipped to `[0, 1]`; all derivative/plateau results are labelled descriptive rather than a unique material-mechanism conclusion.
+
+### Reason
+
+The batch workflow requires every model result to be interpretable outside the GUI: the fitted interval, transformation, weighting basis, residuals, uncertainty, and exclusions must be visible before users compare in-situ frames or attach a structural interpretation.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+python -B -m pytest -q -p no:cacheprovider tests\test_model_free_complete.py tests\test_guinier.py tests\test_power_law.py tests\test_local_slope.py tests\test_method_warnings.py tests\test_fit_diagnostics.py
+
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+
+python -B -m py_compile app\core\model_free.py tests\test_model_free_complete.py
+git diff --check
+```
+
+### Generated Output Files
+
+- Updated in-memory analysis-result contracts and regression tests only.
+- No raw experimental data, processed data, figures, workbooks, packages, Git commits, or Git pushes were generated.
+
+### How To Check Success
+
+- The new contract tests were written first and initially reported `6 failed`; each failure was caused by the required traceability fields being absent from the prior model-free outputs.
+- After the minimum implementation, `tests\test_model_free_complete.py` reported `6 passed`; the targeted model-free, warning, and diagnostic suite reported `43 passed`.
+- The full regression suite reported `354 passed in 8.77s`.
+- `python -B -m py_compile app\core\model_free.py tests\test_model_free_complete.py` and `git diff --check` both completed with exit code `0` (Git reported only existing working-copy line-ending notices).
+
+### Notes And Risks
+
+- All source experimental files and `CurveData` arrays remain read-only; selection, sorting, fitting, and derivatives use local arrays only.
+- A successful fit, a low residual, a Guinier Rg, a power-law exponent, or a local-slope plateau does not prove a unique morphology or causal material mechanism. Review the selected q range, `validity`, `assumptions`, residuals, and experimental context.
+- Covariance-derived uncertainty can be unavailable for too few points, rank-deficient coordinates, or non-finite numerical estimates. Such values remain `None` rather than being replaced by zero.
+
+## 2026-07-11 12:46:48 +08:00 - Enforce Runner Envelope Identity And Complete Stage 1 Boundary Regressions
+
+### Task Objective
+
+Address the Stage 1 Task 5/Task 6 contract-review finding that a syntactically valid runner result could be attributed to the wrong curve or analysis method, then complete the two previously listed non-blocking boundary regression cases.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/auto_batch.py`
+- `tests/test_auto_batch.py`
+- `tests/test_batch_consensus.py`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Changed `_validate_runner_output()` to receive the scheduled `CurveData` and `method_id`, and reject any envelope whose `curve_id` differs from the current curve or whose `analysis_type` differs from the scheduled method.
+- A wrong-curve or wrong-method envelope, including one bad entry in an otherwise multiple-envelope result, is now isolated inside the existing runner exception boundary as exactly one current-job `FIT_FAILED` envelope. The mismatched result is never added to `AutoBatchRun.analyses`.
+- Kept multiple-envelope support and deliberately did not require returned `q_range` values to equal the requested range, because a later production runner may need to report its actual accepted fit interval.
+- Added direct tests for empty candidate lists, no curves, duplicate curve IDs with bounded coverage/deduplicated support, and cancellation after the first completed job but before the second runner call.
+- Marked the older log-median executable-range prose in developer notes as superseded historical material, and updated the authoritative Stage 1 API section to record runner identity validation and completion of the prior regression follow-ups.
+
+### Reason
+
+Accepting a valid-looking result for the wrong experimental frame or wrong SAS method can misattribute fitted parameters and lead to incorrect scientific comparison across an in-situ series. The orchestration boundary must reject that result before later output, trend, or model-selection stages can use it.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_batch.py
+python -B -m pytest -q -p no:cacheprovider tests\test_batch_consensus.py
+
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_batch_schema.py tests\test_metric_registry.py tests\test_batch_inputs.py tests\test_batch_consensus.py tests\test_auto_batch.py tests\test_io.py tests\test_batch_import.py tests\test_auto_regions.py
+python -B -m pytest -q -p no:cacheprovider
+python -B -m py_compile app\core\auto_batch.py tests\test_auto_batch.py tests\test_batch_consensus.py
+git diff --check
+```
+
+### Generated Output Files
+
+- Updated in-memory orchestration safeguards, regression tests, and documentation only.
+- No raw experimental data, processed data, figures, result packages, workbooks, packages, Git commits, or Git pushes were generated.
+
+### How To Check Success
+
+- Identity-contract tests were written before code changes and initially reported `3 failed, 4 passed, 38 deselected`; the three expected failures showed wrong-curve/wrong-method envelopes being accepted and the batch incorrectly ending as `completed`.
+- The three pre-existing boundary regressions (empty/no-curve/duplicate-ID consensus and mid-batch cancellation) were direct GREEN coverage in that same initial run; no false RED claim is made for them.
+- After the minimal identity repair, the selected tests reported `7 passed, 38 deselected`.
+- Task 5 reported `27 passed`; Task 4 reported `18 passed`; the Stage 1 focused suite reported `106 passed`; the full suite reported `326 passed`.
+- `python -B -m py_compile app\core\auto_batch.py tests\test_auto_batch.py tests\test_batch_consensus.py` completed with exit code `0`; `git diff --check` completed without whitespace errors.
+
+### Notes And Risks
+
+- All source experimental files remain read-only. This validation never moves, renames, deletes, smooths, normalizes, or overwrites input data.
+- The identity contract validates curve and method attribution only. It deliberately leaves the actual returned q interval to a future production runner and does not establish fit validity or material mechanism.
+- No dependencies were installed and no packaging, Git commit, or Git push was performed.
+
+## 2026-07-11 12:28:57 +08:00 - Complete Automated Batch Foundation Documentation And Verification
+
+### Task Objective
+
+Complete Stage 1 / Task 6 for the approved automated 1D SAS batch workflow: document the stable foundation contract and verify the complete Stage 1 implementation without changing raw experimental data or creating a result package.
+
+### Added Files
+
+- `app/core/auto_batch_schema.py`
+- `app/core/metric_registry.py`
+- `app/core/batch_inputs.py`
+- `app/core/batch_consensus.py`
+- `app/core/auto_batch.py`
+- `tests/test_auto_batch_schema.py`
+- `tests/test_metric_registry.py`
+- `tests/test_batch_inputs.py`
+- `tests/test_batch_consensus.py`
+- `tests/test_auto_batch.py`
+
+### Modified Files
+
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Established the documented Stage 1 API contract for `AutoBatchConfig`, `METHOD_REGISTRY`, `collect_batch_inputs()`, `resolve_consensus_regions()`, and `run_auto_batch()`.
+- Recorded that `AutoBatchConfig` is not frozen: callers must treat it as unchanged after a run begins, while `AutoBatchRun` stores the actual `asdict(config)` snapshot.
+- Documented read-only calibrated-curve input discovery, manifest SHA-256/source metadata, optional CSV metadata states, strict shared q-range intersection, audit-only log-median ranges, no automatic per-frame range fallback, failure isolation, cancellation gates, and the injected runner contract.
+- Documented the deliberate Plan 1 limit: the default runner returns `NOT_APPLICABLE`; real analysis, model fitting, Excel/CSV/JSON writing, figures, and GUI integration belong to later plans.
+- Added two non-blocking regression follow-ups from independent reviews: real empty/duplicate-identity `CurveData` consensus cases, and cancellation between the first completed job and the second job.
+
+### Reason
+
+The later numerical-analysis, sequence-analysis, export, and GUI stages need one precise, auditable boundary so they do not mistake declarations, audit statistics, placeholders, or failed jobs for fitted scientific results.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+python -B -m compileall -q app\core
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_batch_schema.py tests\test_metric_registry.py tests\test_batch_inputs.py tests\test_batch_consensus.py tests\test_auto_batch.py
+
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+
+git diff --check
+git status --short
+```
+
+### Generated Output Files
+
+- No raw experimental data, processed data, figures, residual plots, Excel workbooks, CSV/JSON result packages, build artifacts, packages, commits, or pushes were generated by this Task 6 documentation and verification pass.
+- The Stage 1 in-memory `AutoBatchRun` API is available to later plans; it is not itself an on-disk result package.
+
+### How To Check Success
+
+- `python -B -m compileall -q app\core` completed with exit code `0`.
+- The exact focused Stage 1 command reported `66 passed in 1.40s`.
+- The full offscreen regression command reported `319 passed in 6.41s`.
+- Final `git diff --check` completed with exit code `0` and no whitespace errors. Git emitted only existing line-ending notices that `.gitignore`, `AGENTS.md`, `CHANGELOG.md`, and `docs/developer_notes.md` will use CRLF when Git next touches them.
+- `git status --short` completed with the five untracked Stage 1 core modules, five untracked Stage 1 test modules, these two modified documentation files, and the previously approved `.gitignore`, `AGENTS.md`, `docs/agents/`, design specification, and four plan documents. The restricted sandbox also emitted `unable to access ... .config/git/ignore: Permission denied`; no project file or test result was affected.
+
+### Notes And Risks
+
+- Raw calibrated input files are read-only: no Stage 1 path writes, moves, renames, smooths, normalizes, converts, deletes, or overwrites them.
+- `ConsensusRegion.q_range` is intentionally conservative. A batch with shifting features can have no common q range; it must not silently fall back to a frame-specific range.
+- `METHOD_REGISTRY` is an output declaration, and a default `NOT_APPLICABLE` envelope is not a fitted value or material conclusion. Plan 2 must add validated numerical runners before any scientific interpretation.
+- No dependencies were installed. No packaging, Git commit, or Git push was performed.
+
+## 2026-07-11 12:17:16 +08:00 - Harden Automated Batch Cancellation Gates And Runner Status Validation
+
+### Task Objective
+
+Address Stage 1 Task 5 independent-review findings so cancellation is checked at every batch boundary and malformed runner envelope statuses cannot either crash a batch or be silently reported as completed.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/auto_batch.py`
+- `tests/test_auto_batch.py`
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added cancellation checks after imported data is copied into `AutoBatchRun` and again after consensus resolution succeeds or fails, before any curve-method runner can start. The existing pre-input and per-job checks remain in place.
+- Added sequence-callback tests for `False, True` after input copy (no consensus or runner) and `False, False, True` after consensus (no runner). Both preserve the imported run metadata but return `cancelled`, set `finished_at`, report a warning, and leave `analyses` empty.
+- Added explicit runtime validation for every `AnalysisEnvelope.status` returned by an injected runner. Valid enum-value strings such as `"success"` and `"fit_failed"` are normalized to `AnalysisStatus`; invalid strings, lists, and other malformed/unhashable values are isolated as one `FIT_FAILED` envelope for the affected curve and method.
+- Kept empty runner lists as explicit contract failures and added direct regression coverage for the one-envelope `FIT_FAILED` outcome.
+- Treat a runner-returned `FIT_FAILED`, `INVALID`, or `CANCELLED` envelope as a non-success result, making the finished batch at least `partial_success`. A returned `CANCELLED` envelope does not automatically set the whole batch to `cancelled`; only `cancel_requested` controls batch-level cancellation.
+
+### Reason
+
+The first Task 5 implementation guarded input import and individual method jobs, but not the boundaries immediately before/after consensus work. It also trusted the envelope status field until after runner output validation, allowing malformed values to escape validation or interfere with set membership. The revised boundary makes both states auditable and safe.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_batch.py
+
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_batch_schema.py tests\test_metric_registry.py tests\test_batch_inputs.py tests\test_batch_consensus.py tests\test_auto_batch.py tests\test_io.py tests\test_batch_import.py tests\test_auto_regions.py
+python -B -m pytest -q -p no:cacheprovider
+python -B -m py_compile app\core\auto_batch.py tests\test_auto_batch.py
+```
+
+### Generated Output Files
+
+- Updated read-only orchestration code, regression tests, and internal documentation only.
+- No raw experimental data, processed data, figures, result packages, workbooks, packages, Git commits, or Git pushes were generated.
+
+### How To Check Success
+
+- New review-fix tests were written before the code changes. Their first focused run reported `7 failed, 3 passed, 13 deselected`; failures showed consensus starting after a post-input cancellation, a runner starting after a post-consensus cancellation, invalid status acceptance, unhashable-status escaping, string-status non-normalization, and a returned `CANCELLED` envelope ending as `completed`.
+- After the minimal repair, those review-fix tests reported `10 passed, 13 deselected`.
+- The complete Task 5 suite reported `23 passed`.
+- The Stage 1 focused suite reported `99 passed`.
+- The full project suite reported `319 passed`.
+- `python -B -m py_compile app\core\auto_batch.py tests\test_auto_batch.py` completed with exit code `0`; `git diff --check` completed without whitespace errors.
+
+### Notes And Risks
+
+- Raw experimental files remain read-only. No cancellation or runner-status path writes, moves, renames, normalizes, smooths, or deletes input data.
+- A runner-returned `CANCELLED` envelope signals a method-level non-success only. It must not be read as proof that the overall batch was user-cancelled or as a material-science conclusion.
+- Plan 2 remains responsible for the production analysis runner and for interpreting method-specific statuses; this Stage 1 layer only enforces safe transport, scheduling, and audit semantics.
+- No dependencies were installed and no package, Git commit, or Git push was performed.
+
+## 2026-07-11 10:33:36 +08:00 - Add Failure-Isolating Automated Batch Orchestrator
+
+### Task Objective
+
+Implement Stage 1 Task 5: a read-only automated-batch orchestration boundary that imports calibrated 1D SAS curves, applies strict batch-consensus q ranges, and isolates individual analysis-method failures so one failed fit does not discard the rest of an in-situ series.
+
+### Added Files
+
+- `app/core/auto_batch.py`
+- `tests/test_auto_batch.py`
+
+### Modified Files
+
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added `run_auto_batch(input_dir, config, *, progress_callback=None, cancel_requested=None, analysis_runner=None) -> AutoBatchRun` and its injectable `AnalysisRunner` contract.
+- The default Plan 1 runner emits explicit `NOT_APPLICABLE` envelopes with `production runner is installed by Plan 2`; it does not invent numerical fit results.
+- Added read-only orchestration over `collect_batch_inputs()`, `resolve_consensus_regions()`, and `applicable_method_ids()` with `asdict(config)` retained in the run snapshot.
+- Stores only validated finite ascending consensus q tuples. Missing consensus always passes `None` to range-sensitive methods; there is no automatic per-frame range fallback. `lamellar`, peaks, shoulders, and oscillations share the `peak` consensus mapping.
+- Uses finite q values only for full-range methods and passes `None` with an auditable warning for empty, non-finite, or non-increasing q data.
+- Isolates runner exceptions, non-list/non-envelope runner results, returned failed/invalid envelopes, consensus-resolution failures, input failure rows, progress-callback failures, and cancellation-callback failures. Affected method jobs receive `FIT_FAILED`; prior and later jobs continue where safe.
+- Checks cancellation before input collection, before consensus work, and before every method job. Cancellation sets `run.status="cancelled"`, writes `finished_at`, records the reason, and does not fabricate results for skipped jobs.
+- Added TDD regression coverage for runner failure isolation, immediate cancellation, strict no-fallback behavior, preservation of multiple envelopes, peak/lamellar range mapping, consensus failures, invalid runner contracts, callback failures, finite/empty q handling, failed inputs, cancellation callback failures, and the Plan 1 default runner.
+
+### Reason
+
+The approved workflow requires a batch to remain traceable and useful even when one frame, one method, a consensus selector, or a UI progress hook fails. This core boundary makes that behavior explicit before Plan 2 introduces real numerical analysis runners.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_batch.py
+
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_batch_schema.py tests\test_metric_registry.py tests\test_batch_inputs.py tests\test_batch_consensus.py tests\test_auto_batch.py tests\test_io.py tests\test_batch_import.py tests\test_auto_regions.py
+python -B -m pytest -q -p no:cacheprovider
+python -B -m py_compile app\core\auto_batch.py tests\test_auto_batch.py
+```
+
+### Generated Output Files
+
+- Added core orchestration code, regression tests, and implementation notes only.
+- No raw experimental data, processed data, figures, result packages, workbooks, packages, Git commits, or Git pushes were generated.
+
+### How To Check Success
+
+- TDD RED confirmation: before `auto_batch.py` existed, `tests\test_auto_batch.py` stopped at `ModuleNotFoundError: No module named 'app.core.auto_batch'`.
+- Cancellation refinement RED confirmation: the strengthened immediate-cancellation test initially failed with `Failed: input collection must not run after immediate cancellation`; it then passed after the cancellation check moved before input collection.
+- After the minimal implementation, `tests\test_auto_batch.py` reported `13 passed`.
+- The complete Stage 1 focused suite reported `89 passed`.
+- The full project suite reported `309 passed`.
+- `python -B -m py_compile app\core\auto_batch.py tests\test_auto_batch.py` completed with exit code `0`.
+
+### Notes And Risks
+
+- The orchestration layer only reads source files through the existing import layer and never edits, moves, renames, smooths, normalizes, or writes raw experimental data.
+- Plan 2 must install the real analysis runner. Until then, direct calls without `analysis_runner` intentionally return `NOT_APPLICABLE`, not fitted values.
+- A range-sensitive method with no batch consensus receives `None`; this is an explicit conservative limitation, not an error-correcting per-frame fallback.
+- A runner must return a non-empty `list[AnalysisEnvelope]`. An empty list is recorded as a visible per-method `FIT_FAILED` rather than silently losing an expected analysis row.
+- No dependency was installed and no package, Git commit, or Git push was performed.
+
+## 2026-07-11 10:18:06 +08:00 - Harden Batch-Consensus q Ranges Against Unsafe Shared Fits
+
+### Task Objective
+
+Address independent review findings in Stage 1 Task 4 so that a batch-level q range can be safely used by every supporting curve, candidate identity cannot inflate coverage, and deterministic ties retain the most informative valid candidate interval.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/batch_consensus.py`
+- `tests/test_batch_consensus.py`
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Changed `ConsensusRegion.q_range` from independent log-median endpoints to the strict common interval `(max(q_start), min(q_end))` after curve-ID de-duplication. A candidate cluster with no open common interval now produces no consensus, so later shared-range fitting never receives q values outside a supporting candidate's own interval.
+- Preserved the former log-median endpoints as the audit-only `ConsensusRegion.log_median_q_range`; this descriptive statistic is explicitly not an executable fit range.
+- Added `median_n_points` and deterministic ranking: coverage, median score, median valid `n_points`, then stable q-range and curve-ID tie-breaks. Equal-score alternatives from one curve now retain the candidate with more valid points.
+- Required `fit_ready is True` exactly; truthy strings and NaN no longer enter a cluster. Rejected `None`, empty, and non-string curve IDs; missing, negative, or non-finite `n_points` are conservatively treated as zero.
+- Prevented invalid coverage by rejecting non-positive `curve_count` and clusters with more distinct supporting IDs than the declared curve count.
+- Required every candidate read by `resolve_consensus_regions()` to have a `curve_id` exactly equal to the currently detected `CurveData.curve_id`; foreign/stale rows are ignored without changing source dictionaries.
+- Added regression coverage for no-overlap nearby centers, strict common-range containment, threshold and coverage boundaries, score and point-count ties, strict boolean readiness, invalid IDs, coverage ceiling, and foreign candidate rejection.
+
+### Reason
+
+The prior log-median endpoints could lie between disjoint candidate intervals despite a close log-q center, creating a q range that no individual curve actually supported. The strict intersection is intentionally more conservative: it records no shared fit range rather than inventing one.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_batch_consensus.py
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_regions.py tests\test_deep_scan.py tests\test_batch_consensus.py
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_batch_schema.py tests\test_metric_registry.py tests\test_batch_inputs.py tests\test_batch_consensus.py
+python -B -m py_compile app\core\batch_consensus.py tests\test_batch_consensus.py
+```
+
+For the full regression suite:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+```
+
+### Generated Output Files
+
+- Updated read-only core code, regression tests, and internal documentation only.
+- No raw experimental data, processed data, result package, figure, workbook, package, Git commit, or Git push was generated.
+
+### How To Check Success
+
+- `tests\test_batch_consensus.py` reports `15 passed`.
+- Existing automatic-region regression plus consensus tests report `35 passed`.
+- Cumulative Stage 1 schema, registry, input, and consensus tests report `43 passed`.
+- Full regression reports `296 passed`.
+- `python -B -m py_compile app\core\batch_consensus.py tests\test_batch_consensus.py` and `git diff --check` complete without errors.
+
+### Notes And Risks
+
+- A strict common range is safer for downstream fits but may omit a consensus during a real q-range drift or phase transition; it must not be silently relaxed into an automatic per-frame fallback.
+- Candidate score and `n_points` are detector properties, not independent proof that a SAS model or material interpretation is valid.
+- No dependencies were installed, and no package, Git commit, or Git push was performed.
+
+## 2026-07-11 09:57:13 +08:00 - Add Read-Only Batch-Consensus q Region Selection
+
+### Task Objective
+
+Implement the Stage 1 batch-consensus layer that converts per-curve automatic q-region candidates into deterministic, batch-level q ranges without modifying raw curves or the existing automatic-region detector.
+
+### Added Files
+
+- `app/core/batch_consensus.py`
+- `tests/test_batch_consensus.py`
+
+### Modified Files
+
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added public `ConsensusRegion`, `candidate_consensus()`, and `resolve_consensus_regions()` interfaces.
+- Added deterministic clustering by log-q interval center with the fixed threshold `0.35`; within each cluster, candidates are deduplicated by curve ID, ranked by coverage first and median candidate score second, and converted to q ranges through log-q medians.
+- Added stable tie-breaking by q range and sorted supporting curve IDs, so candidate input order cannot change the selected consensus result.
+- Mapped real `detect_auto_regions()` candidate types (`guinier_candidate`, `power_law_candidate`, `porod_candidate`, and `peak_candidate`) to the batch output keys `guinier`, `power_law`, `porod`, and `peak`.
+- Ignored unsupported, non-fit-ready, non-finite, non-positive, and non-increasing candidate rows. Region types below `AutoBatchConfig.consensus_min_coverage` are omitted instead of returning a weak consensus.
+- Added tests for coverage-over-score priority, coverage rejection, curve-ID de-duplication, invalid/unready rows, deterministic ordering, real candidate-type mapping, and preservation of in-memory curve arrays and metadata.
+
+### Reason
+
+In-situ batch analysis needs one repeatable q range per analysis type while avoiding per-frame manual choices. The consensus rule provides a transparent shared range and preserves weak or inconsistent detections as absent rather than silently treating them as valid.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_batch_consensus.py
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_regions.py tests\test_deep_scan.py tests\test_batch_consensus.py
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_batch_schema.py tests\test_metric_registry.py tests\test_batch_inputs.py tests\test_batch_consensus.py
+python -B -m py_compile app\core\batch_consensus.py tests\test_batch_consensus.py
+```
+
+For the full regression suite:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+```
+
+### Generated Output Files
+
+- New read-only core module, regression tests, and internal documentation only.
+- No raw experimental data, processed data, result package, figure, workbook, package, Git commit, or Git push was generated.
+
+### How To Check Success
+
+- `tests\test_batch_consensus.py` reports `5 passed`.
+- Existing automatic-region regression plus consensus tests report `25 passed`.
+- Cumulative Stage 1 schema, registry, input, and consensus tests report `33 passed`.
+- Full regression reports `286 passed`.
+- `python -B -m py_compile app\core\batch_consensus.py tests\test_batch_consensus.py` and `git diff --check` complete without errors.
+
+### Notes And Risks
+
+- The consensus is a repeatable selection rule, not evidence for a unique material structure or a substitute for reviewing a genuine physical transition.
+- The fixed log-q center threshold (`0.35`) and default minimum coverage (`0.70`) may need an explicitly recorded future configuration change for unusually broad, shifting, or multi-regime series.
+- `resolve_consensus_regions()` reads only temporary detection results. It never changes `CurveData.q`, `CurveData.intensity`, `CurveData.metadata`, or an original input file.
+- No dependencies were installed, and no package, Git commit, or Git push was performed.
+
+## 2026-07-11 09:48:25 +08:00 - Make Per-Curve Metadata Coverage Explicit
+
+### Task Objective
+
+Address the final Task 3 re-review finding by recording and warning on successful curves that have no matching row in an otherwise configured CSV metadata sidecar.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/batch_inputs.py`
+- `tests/test_batch_inputs.py`
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added `metadata_match_status="matched"` to every successfully imported curve that receives a metadata row, while retaining its existing `metadata_source`, `metadata_sha256`, match-column, key, and row-index provenance.
+- Added `metadata_match_status="no_matching_row"` plus a clear per-curve warning when a configured sidecar lacks a row for a successfully imported curve.
+- Preserved the distinct existing reverse warning for a valid metadata row whose key does not correspond to an imported curve.
+- Added a partial-match/partial-missing-row regression test that asserts both status values and the missing-row warning.
+
+### Reason
+
+Without an explicit per-curve state, later analysis/export code could not distinguish an intentionally absent metadata sidecar from a configured sidecar that accidentally omitted one experimental frame.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_batch_inputs.py
+python -B -m pytest -q -p no:cacheprovider tests\test_io.py tests\test_batch_import.py tests\test_batch_inputs.py
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_batch_schema.py tests\test_metric_registry.py tests\test_batch_inputs.py
+```
+
+For the full regression suite:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+```
+
+### Generated Output Files
+
+- Updated in-memory batch-input code, regression tests, and internal documentation only.
+- No raw experimental data, processed data, result package, figure, workbook, package, Git commit, or Git push was generated.
+
+### How To Check Success
+
+- `tests\test_batch_inputs.py` reports `11 passed`.
+- Existing import plus input tests report `29 passed`.
+- Cumulative schema, registry, and input tests report `28 passed`.
+- The full suite reports `281 passed`.
+- Run `python -B -m py_compile app\core\batch_inputs.py tests\test_batch_inputs.py` and `git diff --check`; both should complete without errors.
+
+### Notes And Risks
+
+- These status fields exist only when a metadata sidecar is configured and are held only in imported in-memory `CurveData.metadata`; no raw file is modified.
+- A matched row establishes file-level provenance, not physical validity of the metadata value.
+- CSV-only metadata and non-recursive curve discovery remain intentional Stage 1 limits.
+- No dependencies were installed, and no package, Git commit, or Git push was performed.
+
+## 2026-07-11 09:35:07 +08:00 - Harden Batch Input Manifest and Metadata Audit Trail
+
+### Task Objective
+
+Address the independent Stage 1 / Task 3 review findings: preserve partial batch results through manifest-read failures, make CSV metadata matching auditable and unambiguous, and lock the manifest/hash contract with regression tests.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/batch_inputs.py`
+- `tests/test_batch_inputs.py`
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added per-file manifest failure isolation for `resolve()`, `stat()`, and SHA-256 `OSError` cases. Failed candidates retain a manifest row with `manifest_status="failed"`, `manifest_error`, unavailable fields as `None`, and a `{file, stage: "manifest", error}` record in `failed_inputs`; other curves and manifest rows continue.
+- Preserved existing `import_in_situ_series()` failure records and verified that a readable but invalid curve still appears in the manifest with a successful hash.
+- Enforced positive chunk sizes in `sha256_file()` with a clear `ValueError`.
+- Rejected duplicate non-empty metadata match keys with a clear `ValueError` that includes both row indices, and added warnings for valid metadata keys that match no imported curve.
+- Added an explicit regression check that a missing `metadata_match_column` raises the documented clear `ValueError`.
+- Added per-matched-curve metadata provenance: absolute `metadata_source`, `metadata_sha256`, `metadata_match_column`, normalized `metadata_match_key`, and zero-based `metadata_row_index`.
+- Kept the configured same-directory metadata sidecar out of curve import and the curve manifest. If the already-read sidecar cannot be hashed, collection now raises a clear `RuntimeError` rather than silently losing provenance.
+- Expanded tests to verify exact SHA-256 values, absolute source paths, source size/mtime, natural order, invalid chunk-size rejection, failure isolation, invalid-curve manifest retention, duplicate-key rejection, unmatched-key warnings, and sidecar-hash failure.
+
+### Reason
+
+Batch analysis must remain partially usable when one input becomes inaccessible, and time/temperature/strain metadata must never be silently overwritten or omitted. The added provenance allows later result packages to identify exactly which sidecar row and version supplied each curve's metadata.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_batch_inputs.py
+python -B -m pytest -q -p no:cacheprovider tests\test_io.py tests\test_batch_import.py tests\test_batch_inputs.py
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_batch_schema.py tests\test_metric_registry.py tests\test_batch_inputs.py
+```
+
+For the full regression suite:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+```
+
+### Generated Output Files
+
+- Updated core input-collection code, regression tests, and internal documentation only.
+- No raw experimental data, processed data, result package, figure, workbook, package, Git commit, or Git push was generated.
+
+### How To Check Success
+
+- `tests\test_batch_inputs.py` reports `10 passed`.
+- Existing import plus input tests report `28 passed`.
+- Cumulative schema, registry, and input tests report `27 passed`.
+- The full suite reports `280 passed`.
+- Run `python -B -m py_compile app\core\batch_inputs.py tests\test_batch_inputs.py` and `git diff --check`; both should complete without errors.
+
+### Notes And Risks
+
+- Original curves and metadata are still opened only for reading; no raw file was written, moved, renamed, or deleted.
+- This stage supports CSV metadata only and non-recursive curve discovery. XLSX metadata remains intentionally deferred to Plan 4.
+- A manifest failure is recorded rather than fatal, so later result writers must preserve both failed manifest rows and `failed_inputs` in final outputs.
+- No dependencies were installed, and no package, Git commit, or Git push was performed.
+
+## 2026-07-11 09:13:41 +08:00 - Add Read-Only Automated Batch Input Collection
+
+### Task Objective
+
+Implement the approved Stage 1 input boundary for calibrated 1D SAS batch files: discover supported curves in natural order, record traceable input hashes, and merge optional CSV metadata without modifying original experimental data.
+
+### Added Files
+
+- `app/core/batch_inputs.py`
+- `tests/test_batch_inputs.py`
+
+### Modified Files
+
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added public `BatchInputCollection`, `discover_curve_files`, `sha256_file`, `load_metadata_table`, and `collect_batch_inputs` interfaces.
+- Restricted curve discovery to direct-child `.csv`, `.txt`, and `.dat` files and reused the existing natural filename ordering and in-situ import workflow.
+- Added a chunked SHA-256 manifest for every discovered file containing `source_file`, `source_path`, `size_bytes`, `modified_time`, and `sha256`.
+- Added optional CSV metadata matching through `AutoBatchConfig.metadata_match_column`; missing match columns raise a clear `ValueError`.
+- Kept metadata and q/intensity unit overrides in imported in-memory `CurveData.metadata` only, including the matched `metadata_source` and explicit unit-override provenance; original curve and metadata files remain read-only.
+- When the configured metadata CSV is stored alongside curves, exclude that sidecar from curve import and the curve manifest so it cannot be reported as a failed curve.
+- Added focused tests for natural sort/extension filtering and in-memory metadata merge with byte-for-byte source preservation.
+
+### Reason
+
+Later automated analyses require a reproducible list of exactly which calibrated curves were used and a safe way to attach time, temperature, strain, or similar batch metadata before any numerical analysis begins.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_batch_inputs.py
+python -B -m pytest -q -p no:cacheprovider tests\test_io.py tests\test_batch_import.py tests\test_batch_inputs.py
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_batch_schema.py tests\test_metric_registry.py tests\test_batch_inputs.py
+```
+
+For the full regression suite:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+```
+
+### Generated Output Files
+
+- New core module, regression tests, and internal documentation only.
+- No raw experimental data, processed data, result package, figure, workbook, package, Git commit, or Git push was generated.
+
+### How To Check Success
+
+- `tests\test_batch_inputs.py` reports `2 passed`.
+- Existing import plus input tests report `20 passed`.
+- Cumulative schema, registry, and input tests report `19 passed`.
+- The full suite reports `272 passed`.
+- Run `git diff --check`; it should report no whitespace errors.
+
+### Notes And Risks
+
+- Original curve and metadata files are opened only for reading; their source bytes were explicitly checked unchanged by the regression test.
+- This stage only supports CSV metadata. XLSX support is intentionally deferred to Plan 4, where the approved `openpyxl` dependency will be introduced.
+- This stage does not perform quality analysis, consensus-region calculation, numerical fitting, sequence analysis, figure export, or result-package generation.
+- No dependencies were installed, and no package, Git commit, or Git push was performed.
+
+## 2026-07-11 09:02:10 +08:00 - Complete Metric Registry Positive-Profile Coverage
+
+### Task Objective
+
+Apply the second independent-review repair by testing every approved P(r) positive sample type and enforcing tuple-backed metrics across the entire authoritative registry.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `tests/test_metric_registry.py`
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added exact truth-matrix cases for `sample_type="polymer", enable_pr=True` and `sample_type="unknown", enable_pr=True`; both assert the same ordered result as the P(r)-enabled particle profile.
+- Expanded the tuple assertion from the Guinier method alone to every `METHOD_REGISTRY` value, while retaining frozen-dataclass and tuple-assignment checks.
+- Documented that the existing production implementation already satisfies these new regression expectations, so no production code was changed and no fabricated RED result is claimed.
+
+### Reason
+
+The approved P(r) registry rule includes `particle`, `polymer`, and `unknown`. Only testing particle could miss a future profile-specific regression; inspecting one method's tuple type could similarly miss a mutable metric collection in another entry.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_metric_registry.py
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_batch_schema.py tests\test_metric_registry.py
+```
+
+For the full regression suite:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+```
+
+### Generated Output Files
+
+- Updated regression tests and internal documentation only.
+- No raw experimental data, processed data, result package, figures, workbook, or build artifact was generated.
+
+### How To Check Success
+
+- The strengthened registry suite reports `14 passed`.
+- The schema-plus-registry suite reports `17 passed`.
+- The full suite reports `270 passed`.
+- Run `git diff --check`; it should report no whitespace errors.
+
+### Notes And Risks
+
+- The registry mapping remains an ordinary `dict` by the approved design; its entries' metric collections are now checked as tuples across all methods.
+- Future intentional registry additions or P(r) profile changes must update the full expected registry and truth matrix together.
+- Raw experimental data were not read, modified, moved, renamed, or deleted.
+- No dependencies were installed, and no package, Git commit, or Git push was performed.
+
+## 2026-07-11 08:51:56 +08:00 - Strengthen Metric Registry Review Coverage
+
+### Task Objective
+
+Address the independent review finding that the automated-batch metric registry tests did not precisely lock all approved methods, output fields, ordering, applicability conditions, and immutable-spec behavior.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `tests/test_metric_registry.py`
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Replaced subset/set-based registry checks with exact ordered assertions for all 18 `required_method_ids()` entries.
+- Added a complete literal expected registry that compares every method's identifier, region type, metric names and order, sample-type rule, and configuration-flag rule.
+- Added an exact profile truth matrix for default, P(r)-enabled particle, correlation-enabled two-phase, lamellar with correlation both disabled and enabled, disabled flags, and wrong sample-type/flag combinations.
+- Added regression checks that `MetricSpec` and `MethodSpec` are frozen and that metrics are tuples.
+- Documented the intentional limitation that `METHOD_REGISTRY` remains an ordinary approved `dict`; only its contained specifications/metric tuples are immutable, and callers must not mutate the mapping.
+- Recorded that these are review-driven tests of already-existing correct production code; no production implementation was changed and no fabricated RED result is claimed.
+
+### Reason
+
+The initial tests could have allowed silent method omissions, reordering, metric changes outside Guinier, or incorrect P(r)/correlation/lamellar eligibility. Exact regression expectations now make any such contract change visible before a later analysis, export, or GUI stage consumes the registry.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_metric_registry.py
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_batch_schema.py tests\test_metric_registry.py
+```
+
+For the full regression suite:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+```
+
+### Generated Output Files
+
+- Updated test and internal-documentation records only.
+- No raw experimental data, processed data, result package, figures, workbook, or build artifact was generated.
+
+### How To Check Success
+
+- The strengthened registry suite reports `12 passed`.
+- The schema-plus-registry suite reports `15 passed`.
+- The full suite reports `268 passed`.
+- Run `git diff --check`; it should report no whitespace errors.
+
+### Notes And Risks
+
+- The ordinary `METHOD_REGISTRY` mapping is intentionally not frozen; future production code must treat it as read-only by convention.
+- An intentional registry contract update must change its approved specification and this full expected-test table together.
+- Raw experimental data were not read, modified, moved, renamed, or deleted.
+- No dependencies were installed, and no package, Git commit, or Git push was performed.
+
+## 2026-07-11 08:37:46 +08:00 - Add Authoritative Automated-Batch Metric Registry
+
+### Task Objective
+
+Create the approved authoritative registry of every automated 1D SAS batch-analysis method and its complete declared output metrics, including explicit profile eligibility rules for P(r), correlation, and lamellar analysis.
+
+### Added Files
+
+- `app/core/metric_registry.py`
+- `tests/test_metric_registry.py`
+
+### Modified Files
+
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added frozen `MetricSpec` and `MethodSpec` dataclasses with tuple-based metric collections and no shared mutable defaults.
+- Added the ordered `METHOD_REGISTRY` covering all 18 confirmed method identifiers and the full approved metric lists for each method.
+- Added `required_method_ids()` for full ordered coverage and `applicable_method_ids(config)` for profile-aware eligibility.
+- Recorded P(r) eligibility as `enable_pr=True` plus `particle`, `polymer`, or `unknown` sample type; correlation eligibility as `enable_correlation=True` plus `two_phase` or `lamellar`; and lamellar eligibility as `sample_type="lamellar"` with no separate flag.
+- Added focused tests that verify method coverage, conditional applicability, and every confirmed Guinier output field.
+- Added implementation documentation describing the registry boundary, applicability rules, test evidence, and later-stage requirement to retain unavailable-method statuses.
+
+### Reason
+
+The confirmed workflow requires all downstream analysis, trend, Excel, CSV/JSON, figure, and GUI paths to share a single metric contract. This prevents individual subsystems from silently omitting fields or applying incompatible P(r)/correlation/lamellar eligibility rules.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_metric_registry.py
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_batch_schema.py tests\test_metric_registry.py
+```
+
+For the full regression suite:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+```
+
+### Generated Output Files
+
+- Source-only registry and test files listed above.
+- Updated internal implementation documentation in `docs/developer_notes.md`.
+- No raw experimental data, processed data, result package, figures, workbook, or build artifact was generated.
+
+### How To Check Success
+
+- Before implementation, the focused registry test failed for the expected missing `app.core.metric_registry` module.
+- After implementation, the focused registry command reports `3 passed`.
+- The schema-plus-registry command reports `6 passed`.
+- The full suite reports `259 passed`.
+- Run `git diff --check`; it should report no whitespace errors.
+
+### Notes And Risks
+
+- The registry declares expected output fields and profile eligibility only; it does not establish that a curve meets numerical or physical prerequisites for an analysis.
+- Future execution stages must emit explicit unavailable/failed statuses and reasons instead of inventing metric values.
+- Raw experimental data were not read, modified, moved, renamed, or deleted.
+- No dependencies were installed, and no package, Git commit, or Git push was performed.
+
+## 2026-07-11 08:21:45 +08:00 - Add Typed Automated-Batch Analysis Schema
+
+### Task Objective
+
+Create the stable typed data contracts required by the automated 1D SAS batch-analysis workflow before any input data, numerical analysis, or GUI integration is added.
+
+### Added Files
+
+- `app/core/auto_batch_schema.py`
+- `tests/test_auto_batch_schema.py`
+
+### Modified Files
+
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added the shared `AnalysisStatus`, `ParameterValue`, `AnalysisEnvelope`, `ProgressEvent`, `AutoBatchConfig`, and `AutoBatchRun` dataclasses/enums.
+- Added strict default batch-consensus configuration (`consensus_min_coverage=0.70`, `allow_per_frame_range_fallback=False`) and validation for invalid coverage, empty batch IDs, bootstrap/sensitivity settings, reference modes, and exploratory-statistics dimensions.
+- Reused `app.core.data_model.utc_now_iso` for run timestamps and avoided GUI/PySide imports and new third-party dependencies.
+- Added focused tests for invalid consensus coverage, missing parameter values with reasons, and the strict default consensus policy.
+- Added the corresponding internal implementation note in `docs/developer_notes.md`, including public-contract semantics, test evidence, and the boundary to later import/fitting/export stages.
+
+### Reason
+
+Later batch import, quality, fitting, sequence, export, and GUI tasks need one serializable, explicit schema so every analysis result can retain status, validity, parameters, diagnostics, and provenance consistently.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+python -B -m pytest -q -p no:cacheprovider tests\test_auto_batch_schema.py
+```
+
+For the full regression suite, additionally set headless plotting/UI variables and run:
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+```
+
+### Generated Output Files
+
+- Source-only schema and test files listed above.
+- Updated internal implementation documentation in `docs/developer_notes.md`.
+- No raw experimental data, processed data, result package, figures, workbook, or build artifact was generated.
+
+### How To Check Success
+
+- The focused schema command reports `3 passed`.
+- The full suite reports `256 passed`.
+- Run `git diff --check`; it should report no whitespace errors.
+
+### Notes And Risks
+
+- This task defines contracts only; it does not yet import curves, run analyses, fit models, or write outputs.
+- Raw experimental data were not read, modified, moved, renamed, or deleted.
+- No dependencies were installed, and no package, Git commit, or Git push was performed.
+
+## 2026-07-11 08:14:20 +08:00 - Configure Engineering Skill Conventions
+
+### Task Objective
+
+Configure the repository for the user-requested `ask-matt` engineering flow before beginning the automated SAS batch-analysis implementation.
+
+### Added Files
+
+- `docs/agents/issue-tracker.md`
+- `docs/agents/triage-labels.md`
+- `docs/agents/domain.md`
+
+### Modified Files
+
+- `AGENTS.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Configured GitHub Issues as the repository issue tracker based on the existing `origin` remote.
+- Added the default five-label triage vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`.
+- Configured a single-context domain-doc layout that reads `CONTEXT.md` and `docs/adr/` when present, without creating either prematurely.
+- Added an `Agent skills` section to `AGENTS.md` that points engineering skills to these conventions.
+
+### Reason
+
+The user explicitly invoked the `ask-matt` skill and selected the subagent-driven execution flow. That flow requires a repository-local tracker, label, and domain-document convention before ticket and implementation work starts.
+
+### How To Run
+
+No application behavior changed. The configuration is consumed by engineering skills and can be reviewed directly in `docs/agents/`.
+
+### Generated Output Files
+
+- Three repository-local engineering-skill configuration documents under `docs/agents/`.
+- No experimental data, processed data, figures, packages, or build artifacts were generated.
+
+### How To Check Success
+
+- Confirm `AGENTS.md` contains one `## Agent skills` section with links to the three configuration documents.
+- Confirm `docs/agents/issue-tracker.md` names GitHub Issues and `docs/agents/triage-labels.md` contains all five canonical labels.
+- Run `git diff --check`; it should report no whitespace errors.
+
+### Notes And Risks
+
+- This configuration does not create, edit, or close external GitHub Issues.
+- It does not change analysis code, input handling, numerical methods, or GUI behavior.
+- No raw experimental data were modified, moved, renamed, or read.
+- No packaging, Git commit, or Git push was performed.
+
+## 2026-07-11 07:39:15 +08:00 - Plan Automated Batch Deep Analysis Implementation
+
+### Task Objective
+
+Convert the confirmed automated batch deep-analysis design into executable, test-first implementation plans with explicit file boundaries, interfaces, failure checks, commands, expected results, and stage gates.
+
+### Added Files
+
+- `docs/superpowers/plans/2026-07-11-automated-batch-deep-analysis-roadmap.md`
+- `docs/superpowers/plans/2026-07-11-auto-batch-foundation.md`
+- `docs/superpowers/plans/2026-07-11-complete-analysis-and-models.md`
+- `docs/superpowers/plans/2026-07-11-in-situ-sequence-analysis.md`
+- `docs/superpowers/plans/2026-07-11-results-package-and-gui.md`
+
+### Modified Files
+
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Split the large confirmed specification into four ordered, independently testable implementation plans: batch foundation, complete per-method/per-model analysis, in-situ sequence analysis, and results-package/GUI delivery.
+- Added an execution roadmap mapping every design requirement to an exact plan task.
+- Defined stable interfaces between plans, including the rule that an analysis runner always returns `list[AnalysisEnvelope]` so multi-model output is type-consistent.
+- Added test-first steps, exact commands, expected failures/passes, focused regression suites, full-suite checkpoints, input-integrity checks, and documentation requirements.
+- Deferred XLSX metadata support until `openpyxl` is explicitly introduced in the results-package plan; CSV metadata remains in the foundation plan.
+- Preserved project rules by replacing automatic commit/package actions with diff/status review checkpoints.
+
+### Reason
+
+The confirmed design spans multiple independent subsystems. A single monolithic plan would be difficult to review, test, and recover if a numerical or UI regression occurred. Four dependency-ordered plans make each deliverable independently verifiable while preserving one final user-facing workflow.
+
+### How To Run
+
+No executable code was changed. Implementation should begin with:
+
+```text
+docs/superpowers/plans/2026-07-11-auto-batch-foundation.md
+```
+
+Then follow the roadmap in exact order.
+
+### Generated Output Files
+
+- Five Markdown planning documents under `docs/superpowers/plans/`.
+- No experimental data, processed data, analysis workbook, figures, package, or build artifacts were generated.
+
+### How To Check Success
+
+- Open the roadmap and verify that every design section maps to a plan task.
+- Run `rg -n "TBD|TODO|待定|待补充|implement later|similar to" docs/superpowers/plans/2026-07-11-*.md`; no placeholder instruction should be present.
+- Check that Plan 1 produces the interfaces consumed by Plan 2, Plan 2 produces analysis/model results consumed by Plan 3, and Plan 4 consumes the completed `AutoBatchRun`.
+- Run `git diff --check`; it should report no whitespace errors.
+
+### Notes And Risks
+
+- This task created plans only; numerical algorithms, exports and GUI behavior are not yet implemented.
+- The four plans are large and must be executed in order with full regression checks at every boundary.
+- `openpyxl` is the only planned new dependency and must not be downloaded without the required approval if absent.
+- No raw experimental data were read, modified, moved, renamed, smoothed, interpolated, background-subtracted, or overwritten while writing the plans.
+- No packaging, Git commit, or Git push was performed.
+
+## 2026-07-11 07:23:42 +08:00 - Design One-Click Automated Batch Deep Analysis
+
+### Task Objective
+
+Design a low-manual-operation workflow that accepts calibrated one-dimensional SAS curves, analyzes all supported curve methods and all allowed candidate models for an in-situ series, and produces a primary summary Excel plus complete traceable results.
+
+### Added Files
+
+- `docs/superpowers/specs/2026-07-11-automated-batch-deep-analysis-design.md`
+
+### Modified Files
+
+- `.gitignore`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Documented the confirmed SAS-only input boundary, one-time batch profile, optional metadata merge, batch-consensus q regions, fixed batch primary model, sequential warm starts, failure isolation, and non-destructive output workflow.
+- Converted all quantitative indicators from `1D_SAS_curve_deep_analysis_general_enriched.md` into a method-level parameter registry.
+- Required every curve, every applicable analysis, and every allowed candidate model to export all obtainable parameters, uncertainty, bounds, fit-quality statistics, pointwise residuals, validity checks, reliability, and failure status.
+- Defined the complete parameters and derived quantities for the 10 existing shape/empirical models.
+- Defined a 16-sheet summary workbook and supporting CSV/JSON/figure directory structure.
+- Defined error handling, sequence continuity, model-transition flagging, safety constraints, implementation layers, and acceptance tests.
+- Added `.superpowers/` to `.gitignore` so temporary visual-brainstorm companion files are not included in version control.
+
+### Reason
+
+The existing project provides many individual SAS analyses but does not yet provide a single automated, batch-consistent workflow that runs every applicable method/model, preserves full output details, and returns one final data package for an in-situ series.
+
+### How To Run
+
+No executable behavior was changed in this design-only task. The current application still starts with:
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python main.py
+```
+
+### Generated Output Files
+
+- Formal design specification: `docs/superpowers/specs/2026-07-11-automated-batch-deep-analysis-design.md`
+- Temporary browser-based brainstorming screens under `.superpowers/` remain local and are now ignored by Git.
+- No experimental data, processed data, figures, analysis workbook, package, or build artifact was generated.
+
+### How To Check Success
+
+- Open the design specification and verify that it contains the confirmed architecture, full method-level parameter registry, 10-model parameter table, Excel/output contract, failure handling, tests, and acceptance criteria.
+- Run `rg -n "TBD|TODO|待定|待补充" docs/superpowers/specs/2026-07-11-automated-batch-deep-analysis-design.md`; no placeholder should be found.
+- Run `git status --short`; the design file, `.gitignore`, and `CHANGELOG.md` should be the only intended tracked changes from this design task.
+
+### Notes And Risks
+
+- This task produced a design only; analysis code and GUI behavior have not yet been implemented.
+- The requested scope is large and must be implemented in four verified layers, while still presenting one final GUI entry to the user.
+- Conditional outputs such as P(r), correlation functions, absolute interface area, volume fraction, kinetic fits, PCA, and clustering remain assumption-dependent or exploratory.
+- No raw experimental data were modified, moved, renamed, smoothed, interpolated, background-subtracted, or overwritten.
+- No packaging, dependency installation, Git commit, or Git push was performed.
+
 ## 2026-07-09 13:46:11 +08:00 - Fix Batch Import q Range Summary Totals
 
 ### Task Objective
@@ -222,6 +1614,223 @@ python -B -m pytest -q -p no:cacheprovider tests\test_auto_regions.py tests\test
 - Conservative Porod scoring may reduce automatic confidence for valid data; users should review q range, background subtraction, and instrument noise before interpreting Porod-like behavior.
 - Raw experimental q/I data were not modified, deleted, moved, renamed, smoothed, interpolated, background-subtracted, unit-converted, or overwritten.
 - No packaging, Git commit, or Git push was performed for this entry.
+
+## 2026-07-11 17:23:18 +08:00 - Harden Stage 2 Task 3 Numerical Safety After Independent Review
+
+### Task Objective
+
+Resolve every Blocker and Important finding from the independent Stage 2 / Task 3 review without resetting prior Task 3 work: prevent non-finite numerical outputs, make absolute Porod candidates assumption-safe, and make feature completeness auditable.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/extended_features.py`
+- `app/core/feature_extraction.py`
+- `app/core/porod_analysis.py`
+- `app/core/model_free.py`
+- `tests/test_extended_features.py`
+- `tests/test_peak_analysis.py`
+- `tests/test_porod_analysis.py`
+- `tests/test_invariant_analysis.py`
+- `docs/developer_notes.md`
+- `.superpowers/sdd/stage2-task3-review-package.md`
+- `.superpowers/sdd/stage2-task3-implementer-report.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Replaced overflow-prone duplicate-q sums with scaled local means and re-audited collapsed arrays before gradient, peak, Kratky, and integration calculations.
+- Made every extended integral, including `Q_low`, `Q_mid`, and `Q_high`, return `None` with an audit warning when a finite-range trapezoidal reduction overflows or becomes non-finite.
+- Added finite-safe Porod statistics; unsafe reductions now withhold aggregate values and noise scores rather than publishing `NaN`/`inf`.
+- Restricted absolute Porod surface candidates to a strictly finite, safely squared contrast; literal `two_phase_confirmed=True`; a valid positive contiguous plateau candidate; and a Porod-like exponent. The candidate now uses the contiguous-candidate mean rather than all selected points.
+- Made peak full area unavailable when a SciPy prominence-contour baseline touches a selected q-range edge, while retaining independently supported FWHM descriptors. Added explicit baseline provenance.
+- Withheld overflowed peak/Kratky SNR, d-spacing, width-derived, and area-derived scalars; validity/completeness records now explain unavailable derivatives.
+- Validated finite numeric thresholds and finite integer counts for crossover, shoulder, oscillation, and shape-distance paths. Shoulder and oscillation provenance now records actual thresholds, spacing, scores, and prominence-contour support.
+- Updated the review package so untracked Task 3 paths are explicitly included in the audit evidence instead of being omitted by `git diff` alone.
+
+### Reason
+
+The independent review found that extreme but finite inputs could still leak `NaN`/`inf`, a truthy non-boolean could unlock an absolute Porod surface candidate, and edge-supported extrema could be labelled complete. These are numerical-audit and scientific-interpretation risks.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+$env:PYTHONDONTWRITEBYTECODE='1'
+python -B -m pytest -q -p no:cacheprovider tests\test_extended_features.py tests\test_peak_analysis.py tests\test_porod_analysis.py tests\test_invariant_analysis.py tests\test_plot_analysis.py tests\test_invariant.py
+```
+
+### Generated Output Files
+
+- No raw experimental data, processed data, figures, exports, packages, or build artifacts were generated.
+- Only source code, regression tests, review evidence, and documentation were updated.
+
+### How To Check Success
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+python -B -m py_compile app\core\extended_features.py app\core\feature_extraction.py app\core\porod_analysis.py app\core\model_free.py tests\test_extended_features.py tests\test_peak_analysis.py tests\test_porod_analysis.py tests\test_invariant_analysis.py
+git diff --check
+```
+
+### Notes And Risks
+
+- `None` is deliberate audit information for an unavailable numerical descriptor; it is not a measured zero.
+- A Porod-like plateau remains descriptive and does not independently prove a morphology, interface model, or material mechanism.
+- Local duplicate-q averaging does not mutate `CurveData` or experimental source files; users should still investigate duplicate rows in their reduction workflow.
+- No raw data were changed, and no package, Git commit, or Git push was performed.
+
+## 2026-07-11 13:25:44 +08:00 - Stage 2 Task 1 Review Remediation: Likelihood, PSD, Serialization, And Bounds
+
+### Task Objective
+
+Resolve the independent Stage 2 Task 1 review findings before later candidate-fit retry selection and batch model ranking consume common diagnostics: make weighted information criteria scientifically explicit, reject materially invalid finite covariance matrices, guarantee JSON-native records, remove ambiguous bounds interpretation, and correct weighting audit labels.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/fit_diagnostics.py`
+- `tests/test_fit_diagnostics.py`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added `sigma_is_absolute` to `fit_diagnostics()` (default `True`) plus stable information-criterion audit fields: `information_criterion_basis`, `information_criterion_point_count`, and `information_criterion_reason`.
+- Effective absolute sigma now calculate AIC/AICc/BIC from the absolute Gaussian likelihood `chi_square + sum(log(2*pi*sigma**2))` over the actual valid weighted points.  Effective relative sigma explicitly return `None` for all information criteria with basis `unavailable_relative_sigma` and reason `relative_sigma`; no unweighted RSS criterion is silently reused for weighted model selection.  No effective weighting remains labelled `unweighted_residual_variance`.
+- Added `non_finite_weighted_residual_point_count`, separated it from `invalid_sigma_point_count`, and report `non_finite_weighted_residual` when finite positive sigma cannot form finite standardized residuals.
+- Added a documented `eigvalsh` positive-semidefinite check for all-finite symmetric covariance matrices.  Eigenvalues below `-1e-10 * max(1, max(abs(covariance)))` raise a clear `ValueError`; partially non-finite matrices are not declared PSD and retain null-only unavailable correlations.
+- Strengthened `FitDiagnostics.to_dict()` so all output fields are JSON-native: finite NumPy numbers become native `int`/`float`, non-finite values become `None`, flags are `bool`/`None`, and text audit fields are `str`/`None`.
+- Defined and tested an unambiguous bounds rule.  Per-parameter list/tuple pairs and `(n_parameters, 2)` arrays are interpreted by parameter; SciPy vector bounds remain `(lower_array, upper_array)` with NumPy arrays.  This fixes the two-parameter tuple-of-pairs transposition defect.
+- Added test-first regressions for absolute-vs-unweighted likelihood criteria, relative-sigma information-criterion withholding, true `json.dumps`, material/non-material covariance PSD cases, tuple/list/array/map bounds forms, and maximum-float residual overflow audit behavior.
+
+### Reason
+
+Information criteria will later rank candidate SAS models and retries.  Mixing weighted chi-square with silently unweighted AICc/BIC could select the wrong model.  Likewise, a non-PSD covariance matrix, ambiguous bounds, non-native JSON scalar, or mislabeled uncertainty failure could make an unreliable fit look scientifically traceable when it is not.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_fit_diagnostics.py
+python -B -m pytest -q -p no:cacheprovider tests\test_fit_diagnostics.py tests\test_model_fitting.py tests\test_auto_batch_schema.py tests\test_metric_registry.py tests\test_batch_inputs.py tests\test_batch_consensus.py tests\test_auto_batch.py
+
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+python -B -m py_compile app\core\fit_diagnostics.py tests\test_fit_diagnostics.py
+git diff --check
+```
+
+### Generated Output Files
+
+- Updated in-memory diagnostics contract, documentation, and automated tests only.
+- No raw experimental data, processed data, figures, result packages, workbooks, packages, Git commits, or Git pushes were generated.
+
+### How To Check Success
+
+- The newly added review regressions were written before the repair.  Their first target run reported `7 failed, 15 passed` and exposed the missing audit fields, silent unweighted information criteria, tuple-pair bounds transposition, missing PSD rejection, and invalid-sigma mislabel.
+- After the minimal repair, `tests\test_fit_diagnostics.py` reported `22 passed`.
+- The diagnostics/model-fit/Stage 1 focused regression command reported `98 passed`.
+- The full offscreen regression suite reported `348 passed`.
+- The required compile and whitespace checks are recorded with this task after the final documentation update.
+
+### Notes And Risks
+
+- All source experimental data remain read-only.  The diagnostics module has no file I/O and does not alter caller arrays.
+- `sigma_is_absolute=True` is a statistical input assertion by the caller; an absolute-sigma likelihood is only meaningful when the supplied uncertainty column really represents absolute standard deviations.  If that is not known, callers must use `sigma_is_absolute=False`, which intentionally withholds model-selection information criteria.
+- The PSD tolerance accepts only small round-off-scale negative eigenvalues; it is not evidence that a covariance is well-conditioned or that parameters are uniquely identifiable.
+- The bounds ambiguity rule intentionally favors tuple/list per-parameter pairs.  Two-parameter callers needing SciPy lower/upper vectors should use NumPy arrays as documented.
+- No dependencies were installed and no packaging, Git commit, or Git push was performed.
+
+## 2026-07-11 13:07:35 +08:00 - Stage 2 Task 1 Common Fit Diagnostics Contract
+
+### Task Objective
+
+Implement the approved reusable diagnostics contract for all later 1D SAS fitting methods, so every fit can report complete, traceable numerical quality metrics, parameter uncertainty/bound information, covariance correlations, and row-preserving residual data without hiding invalid inputs.
+
+### Added Files
+
+- `app/core/fit_diagnostics.py`
+- `tests/test_fit_diagnostics.py`
+
+### Modified Files
+
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added the immutable, JSON-serializable `FitDiagnostics` record and `fit_diagnostics()` with the common fixed metrics: point count, parameter count, degrees of freedom, RSS/weighted RSS, RMSE, MAE, R2/adjusted R2, chi-square/reduced chi-square, AIC/AICc, and BIC.
+- Added explicit weighting audit fields (`weighted`, `weighted_point_count`, `weighted_dof`, `sigma_aligned`, `invalid_sigma_point_count`, and `weighting_reason`).  Misaligned or invalid error arrays preserve valid unweighted statistics; only aligned finite positive-error points contribute to weighted quantities.
+- Added `parameter_records()` with a fixed per-parameter schema, optional sequence/name-keyed units/initial values/bounds/standard errors, 95% confidence intervals when valid, and tolerance-based bound-hit flags.
+- Added `covariance_to_correlation()` with JSON-safe null handling for singular/non-finite covariance information and clear errors for non-square/asymmetric matrices.
+- Added `build_residual_rows()` that retains one row per input point, exposes invalid data and weighting limits explicitly, and rejects inconsistent row-array lengths predictably.
+- Added test-first regression coverage for normal statistics, invalid/misaligned sigma, zero degrees of freedom, parameter confidence/bounds, singular covariance, non-finite residual inputs, length errors, native-serializable output, and input-array preservation.
+- Added developer documentation describing the numerical scope, null semantics, weighting limitations, and scientific interpretation boundary.
+
+### Reason
+
+Later Guinier, power-law, Porod, P(r), and shape-model analyses must report comparable fit quality and all obtainable fit information.  A shared defensive implementation avoids repeated statistics code, prevents invalid errors from being treated as weights, and ensures unavailable quantities remain visible instead of becoming misleading zeroes.
+
+### How To Run
+
+From `sas_curve_analyzer`, run:
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_fit_diagnostics.py
+python -B -m pytest -q -p no:cacheprovider tests\test_fit_diagnostics.py tests\test_model_fitting.py tests\test_auto_batch_schema.py tests\test_metric_registry.py tests\test_batch_inputs.py tests\test_batch_consensus.py tests\test_auto_batch.py
+
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:QT_QPA_PLATFORM='offscreen'
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+python -B -m py_compile app\core\fit_diagnostics.py tests\test_fit_diagnostics.py
+git diff --check
+```
+
+### Generated Output Files
+
+- New in-memory diagnostics API and automated regression tests only.
+- No raw experimental data, processed data, figures, result packages, workbooks, packages, Git commits, or Git pushes were generated.
+
+### How To Check Success
+
+- Test-first RED verification initially reported `ModuleNotFoundError: No module named 'app.core.fit_diagnostics'`, confirming the requested API did not already exist.
+- After implementation, `tests\test_fit_diagnostics.py` reported `13 passed`.
+- The focused diagnostics/model-fit/Stage 1 regression command reported `89 passed`.
+- The full offscreen regression suite reported `339 passed`.
+- `py_compile` and `git diff --check` completed successfully with no whitespace errors.
+
+### Notes And Risks
+
+- All source experimental data remain read-only.  This module neither reads nor writes experiment files.
+- A numerical fit statistic is conditional on the supplied model, q range, preprocessing, and weighting convention; it does not establish model uniqueness or material mechanism.
+- Exact-zero RSS makes information criteria undefined in this contract, so they remain `None` rather than using an arbitrary numerical floor.
+- No dependencies were installed and no packaging, Git commit, or Git push was performed.
 
 ## 2026-07-08 22:52:49 +08:00 - Add Automatic SAS q-Region Detection And One-Click Analysis
 
@@ -2315,3 +3924,669 @@ python -m compileall -q main.py app\core app\ui
 - Message formatting is intentionally plain text for QTextEdit/status display and testability.
 - No raw experimental data were modified.
 - No packaging, Git commit, or Git push was performed for this entry.
+
+## 2026-07-11 17:48:38 +08:00 - Stage 2 Task 4 Conditional Advanced Analysis Contracts
+
+### Task Objective
+
+Extend the advanced P(r), invariant, correlation, and lamellar result contracts with conditional availability, prerequisites, point tables, and numerical diagnostics while preserving their public function signatures.
+
+### Added Files
+
+- `tests/test_advanced_contracts.py`
+- `.superpowers/sdd/stage2-task4-implementer-report.md`
+
+### Modified Files
+
+- `app/core/pr_analysis.py`
+- `app/core/invariant_analysis.py`
+- `app/core/correlation.py`
+- `app/core/lamellar_analysis.py`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- P(r) now reports compatibility aliases for registered scalars, stability metrics, back-calculated I(q) rows, RMSE, and explicit unavailable chi-square status when per-point uncertainties are absent.
+- Invariant analysis now distinguishes measured-range and successfully extrapolated contributions, validates a Porod plateau before using a `q^-4` tail, and reports `volume_fraction=None` with `volume_fraction_status` and `volume_fraction_invalid_reason` when absolute-intensity, contrast, or physical-value prerequisites are missing.
+- Correlation analysis now supplies conditional long-period/interface-thickness descriptors, finite-q transform diagnostics, and an `r`/correlation table with unavailable values represented as `None` rather than fabricated values.
+- Lamellar analysis now supplies `q0`, `d0`, order indices, deviations from integer order, and an order-index back-fit diagnostic while retaining legacy peak fields.
+- All four analyses expose `prerequisites`, `assumption_status`, and `analysis_status`; a structural/model assumption prevents a `high` reliability label.
+- Added public-contract regression tests, including the required P(r) and conditional invariant seeds and an unavailable Porod-tail guard.
+
+### Reason
+
+Advanced SAS descriptors are conditional numerical results. The result payload must preserve missing prerequisites and model dependence instead of presenting unavailable absolute quantities or structural inferences as measured facts.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python -B -m pytest -q -p no:cacheprovider tests\test_advanced_contracts.py tests\test_pr_analysis.py tests\test_correlation.py tests\test_lamellar_analysis.py tests\test_invariant_analysis.py tests\test_method_warnings.py
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+python -B -m py_compile app\core\invariant_analysis.py app\core\pr_analysis.py app\core\correlation.py app\core\lamellar_analysis.py tests\test_advanced_contracts.py
+```
+
+### Generated Output Files
+
+- No raw-data, processed-data, figure, GUI, export, package, or build output was generated.
+- `.superpowers/sdd/stage2-task4-implementer-report.md` records the TDD and verification evidence for this implementation task.
+
+### How To Check Success
+
+- The focused Stage 2 Task 4 command passes all 28 selected tests.
+- The offscreen/Agg full suite passes all 409 tests.
+- `py_compile` exits with code 0 and `git diff --check` reports no whitespace errors.
+
+### Notes And Risks
+
+- P(r) chi-square is deliberately `None` without per-point uncertainty; unweighted residual RMSE is still available when a back-fit is performed.
+- q0/d0, long-period, interface-thickness, and volume-fraction values remain conditional descriptors, not proof of morphology or mechanism.
+- All calculations use selected local arrays; `CurveData` arrays and source experimental files remain unmodified.
+- No dependencies were installed and no packaging, Git commit, or Git push was performed.
+
+## 2026-07-11 18:36:50 +08:00 - Stage 2 Task 4 Independent Review Safety Follow-Up
+
+### Task Objective
+
+Resolve every Blocker, Important, and Minor item from the Stage 2 Task 4 independent review while retaining public analysis-function signatures and raw-data safety boundaries.
+
+### Added Files
+
+- None. The existing Task 4 public-contract test module was extended.
+
+### Modified Files
+
+- `app/core/invariant_analysis.py`
+- `app/core/pr_analysis.py`
+- `app/core/correlation.py`
+- `app/core/lamellar_analysis.py`
+- `tests/test_advanced_contracts.py`
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+- `.superpowers/sdd/stage2-task4-implementer-report.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Matched every Task 4 result against `METHOD_REGISTRY`; added measured-range `Q_low`/`Q_mid`/`Q_high`, correlation length and unavailable phase-thickness/fraction fields, and lamellar `peak_orders` with explicit status/reason handling.
+- Defined Q bands as three equal-width intervals across the selected finite q range integrating `q^2 I(q)`. Their definition and boundaries are exported separately from low/high-q extrapolation tails.
+- Added finite guards for measured invariant, q-band integrals, q-tail extrapolations, contrast input, correlation normalization/r grid, lamellar reciprocal lengths, P(r) matrices/solutions/reductions, and all Task 4 point tables.
+- Made Porod extrapolation require at least three selected tail points, every `q^4 I(q)` tail value finite and strictly positive, relative spread <= 0.15, and a finite positive tail integral.
+- Made P(r) reject non-finite/non-positive Dmax and non-finite/negative regularization before inversion; result parameters report the actual validated value. Aligned finite positive `CurveData.error` now produces a back-fit chi-square; missing, invalid, or misaligned errors remain explicit unavailable diagnostics.
+- Added public-API RED/GREEN regressions for registry completeness, finite safety, overflow/tiny-q paths, Porod tail gate, P(r) input validation, aligned error chi-square, and non-finite contrast.
+
+### Reason
+
+The review found that missing registry metrics, pseudo-zero unavailable P(r) outputs, non-finite scalars, weak Porod gating, and ignored aligned errors could mislead downstream batch extraction or scientific interpretation. This follow-up makes unavailability and model dependence explicit.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python -B -m pytest -q -p no:cacheprovider tests\test_advanced_contracts.py tests\test_pr_analysis.py tests\test_correlation.py tests\test_lamellar_analysis.py tests\test_invariant_analysis.py tests\test_method_warnings.py
+$env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider
+python -B -m py_compile app\core\invariant_analysis.py app\core\pr_analysis.py app\core\correlation.py app\core\lamellar_analysis.py tests\test_advanced_contracts.py
+```
+
+### Generated Output Files
+
+- No raw-data, processed-data, figure, GUI, export, package, or build output was generated.
+- The Task 4 implementer report was appended with RED/GREEN and verification evidence.
+
+### How To Check Success
+
+- The focused Task 4 verification command passes 56 tests.
+- The offscreen/Agg full suite passes 437 tests.
+- `py_compile` and `git diff --check` exit with code 0.
+
+### Notes And Risks
+
+- `Q_low`/`Q_mid`/`Q_high` are measured-range contribution bands; they are not extrapolated invariant tails and must be interpreted with `Q_band_definition` and `q_band_boundaries`.
+- Phase thicknesses and a phase-fraction indicator remain unavailable without inputs that this public correlation API does not receive.
+- P(r), correlation, lamellar, and invariant descriptors remain conditional numerical results, not morphology or mechanism proof.
+- No raw `CurveData` arrays or source files were modified. No dependency installation, packaging, commit, or push was performed.
+
+## 2026-07-11 19:18:03 +08:00 - Stage 2 Task 5 Complete 10-Model Fits
+
+### Task Objective
+
+Provide traceable, export-safe complete fitting for all ten registered shape models while preserving the legacy `fit_shape_model()` interface.
+
+### Added Files
+
+- `app/core/model_parameters.py`
+- `tests/test_complete_model_fitting.py`
+- `.superpowers/sdd/stage2-task5-implementer-report.md`
+
+### Modified Files
+
+- `app/core/model_fitting.py`
+- `tests/test_model_fitting.py`
+- `tests/test_shape_models.py`
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added public `fit_shape_model_complete()`, `fit_all_allowed_models()`, and `derived_model_parameters()` interfaces. The legacy `fit_shape_model()` now delegates to the complete path and retains named legacy parameter values and the `fit_curves` export table.
+- Added fixed-schema `parameter_records`, fit-quality diagnostics, covariance/correlation matrices, finite condition-number and correlation audits, residual rows with source indices, selected/excluded-point records, derived-parameter records, and per-start attempts.
+- Added deterministic warm-start, batch-median, default, and jittered starts. The standalone complete path evaluates all candidates and selects the valid minimum-AICc candidate (RMSE only when AICc is unavailable).
+- Added identifiability states `strong`, `weak`, and `non_identifiable`. Missing/ill-conditioned covariance or very high parameter correlation cannot be promoted to a reliable fit merely because the optimizer converged.
+- Added documented geometric/algebraic mappings for sphere, core-shell sphere, ellipsoid, cylinder, disk, surface fractal, and lamellar models. Invalid domains and overflow return `None` with a reason instead of NaN, infinity, or an exception.
+- Added batch-safe retry-on-failure behavior: every registered model is always visited and failures are isolated; later starts are run only after an earlier batch start fails, and only executed starts are recorded. This avoids repeated expensive orientation-average optimizations from preventing later models from being assessed.
+- Added regression coverage for all ten noiseless synthetic forward curves, model metadata, derived mappings/domain/overflow guards, degenerate core-shell identifiability, retry order/AICc selection, non-mutation of source arrays, legacy compatibility, and default batch failure isolation.
+
+### Reason
+
+Single-start model fits can hide unstable parameters, missing uncertainty, and model-specific failures. The complete contract makes the numerical fit auditable without implying a unique material morphology or mechanism.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python -B -m pytest -q -p no:cacheprovider tests\test_complete_model_fitting.py tests\test_model_fitting.py tests\test_shape_models.py
+python -m py_compile app\core\model_fitting.py app\core\model_parameters.py
+$env:QT_QPA_PLATFORM='offscreen'; $env:MPLBACKEND='Agg'; $env:TEMP="$PWD\.tmp"; $env:TMP="$PWD\.tmp"; $env:PYTEST_DEBUG_TEMPROOT="$PWD\.tmp"; python -B -m pytest -q -p no:cacheprovider
+```
+
+### Generated Output Files
+
+- No raw-data, processed-data, figure, GUI, exporter, package, or user-facing build output was generated.
+- The required `py_compile` check refreshed local interpreter-cache files under `app/core/__pycache__/`; these are development verification artifacts, not experimental or analysis outputs.
+- `.superpowers/sdd/stage2-task5-implementer-report.md` records the RED/GREEN and verification evidence.
+
+### How To Check Success
+
+- The focused Task 5 command passes 31 tests.
+- The full offscreen/Agg suite passes 462 tests.
+- `py_compile` exits with code 0.
+- `git diff --check` was attempted, but the workspace `.git` directory has no `HEAD` or repository metadata, so Git correctly reports that this is not a repository. A direct conflict-marker/trailing-whitespace fallback check is recorded in the implementer report.
+
+### Notes And Risks
+
+- All fitted and derived quantities remain conditional on the selected model, q interval, background handling, error weighting, and sample assumptions; they do not prove a unique morphology.
+- Complete single-model fitting evaluates all starts for AICc comparison. Batch fitting deliberately uses documented retry-on-failure with a bounded per-start budget, so its selected result is the first valid executed candidate rather than a full batch-wide multi-start optimum.
+- A non-identifiable result can still have a small residual; users must inspect covariance, correlation, boundary flags, and `identifiability_reason` before interpreting values.
+- No raw `CurveData` arrays or source experimental data were modified. No dependencies were installed and no package, commit, or push was performed.
+
+## 2026-07-11 19:34:19 +08:00 - Stage 2 Task 5 Independent Review Contract Remediation
+
+### Task Objective
+
+Resolve the Task 5 independent-review Blocker and Important findings by restoring the approved complete retry and model-selection contract to `fit_all_allowed_models()`.
+
+### Added Files
+
+- None. The existing complete-model regression module and implementer report were extended.
+
+### Modified Files
+
+- `app/core/model_fitting.py`
+- `tests/test_complete_model_fitting.py`
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+- `.superpowers/sdd/stage2-task5-implementer-report.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Removed the private first-valid batch stop path and the separate 300-evaluation batch budget. Default batch fits now use the same complete warm-start, batch-median, defaults, and deterministic-jitter sequence as `fit_shape_model_complete()`.
+- Restored the legacy 20,000-function-evaluation default for both single and batch complete fitting. No unapproved high-throughput/default performance mode remains.
+- Made finite AICc the exclusive selector whenever any candidate has finite AICc. Equal finite AICc values retain deterministic attempt order; RMSE is consulted only when every valid candidate lacks finite AICc.
+- Added controlled public batch regressions proving that all five planned attempts are actually recorded, a later AICc=95 candidate beats a warm-start AICc=99 candidate, and RMSE chooses the minimum only when all AICc values are unavailable.
+- Kept all-model traversal and model-specific failure isolation. The failure-isolation regression now uses a controlled optimizer seam so it verifies contract behavior without relying on an expensive real optimizer path.
+
+### Reason
+
+The prior batch-only shortcut changed which valid fit could be selected and could mark a model differently from the complete single-model path. Documentation cannot substitute for the approved AICc selection contract.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python -B -m pytest -q -p no:cacheprovider tests\test_complete_model_fitting.py tests\test_model_fitting.py tests\test_shape_models.py
+python -m py_compile app\core\model_fitting.py app\core\model_parameters.py
+$env:QT_QPA_PLATFORM='offscreen'; $env:MPLBACKEND='Agg'; $env:TEMP="$PWD\.tmp"; $env:TMP="$PWD\.tmp"; $env:PYTEST_DEBUG_TEMPROOT="$PWD\.tmp"; python -B -m pytest -q -p no:cacheprovider
+```
+
+### Generated Output Files
+
+- No raw-data, processed-data, figure, GUI, exporter, package, or user-facing build output was generated.
+- The required `py_compile` check refreshed local interpreter-cache files under `app/core/__pycache__/` only.
+- The implementer report was appended with the review-remediation RED/GREEN evidence.
+
+### How To Check Success
+
+- The focused Task 5 command passes 33 tests.
+- The full offscreen/Agg suite passes 464 tests.
+- `py_compile` exits with code 0.
+- `git diff --check` remains unavailable because the workspace `.git` directory has no repository metadata; the documented conflict-marker/trailing-whitespace fallback check was run instead.
+
+### Notes And Risks
+
+- Batch fitting can take longer for implausible high-cost models because it now intentionally honors the same complete comparison contract as a standalone fit.
+- Any future high-throughput shortcut must be proposed and approved as a distinct explicit opt-in API; it must not silently replace the complete batch result contract.
+- Fitted values remain conditional numerical results, not proof of a unique material morphology or mechanism.
+
+## 2026-07-11 19:37:22 +08:00 - Stage 2 Task 5 Complete-Batch Performance Observation
+
+### Task Objective
+
+Record the measured cost of the restored default complete batch contract without changing its approved fitting semantics.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+- `.superpowers/sdd/stage2-task5-implementer-report.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Ran the default public `fit_all_allowed_models()` smoke scenario on a 36-point in-memory `exp(-q)` curve using all ten model names, the full five-start candidate sequence, and the shared 20,000-evaluation budget.
+- The run reached the 60.4-second command limit before emitting final result rows. No default retry, AICc selection, optimizer-budget, model traversal, or failure-isolation behavior was changed in response.
+
+### Reason
+
+The independent-review remediation restored scientifically equivalent complete batch behavior. Its real runtime cost must be visible rather than hidden behind an unapproved fast mode.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+# Use the public fit_all_allowed_models() with the default arguments on a synthetic in-memory curve.
+```
+
+### Generated Output Files
+
+- No raw-data, processed-data, figure, GUI, exporter, package, or user-facing output was generated.
+
+### How To Check Success
+
+- The observed timeout is documented with its exact 60.4-second upper bound.
+- Focused and full regression status remain recorded in the preceding Task 5 remediation entry.
+
+### Notes And Risks
+
+- The measured bottleneck is repeated complete optimization of orientation-averaged `ellipsoid`, `cylinder`, and `disk` models on a curve that does not plausibly match many candidates.
+- No high-throughput/fast mode was added or enabled. Any such mode needs separate user approval and a clearly opt-in, non-equivalent result contract.
+
+## 2026-07-11 19:54:47 +08:00 - Stage 2 Task 6 Bootstrap and q-Range Sensitivity
+
+### Task Objective
+
+Add a core-only, reproducible optional uncertainty-analysis module for bootstrap refits and q-range boundary sensitivity without modifying primary fits, raw curves, GUI, exporters, or batch orchestration.
+
+### Added Files
+
+- `app/core/uncertainty_analysis.py`
+- `tests/test_uncertainty_analysis.py`
+- `.superpowers/sdd/stage2-task6-implementer-report.md`
+
+### Modified Files
+
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added public `bootstrap_fit()`, `range_sensitivity()`, and immutable `UncertaintySummary` interfaces. Results contain method/status/reason, seed, sample count, variant count, success/failure counts, parameter quantiles, coefficient-of-variation values/reasons, bounded sensitivity score/reason, and row-level attempts.
+- Bootstrap uses `numpy.random.default_rng(seed)` and resamples included point indices with replacement. The caller can provide indices explicitly or attach a documented included-index attribute to the callback; source indices are copied and never mutated.
+- q-range sensitivity evaluates the complete `(-fraction, 0, +fraction)` lower/upper Cartesian product, records all nine candidate ranges, and rejects invalid inputs or variants with explicit reasons.
+- Successful optional fits yield 2.5/50/97.5 percentile records and finite coefficient-of-variation values. The sensitivity score is the maximum finite `CV / (1 + CV)`, therefore bounded in `[0, 1]`; no finite CV leaves the score `None` with a reason.
+- Callback exceptions and insufficient successful refits are captured as optional uncertainty status/reasons and attempt rows. They do not raise through or invalidate a primary SAS fit.
+- Added optional duck-typed configuration support for existing `AutoBatchConfig` fields (`enable_bootstrap`, `bootstrap_samples`, `bootstrap_seed`, `enable_range_sensitivity`, and `sensitivity_boundary_fraction`) without changing the config schema or auto-batch runner.
+- Added RED/GREEN regressions for reproducibility, boundary variants, resample audit, JSON safety, callback failure isolation, enabled gate, minimum-valid-fit behavior, invalid q-range rejection, and configuration-driven audit values.
+
+### Reason
+
+Bootstrap and q-range variation are useful robustness diagnostics only when they are reproducible, traceable, and kept distinct from the validity of the primary fit. Missing prerequisites and failed optional refits must never be silently replaced with invented uncertainty.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python -B -m pytest -q -p no:cacheprovider tests\test_uncertainty_analysis.py tests\test_guinier.py tests\test_power_law.py tests\test_model_fitting.py
+python -m py_compile app\core\uncertainty_analysis.py tests\test_uncertainty_analysis.py
+$env:QT_QPA_PLATFORM='offscreen'; $env:MPLBACKEND='Agg'; $env:TEMP="$PWD\.tmp"; $env:TMP="$PWD\.tmp"; $env:PYTEST_DEBUG_TEMPROOT="$PWD\.tmp"; python -B -m pytest -q -p no:cacheprovider
+```
+
+### Generated Output Files
+
+- No raw-data, processed-data, figure, GUI, exporter, package, or user-facing analysis output was generated.
+- The required `py_compile` check refreshed local interpreter-cache files under `app/core/__pycache__/` and `tests/__pycache__/` only.
+- `.superpowers/sdd/stage2-task6-implementer-report.md` records RED/GREEN and verification evidence.
+
+### How To Check Success
+
+- The specified Task 6 suite passes 17 tests.
+- The full offscreen/Agg suite passes 472 tests.
+- `py_compile` exits with code 0.
+- `git diff --check` is attempted; because this workspace has no usable Git metadata, the documented conflict-marker/trailing-whitespace fallback check is used instead.
+
+### Notes And Risks
+
+- Callback output is a numerical refit input, not an inference of a material mechanism. It must supply finite parameter values through a simple mapping, parameter records, or an `AnalysisResult`-compatible result.
+- Bootstrap and range sensitivity are optional. A completed summary describes variability under resampling/range perturbation; it does not prove the primary fit is statistically valid or a morphology unique.
+- No `CurveData` arrays or source experimental files were modified. No dependencies were installed and no package, commit, or push was performed.
+
+## 2026-07-11 21:35 +08:00 — Stage 4 结果包与全自动 GUI
+
+### 任务目标与文件
+
+- 新增：`app/core/result_package.py`、`app/ui/auto_batch_tab.py`、`tests/test_result_package.py`、`tests/test_auto_batch_ui.py`。
+- 修改：`app/ui/advanced_workspace_tab.py`、`app/ui/main_window.py`、`docs/developer_notes.md`、`CHANGELOG.md`。
+- 删除：无。
+
+### 具体修改与原因
+
+- 结果包包含 `run_summary.json`、`parameters.csv`、`fit_quality.csv`、模型排名、输入/失败/警告、全部时序表、PCA/聚类得分、分析表索引、每种方法/模型的明细 CSV 和中文 README。
+- 已有目标目录会明确报错，不覆盖文件；写出先进入唯一临时结果目录，完成后再改为最终名称。
+- 高级工作区新增全自动页，只需选择数据目录、结果父目录、批次名、样品类型和需要物理前提的开关；后台线程执行并显示进度。
+- 原因：把“给出校准原始数据后只取最终数据”压缩为一次配置和一次点击，同时保留完整审计数据。
+
+### 运行、输出与成功判断
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'; $env:MPLBACKEND='Agg'
+python -B -m pytest -q -p no:cacheprovider tests\test_result_package.py tests\test_auto_batch_ui.py tests\test_sequence_analysis.py tests\test_ui_style.py tests\test_ui_safety.py tests\test_auto_batch.py tests\test_auto_batch_schema.py
+```
+
+- 实际聚焦结果：`62 passed in 6.23s`。
+- 成功后 GUI 显示含 run ID 的结果包路径；首先查看 `parameters.csv`、`fit_quality.csv` 和 `README.md`。
+- 未修改原始数据，未安装依赖，未打包、提交或推送。
+
+### Stage 3/4 最终验证结果
+
+- `python -m compileall -q app tests`：通过。
+- Stage 4 与时序/GUI 回归聚焦测试：`62 passed in 6.23s`。
+- 全量 Qt offscreen/Agg 测试：`517 passed in 12.31s`。
+- `git diff --check` 与新增/修改文件范围的冲突标记检查：通过；仅有 Windows 行尾转换和用户级 Git ignore 无读取权限的警告，不影响检查结果。
+- 已检查 `git status --short`，保留全部既有 Stage 1/2 工作树内容；未提交、未打包。
+
+## 2026-07-11 21:00 +08:00 — Stage 2 Task 8 方法文档与验证收尾
+
+### 任务目标
+
+使方法文档与生产 registry/模型实现完全对齐，覆盖所有标量、表格、单位、前提和解释限制，并完成 Stage 2 最终验证。
+
+### 新增、修改或删除的文件
+
+- 修改：`docs/method_notes.md`
+- 修改：`docs/advanced_methods.md`
+- 修改：`docs/developer_notes.md`
+- 修改：`CHANGELOG.md`
+- 删除：无
+
+### 具体修改与原因
+
+- 为 18 个 `METHOD_REGISTRY` 方法补齐精确标量字段、主要表格、单位规则、必要前提和不可过度解释的边界。
+- 将高级方法说明从早期“实验/预留接口”改为当前生产实现，覆盖 P(r)、不变量与受控外推、相关函数、层片分析、10 个形状/经验模型、模型派生量、拟合诊断、批量稳定模型选择和原位连续性限制。
+- 明确数值收敛、R²、残差、AICc/BIC、bootstrap、连续性和模型排名都不能证明模型、结构或机理唯一。
+- 原因：避免用户手工对照代码，并确保最终结果包中的每一类结果都有可追溯的科研解释边界。
+
+### 如何运行与检查
+
+```powershell
+python -m compileall -q app tests
+python -B -m pytest -q -p no:cacheprovider tests\test_fit_diagnostics.py tests\test_analysis_runner.py tests\test_model_selection.py tests\test_complete_model_fitting.py
+$env:QT_QPA_PLATFORM='offscreen'; $env:MPLBACKEND='Agg'; python -B -m pytest -q -p no:cacheprovider
+git diff --check
+git status --short
+```
+
+### 输出、注意事项与风险
+
+- 输出为更新后的项目方法/开发文档，无实验数据或分析结果文件。
+- 未修改任何原始数据，未安装依赖，未打包、提交或推送。
+- 测试和工作树检查的实际结果在本条后续验证记录中补充。
+
+### 实际验证结果
+
+- `python -m compileall -q app tests`：通过。
+- 指定聚焦测试：`57 passed in 4.68s`。
+- 全量 Qt offscreen/Agg 测试：`510 passed in 19.39s`。
+- `git diff --check`：通过，仅报告 Windows 行尾转换提示；文件范围冲突标记检查通过。
+- 已检查 `git status --short`：保留此前 Stage 1/2 的已修改及未跟踪文件，仅报告状态，未提交、未打包。
+
+## 2026-07-11 21:15 +08:00 — Stage 3 原位时序分析
+
+### 任务目标与文件
+
+- 新增 `app/core/sequence_analysis.py`、`tests/test_sequence_analysis.py`。
+- 修改 `app/core/auto_batch.py`、`app/core/auto_batch_schema.py`、`docs/developer_notes.md`、`CHANGELOG.md`。
+- 未删除文件，未修改原始实验数据。
+
+### 具体修改与原因
+
+- 按配置元数据轴、`frame_index` 或 `sequence_order` 建立稳定帧序列，输出帧索引与所有成功/条件依赖参数的长表轨迹。
+- 支持首帧、前帧、指定帧参考差异，输出公共 q 区间上的 RMSE、MAE 和相对绝对面积。
+- 用相邻参数差的 MAD 稳健分数标记突变复核候选；可选输出描述性线性趋势、PCA 和固定随机种子的 k-means 聚类。
+- 将结果接入 `AutoBatchRun.sequence_results`，保持时序失败隔离、JSON 安全和输入只读。
+- 原因：批量数据来自同一材料的连续原位实验，需要在统一拟合口径下直接获得随帧/时间/温度变化的汇总证据。
+
+### 运行、输出与成功判断
+
+```powershell
+python -B -m pytest -q -p no:cacheprovider tests\test_sequence_analysis.py tests\test_auto_batch.py tests\test_auto_batch_schema.py
+```
+
+- 实际结果：`35 passed in 1.58s`。
+- 输出保存在内存结果字段，尚未在本阶段写入用户结果目录。
+- 突变、趋势、PCA 和聚类仅为复核线索，不证明相变、动力学模型、因果或材料机理。
+- 未安装依赖，未打包、提交或推送。
+
+## 2026-07-11 20:24:50 +08:00 - Stage 2 Task 6 Final Review ndarray-Input Boundary Remediation
+
+### Task Objective
+
+Resolve the remaining Task 6 Important review finding: prevent NumPy arrays and other non-scalar public inputs from being implicitly converted into fitted parameter values, q-range bounds, or bootstrap RNG seeds.
+
+### Added Files
+
+- None. The existing Task 6 test module received public regression cases.
+
+### Modified Files
+
+- `app/core/uncertainty_analysis.py`
+- `tests/test_uncertainty_analysis.py`
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+- `.superpowers/sdd/stage2-task6-implementer-report.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Made `_finite_float()` an explicit scalar boundary: it accepts only native/NumPy integer or floating scalar values that are finite, and rejects booleans, strings, bytes, and every `numpy.ndarray` shape before any `float()` conversion. Callback mappings containing scalar-shaped arrays can no longer fabricate parameter quantiles, CV values, sensitivity scores, or a completed optional analysis.
+- Made `_q_range_bounds()` inspect NumPy-array dimensionality directly. A NumPy q range is accepted only when it is one-dimensional with exactly two elements; two-dimensional, zero-dimensional, or wrong-length arrays return `invalid_input` before any q-range callback runs. Existing two-value numeric Python sequences remain supported.
+- Made `_seed_value()` accept only non-negative native or NumPy integer scalars, while rejecting booleans, floats, strings, and all arrays before RNG construction. Direct and duck-typed config seeds now have the same structured `invalid_input` result, null seed, zero attempts, and zero callback calls.
+- Added public RED/GREEN regressions for 0d/1d/2d ndarray callback parameter values, malformed/valid ndarray q ranges, and direct/config ndarray or floating seeds. The tests assert no `DeprecationWarning`, no hidden callback execution, and JSON-safe failure records.
+
+### Reason
+
+Optional uncertainty diagnostics must not silently change the meaning of a callback result, q interval, or random seed through NumPy's deprecated scalar-array conversion behavior. Invalid optional inputs must remain contained and must never invalidate a completed primary SAS fit.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python -B -m pytest -q -p no:cacheprovider tests\test_uncertainty_analysis.py tests\test_guinier.py tests\test_power_law.py tests\test_model_fitting.py
+python -m py_compile app\core\uncertainty_analysis.py tests\test_uncertainty_analysis.py
+$env:QT_QPA_PLATFORM='offscreen'; $env:MPLBACKEND='Agg'; $env:TEMP="$PWD\.tmp"; $env:TMP="$PWD\.tmp"; $env:PYTEST_DEBUG_TEMPROOT="$PWD\.tmp"; python -B -m pytest -q -p no:cacheprovider
+```
+
+### Generated Output Files
+
+- No raw-data, processed-data, figure, GUI, exporter, package, or user-facing analysis output was generated.
+- `py_compile` refreshed local interpreter-cache files only.
+- The Task 6 implementer report records the final RED/GREEN evidence and review-limit note.
+
+### How To Check Success
+
+- The new public ndarray/seed regression subset passes 13 tests.
+- The specified Task 6 plus required fitting-regression suite passes 44 tests.
+- `py_compile` exits with code 0.
+- The complete offscreen/Agg suite passes 499 tests.
+- `git diff --check` is attempted; because this workspace has no usable Git metadata, the documented conflict-marker/trailing-whitespace fallback check is used instead.
+
+### Notes And Risks
+
+- The public seed contract is intentionally narrower than generic NumPy coercion: only non-negative native or NumPy integer scalars are accepted; `bool` is invalid even though it is an `int` subclass.
+- A one-dimensional, two-value numeric NumPy q-range remains valid. Other array shapes are deliberately rejected rather than flattened.
+- No `CurveData` arrays or source experimental files were modified. No dependencies were installed and no package, commit, or push was performed.
+
+## 2026-07-11 20:10:41 +08:00 - Stage 2 Task 6 Independent Review Input-Safety Remediation
+
+### Task Objective
+
+Resolve all three Important Task 6 review findings: fabricated metadata-only uncertainty, malformed q-range acceptance, and invalid seed exceptions escaping the optional-analysis boundary.
+
+### Added Files
+
+- None. The existing Task 6 module, tests, and report were extended.
+
+### Modified Files
+
+- `app/core/uncertainty_analysis.py`
+- `tests/test_uncertainty_analysis.py`
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+- `.superpowers/sdd/stage2-task6-implementer-report.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Rejected Python/NumPy booleans as numerical values and excluded known callback metadata keys from direct simple parameter mappings. Metadata-only `{ "converged": True }` now produces failed optional attempts with `callback_returned_no_finite_parameters`, not fictitious `converged=1.0` quantiles/CV/sensitivity.
+- Added exact q-range normalization: the public range input must be a non-string, non-mapping iterable of exactly two non-boolean finite numeric bounds in strict ascending order. Extra/missing values, strings, booleans, NaN, infinity, and reversed intervals return a JSON-safe `invalid_input` summary before any callback invocation.
+- Normalized bootstrap seed input before RNG construction. Direct and config-supplied seeds must be non-negative finite integers and not booleans/strings; invalid seeds return `invalid_input`, `seed=None`, no attempts, no callback calls, and no exception from `numpy.random.default_rng`.
+- Added public RED/GREEN regressions for metadata-only/mixed callback mappings, malformed q ranges, direct/config invalid seeds, and JSON serialization of every new invalid/failure summary.
+
+### Reason
+
+Optional uncertainty must never fabricate a parameter from control metadata, silently analyze a different q interval, or interrupt a completed primary fit because a configuration seed is malformed.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python -B -m pytest -q -p no:cacheprovider tests\test_uncertainty_analysis.py tests\test_guinier.py tests\test_power_law.py tests\test_model_fitting.py
+python -m py_compile app\core\uncertainty_analysis.py tests\test_uncertainty_analysis.py
+$env:QT_QPA_PLATFORM='offscreen'; $env:MPLBACKEND='Agg'; $env:TEMP="$PWD\.tmp"; $env:TMP="$PWD\.tmp"; $env:PYTEST_DEBUG_TEMPROOT="$PWD\.tmp"; python -B -m pytest -q -p no:cacheprovider
+```
+
+### Generated Output Files
+
+- No raw-data, processed-data, figure, GUI, exporter, package, or user-facing output was generated.
+- `py_compile` refreshed local interpreter-cache files only.
+- The Task 6 implementer report was appended with review-remediation RED/GREEN evidence.
+
+### How To Check Success
+
+- The specified Task 6 suite passes 31 tests.
+- The full offscreen/Agg suite passes 486 tests.
+- `py_compile` exits with code 0.
+- `git diff --check` remains unavailable because this workspace lacks usable Git metadata; the documented fallback whitespace/conflict check is run instead.
+
+### Notes And Risks
+
+- A simple callback mapping should contain actual fitted scalar parameters; known status/control metadata is ignored. Use an explicit `parameters` or `parameter_records` container for structured fit results.
+- Invalid optional inputs now yield only a structured uncertainty failure. They never modify or invalidate the primary fit.
+- No `CurveData` arrays or source experimental files were modified. No dependencies were installed and no package, commit, or push was performed.
+
+## 2026-07-11 20:47:00 +08:00 - Production Batch Runner and Stable Model Selection
+
+### Task Objective
+
+Replace the Plan 1 batch placeholder with a complete registry runner and add stable batch-level model selection without per-frame automatic switching.
+
+### Added Files
+
+- `app/core/analysis_runner.py`
+- `app/core/model_selection.py`
+- `tests/test_analysis_runner.py`
+- `tests/test_model_selection.py`
+
+### Modified Files
+
+- `app/core/auto_batch.py`
+- `app/core/auto_batch_schema.py`
+- `tests/test_auto_batch.py`
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Added explicit dispatch and startup completeness validation for every applicable `METHOD_REGISTRY` method. Missing handlers raise `BatchConfigurationError`; method exceptions become registry-complete failure envelopes rather than silently skipping later work.
+- Converted `AnalysisResult` values into `AnalysisEnvelope` records with every registered metric present. Unavailable metrics are `None` with a status/reason. Shape models yield one envelope per allowed model and preserve isolated model failures.
+- Added deterministic model rankings by coverage, median AICc/BIC rank, residual-pass rate, bound-hit rate, and uncertainty. Models below `0.70` coverage remain reported but cannot be the main model. A different frame winner requires three consecutive frames before a possible-transition flag is emitted; the main model never changes automatically.
+- Made the production runner the `auto_batch` default and added `rankings`, `main_model`, and `transition_flags` to a completed `AutoBatchRun` while retaining custom-runner injection, cancellation, per-method failure isolation, and read-only curve inputs.
+
+### Reason
+
+Batch analysis requires complete, auditable method coverage and a stable sequence-level model summary instead of an implicit per-frame interpretation change.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python -B -m pytest -q -p no:cacheprovider tests\test_model_fitting.py tests\test_model_free_complete.py tests\test_extended_features.py tests\test_advanced_contracts.py tests\test_advanced_transforms.py tests\test_complete_model_fitting.py tests\test_uncertainty_analysis.py tests\test_analysis_runner.py tests\test_model_selection.py tests\test_auto_batch.py tests\test_auto_batch_schema.py
+python -m py_compile app\core\analysis_runner.py app\core\model_selection.py app\core\auto_batch.py app\core\auto_batch_schema.py tests\test_analysis_runner.py tests\test_model_selection.py tests\test_auto_batch.py
+$env:QT_QPA_PLATFORM='offscreen'; $env:MPLBACKEND='Agg'; $env:TEMP="$PWD\.tmp"; $env:TMP="$PWD\.tmp"; $env:PYTEST_DEBUG_TEMPROOT="$PWD\.tmp"; python -B -m pytest -q -p no:cacheprovider
+```
+
+### Generated Output Files
+
+- No raw-data, processed-data, figure, GUI, exporter, package, or user-facing analysis output was generated.
+- `py_compile` refreshed local interpreter-cache files only.
+
+### How To Check Success
+
+- The runner/selection/auto-batch suite passes 41 tests.
+- The specified focused suite passes 178 tests.
+- `py_compile` exits with code 0.
+- The complete offscreen/Agg suite passes 510 tests.
+- `git diff --check` and the direct trailing-whitespace/conflict-marker fallback check pass.
+
+### Notes And Risks
+
+- Complete shape-model comparison may be computationally expensive on long curves because the existing all-candidate fitting contract is intentionally preserved; no hidden fast path was added.
+- The main model and transition flags are conditional numerical summaries, not proof of unique morphology or mechanism.
+- No `CurveData` arrays or source experimental files were modified. No dependencies were installed and no package, commit, or push was performed.

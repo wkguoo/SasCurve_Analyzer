@@ -42,3 +42,15 @@ def test_fit_shape_model_warns_when_error_column_is_not_used() -> None:
 
     assert any("unweighted" in warning.lower() for warning in result.warnings)
 
+
+def test_fit_shape_model_keeps_legacy_fields_while_exposing_complete_fit_audit() -> None:
+    q = np.linspace(0.003, 0.08, 90)
+    intensity = sphere_model(q, 35.0, 120.0, 2.0)
+    curve = CurveData.create(name="sphere_complete_compatibility", q=q, intensity=intensity)
+
+    result = fit_shape_model(curve, (float(q.min()), float(q.max())), "sphere")
+
+    assert result.results["parameters"]["radius"]["value"] is not None
+    assert result.results["export_tables"]["fit_curves"]
+    assert {"fit_quality", "parameter_records", "residual_rows", "attempts"} <= result.results.keys()
+

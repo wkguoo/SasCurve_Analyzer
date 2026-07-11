@@ -14,6 +14,7 @@ from app.core.user_messages import UserMessage, exception_detail, format_user_me
 from app.ui.advanced_tab import AdvancedTab
 from app.ui.advanced_workspace_tab import AdvancedWorkspaceTab
 from app.ui.analysis_tab import AnalysisTab
+from app.ui.auto_batch_tab import AutoBatchTab
 from app.ui.batch_tab import BatchTab
 from app.ui.check_tab import CheckTab
 from app.ui.curve_workspace_tab import CurveWorkspaceTab
@@ -56,6 +57,7 @@ class MainWindow(QMainWindow):
         self.plotting_tab = PlottingTab(self)
         self.analysis_tab = AnalysisTab(self)
         self.batch_tab = BatchTab(self)
+        self.auto_batch_tab = AutoBatchTab(self)
         self.deep_analysis_tab = DeepAnalysisTab(self)
         self.records_tab = RecordsTab(self)
         self.export_tab = ExportTab(self)
@@ -70,7 +72,7 @@ class MainWindow(QMainWindow):
 
         self.data_import_workspace_tab = DataImportWorkspaceTab(self.import_tab, self.check_tab)
         self.curve_workspace_tab = CurveWorkspaceTab(self.plotting_tab, self.analysis_tab)
-        self.advanced_workspace_tab = AdvancedWorkspaceTab(self.advanced_tab, self.deep_analysis_tab, self.batch_tab)
+        self.advanced_workspace_tab = AdvancedWorkspaceTab(self.advanced_tab, self.deep_analysis_tab, self.batch_tab, self.auto_batch_tab)
         self.tabs.addTab(self.data_import_workspace_tab, "数据导入")
         self.tabs.addTab(self.curve_workspace_tab, "曲线工作台")
         self.tabs.addTab(self.advanced_workspace_tab, "高级功能")

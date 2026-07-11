@@ -37,3 +37,17 @@ Use imperative commit messages such as `Add batch import validation` or `Fix Gui
 ## Security & Configuration Tips
 
 Do not commit private scattering datasets, generated project folders, or local `.tmp/` contents unless they are intentional fixtures. Keep settings paths explicit and local; avoid reading arbitrary sensitive paths from user configuration. Experimental interfaces should remain clearly labeled and should not be used as sources of formal quantitative conclusions without validation.
+
+## Agent skills
+
+### Issue tracker
+
+Issues for this repository are tracked in GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The default engineering-skill triage labels are configured in `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository uses a single-context domain-doc layout. See `docs/agents/domain.md`.

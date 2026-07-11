@@ -9,33 +9,114 @@ from app.core.data_model import AnalysisResult, CurveData
 from app.core.method_warnings import peak_warnings, warning_to_dict, warning_to_text
 
 
+def _finite_float(value) -> float | None:
+    """Return a finite built-in float or ``None`` for an unavailable scalar."""
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _safe_group_mean(values: np.ndarray) -> float | None:
+    """Average finite duplicate values without overflowing their intermediate sum."""
+
+    if not values.size or not np.all(np.isfinite(values)):
+        return None
+    scale = _finite_float(np.max(np.abs(values)))
+    if scale is None:
+        return None
+    if scale == 0.0:
+        return 0.0
+    with np.errstate(over="ignore", invalid="ignore"):
+        mean = scale * float(np.mean(values / scale))
+    return _finite_float(mean)
+
+
+def _safe_trapezoid(values: np.ndarray, coordinates: np.ndarray) -> float | None:
+    """Integrate only when the trapezoidal reduction remains finite."""
+
+    if values.size < 2 or coordinates.size < 2:
+        return 0.0
+    if not (np.all(np.isfinite(values)) and np.all(np.isfinite(coordinates))):
+        return None
+    with np.errstate(over="ignore", invalid="ignore"):
+        integral = np.trapezoid(values, coordinates)
+    return _finite_float(integral)
+
+
+def _safe_positive_ratio(numerator: float, denominator: float) -> float | None:
+    """Return a finite positive ratio, withholding overflowed derived values."""
+
+    if denominator <= 0.0:
+        return None
+    with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+        ratio = numerator / denominator
+    value = _finite_float(ratio)
+    return value if value is not None and value > 0.0 else None
+
+
 def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: float | None = None) -> AnalysisResult:
+    """Detect numerical intensity peaks without treating edge-truncated widths as valid."""
+
+    if prominence is not None:
+        prominence_value = _finite_float(prominence)
+        if prominence_value is None or prominence_value < 0.0:
+            raise ValueError("prominence must be a finite non-negative number when supplied.")
+        prominence = prominence_value
     q_min, q_max = q_range
     mask = np.isfinite(curve.q) & np.isfinite(curve.intensity) & (curve.q >= q_min) & (curve.q <= q_max)
-    q = curve.q[mask]
-    intensity = curve.intensity[mask]
+    q = np.asarray(curve.q[mask], dtype=float)
+    intensity = np.asarray(curve.intensity[mask], dtype=float)
     error = None
     if curve.error is not None and curve.error.shape == curve.q.shape:
-        error = curve.error[mask]
+        error = np.asarray(curve.error[mask], dtype=float)
+    warnings: list[str] = []
     if q.size > 1:
-        order = np.argsort(q)
+        order = np.argsort(q, kind="stable")
         q = q[order]
         intensity = intensity[order]
         if error is not None:
             error = error[order]
-    warnings: list[str] = []
-    peaks, properties = find_peaks(intensity, prominence=prominence)
-    peak_results: list[dict] = []
+        unique_q, inverse = np.unique(q, return_inverse=True)
+        if unique_q.size != q.size:
+            collapsed_intensity = np.empty(unique_q.shape, dtype=float)
+            for group_index in range(unique_q.size):
+                value = _safe_group_mean(intensity[inverse == group_index])
+                collapsed_intensity[group_index] = np.nan if value is None else value
+            if error is not None:
+                collapsed_error = np.full(unique_q.shape, np.nan, dtype=float)
+                for group_index in range(unique_q.size):
+                    values = error[inverse == group_index]
+                    finite_values = values[np.isfinite(values)]
+                    if finite_values.size:
+                        value = _safe_group_mean(finite_values)
+                        collapsed_error[group_index] = np.nan if value is None else value
+            keep = np.isfinite(unique_q) & np.isfinite(collapsed_intensity)
+            rejected_count = int(np.count_nonzero(~keep))
+            intensity = collapsed_intensity[keep]
+            if error is not None:
+                error = collapsed_error[keep]
+            warnings.append(f"Collapsed {int(q.size - unique_q.size)} duplicate q rows by mean intensity before peak detection.")
+            if rejected_count:
+                warnings.append(f"Excluded {rejected_count} duplicate-q groups whose collapsed intensity was non-finite before peak detection.")
+            q = unique_q[keep]
 
+    # ``(None, None)`` asks SciPy to calculate prominence properties without
+    # filtering when the caller did not set a detection threshold.
+    peaks, properties = find_peaks(intensity, prominence=(prominence, None))
+    peak_results: list[dict] = []
     if peaks.size:
         widths = peak_widths(intensity, peaks, rel_height=0.5)
         sample_positions = np.arange(q.size, dtype=float)
         for i, peak_index in enumerate(peaks):
-            peak_q = float(q[peak_index])
-            peak_prominence = None
-            if "prominences" in properties:
-                candidate_prominence = float(properties["prominences"][i])
-                peak_prominence = candidate_prominence if math.isfinite(candidate_prominence) else None
+            peak_q = _finite_float(q[peak_index])
+            peak_intensity = _finite_float(intensity[peak_index])
+            if peak_q is None or peak_intensity is None:
+                warnings.append("Skipped a peak candidate with a non-finite q or intensity scalar.")
+                continue
+            peak_prominence = _finite_float(properties.get("prominences", np.full(peaks.size, np.nan))[i])
             peak_snr = None
             peak_snr_unavailable_reason = None
             if peak_prominence is None:
@@ -43,33 +124,121 @@ def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: 
             elif error is None:
                 peak_snr_unavailable_reason = "No valid error column."
             else:
-                peak_error = float(error[peak_index])
-                if math.isfinite(peak_error) and peak_error > 0:
-                    peak_snr = float(peak_prominence / peak_error)
-                else:
+                peak_error = _finite_float(error[peak_index])
+                if peak_error is None or peak_error <= 0.0:
                     peak_snr_unavailable_reason = "Peak error value is not finite and positive."
-            left_ip = float(widths[2][i])
-            right_ip = float(widths[3][i])
-            left_q = float(np.interp(left_ip, sample_positions, q))
-            right_q = float(np.interp(right_ip, sample_positions, q))
-            fwhm = right_q - left_q if right_q >= left_q else None
-            left = max(0, int(math.floor(left_ip)))
-            right = min(q.size - 1, int(math.ceil(right_ip)))
-            area = None
-            baseline_corrected_area = None
-            if fwhm is not None and right > left:
-                left_i = float(np.interp(left_ip, sample_positions, intensity))
-                right_i = float(np.interp(right_ip, sample_positions, intensity))
-                inside = (q > left_q) & (q < right_q)
-                area_q = np.concatenate(([left_q], q[inside], [right_q]))
-                area_i = np.concatenate(([left_i], intensity[inside], [right_i]))
-                area = float(np.trapezoid(area_i, area_q))
-                baseline_i = np.interp(area_q, [left_q, right_q], [left_i, right_i])
-                baseline_corrected_area = float(np.trapezoid(area_i - baseline_i, area_q))
+                else:
+                    peak_snr = _safe_positive_ratio(peak_prominence, peak_error)
+                    if peak_snr is None:
+                        peak_snr_unavailable_reason = "Peak SNR overflowed or became non-finite."
+
+            left_ip = _finite_float(widths[2][i])
+            right_ip = _finite_float(widths[3][i])
+            left_base_index = int(properties.get("left_bases", np.full(peaks.size, peak_index))[i])
+            right_base_index = int(properties.get("right_bases", np.full(peaks.size, peak_index))[i])
+            left_base_q = _finite_float(q[left_base_index])
+            right_base_q = _finite_float(q[right_base_index])
+            left_base_i = _finite_float(intensity[left_base_index])
+            right_base_i = _finite_float(intensity[right_base_index])
+            baseline_edge_limited = bool(left_base_index == 0 or right_base_index == q.size - 1)
+            half_height_at_edge = bool(
+                left_ip is None
+                or right_ip is None
+                or left_ip <= 0.0
+                or right_ip >= float(q.size - 1)
+            )
+            left_support_truncated = False
+            right_support_truncated = False
+            if left_base_index == 0 and right_base_index == q.size - 1:
+                left_support_truncated = True
+                right_support_truncated = True
+            elif left_base_index == 0 and right_base_i is not None:
+                half_level = _finite_float(right_base_i + 0.5 * (peak_intensity - right_base_i))
+                left_support_truncated = half_level is None or not bool(np.any(intensity[: peak_index + 1] <= half_level))
+            elif right_base_index == q.size - 1 and left_base_i is not None:
+                half_level = _finite_float(left_base_i + 0.5 * (peak_intensity - left_base_i))
+                right_support_truncated = half_level is None or not bool(np.any(intensity[peak_index:] <= half_level))
+            edge_truncation = bool(half_height_at_edge or left_support_truncated or right_support_truncated)
+            crossings_available = bool(
+                left_ip is not None
+                and right_ip is not None
+                and right_ip > left_ip
+                and not edge_truncation
+            )
+
+            baseline = None
+            net_height = None
+            full_baseline_corrected_area = None
+            if None not in (left_base_q, right_base_q, left_base_i, right_base_i) and right_base_q > left_base_q:
+                baseline = _finite_float(np.interp(peak_q, [left_base_q, right_base_q], [left_base_i, right_base_i]))
+                if baseline is not None:
+                    net_height = _finite_float(peak_intensity - baseline)
+                base_inside = (q > left_base_q) & (q < right_base_q)
+                base_area_q = np.concatenate(([left_base_q], q[base_inside], [right_base_q]))
+                base_area_i = np.concatenate(([left_base_i], intensity[base_inside], [right_base_i]))
+                base_line_i = np.interp(base_area_q, [left_base_q, right_base_q], [left_base_i, right_base_i])
+                full_baseline_corrected_area = _safe_trapezoid(base_area_i - base_line_i, base_area_q)
+
+            fwhm = hwhm = left_hwhm = right_hwhm = asymmetry = None
+            raw_area = baseline_corrected_area = peak_area = correlation_length = None
+            left_q = right_q = None
+            if crossings_available:
+                left_q = _finite_float(np.interp(left_ip, sample_positions, q))
+                right_q = _finite_float(np.interp(right_ip, sample_positions, q))
+                if left_q is not None and right_q is not None and right_q > left_q:
+                    fwhm = _finite_float(right_q - left_q)
+                if fwhm is not None and fwhm > 0.0:
+                    hwhm = _finite_float(fwhm / 2.0)
+                    left_hwhm = _finite_float(peak_q - left_q) if peak_q >= left_q else None
+                    right_hwhm = _finite_float(right_q - peak_q) if right_q >= peak_q else None
+                    if left_hwhm is not None and left_hwhm > 0.0 and right_hwhm is not None:
+                        asymmetry = _safe_positive_ratio(right_hwhm, left_hwhm)
+                    left_i = _finite_float(np.interp(left_ip, sample_positions, intensity))
+                    right_i = _finite_float(np.interp(right_ip, sample_positions, intensity))
+                    if left_i is not None and right_i is not None:
+                        inside = (q > left_q) & (q < right_q)
+                        area_q = np.concatenate(([left_q], q[inside], [right_q]))
+                        area_i = np.concatenate(([left_i], intensity[inside], [right_i]))
+                        raw_area = _safe_trapezoid(area_i, area_q)
+                        baseline_i = np.interp(area_q, [left_q, right_q], [left_i, right_i])
+                        baseline_corrected_area = _safe_trapezoid(area_i - baseline_i, area_q)
+                    correlation_length = _safe_positive_ratio(2.0 * math.pi, fwhm)
+            if (
+                not baseline_edge_limited
+                and baseline is not None
+                and net_height is not None
+                and net_height > 0.0
+            ):
+                peak_area = full_baseline_corrected_area
+            d_spacing = _safe_positive_ratio(2.0 * math.pi, peak_q)
+
+            validity_reasons: list[str] = []
+            if edge_truncation:
+                validity_reasons.append("peak_or_half_height_crossing_is_truncated_by_selected_q_range")
+            if baseline_edge_limited:
+                validity_reasons.append("prominence_contour_baseline_touches_selected_q_range_edge")
+            if fwhm is None:
+                validity_reasons.append("two_sided_fwhm_unavailable")
+            if baseline is None or net_height is None or net_height <= 0.0:
+                validity_reasons.append("baseline_or_net_height_unavailable")
+            if crossings_available and raw_area is None:
+                validity_reasons.append("raw_area_within_fwhm_overflowed_or_unavailable")
+            if crossings_available and baseline_corrected_area is None:
+                validity_reasons.append("baseline_corrected_area_within_fwhm_overflowed_or_unavailable")
+            if not baseline_edge_limited and baseline is not None and net_height is not None and net_height > 0.0 and peak_area is None:
+                validity_reasons.append("full_baseline_corrected_area_overflowed_or_unavailable")
+            if fwhm is not None and correlation_length is None:
+                validity_reasons.append("correlation_length_overflowed_or_unavailable")
+            if d_spacing is None:
+                validity_reasons.append("d_spacing_overflowed_or_unavailable")
+            validity = "valid" if not validity_reasons else "limited" if edge_truncation or baseline_edge_limited else "invalid"
+            validity_reason = "; ".join(validity_reasons) if validity_reasons else None
+            if any("overflow" in reason for reason in validity_reasons):
+                warnings.append(f"Peak at q={peak_q:g} has derived scalar(s) unavailable because a finite-range calculation overflowed or became non-finite.")
             peak_results.append(
                 {
                     "peak_q": peak_q,
-                    "peak_I": float(intensity[peak_index]),
+                    "peak_I": peak_intensity,
                     "peak_index": int(peak_index),
                     "FWHM": fwhm,
                     "left_q": left_q,
@@ -77,17 +246,44 @@ def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: 
                     "peak_prominence": peak_prominence,
                     "peak_snr": peak_snr,
                     "peak_snr_unavailable_reason": peak_snr_unavailable_reason,
-                    "peak_area": area,
-                    "raw_area_within_fwhm": area,
+                    "peak_area": raw_area,
+                    "raw_area_within_fwhm": raw_area,
                     "baseline_corrected_peak_area": baseline_corrected_area,
-                    "d": float(2.0 * math.pi / peak_q) if peak_q > 0 else None,
+                    "baseline": baseline,
+                    "net_height": net_height,
+                    "area": peak_area,
+                    "HWHM": hwhm,
+                    "left_HWHM": left_hwhm,
+                    "right_HWHM": right_hwhm,
+                    "asymmetry": asymmetry,
+                    "prominence": peak_prominence,
+                    "SNR": peak_snr,
+                    "snr": peak_snr,
+                    "correlation_length": correlation_length,
+                    "edge_truncation": edge_truncation,
+                    "edge_truncated": edge_truncation,
+                    "baseline_edge_limited": baseline_edge_limited,
+                    "baseline_method": "scipy_prominence_contour",
+                    "baseline_provenance": {
+                        "method": "scipy_prominence_contour",
+                        "left_base_index": left_base_index,
+                        "right_base_index": right_base_index,
+                        "left_base_q": left_base_q,
+                        "right_base_q": right_base_q,
+                        "interpretation": "Numerical prominence-contour baseline; not a fitted physical background.",
+                    },
+                    "validity": validity,
+                    "valid": validity == "valid",
+                    "is_valid": validity == "valid",
+                    "validity_reason": validity_reason,
+                    "validity_reasons": validity_reasons,
+                    "d": d_spacing,
                 }
             )
     else:
         warnings.append("No peak was detected in the selected q range.")
 
     method_warnings = peak_warnings()
-
     return AnalysisResult.create(
         curve=curve,
         analysis_type="peak_detection",

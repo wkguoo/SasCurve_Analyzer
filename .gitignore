@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .tmp/
 .ai-bridge/
+.superpowers/
 .venv/
 venv/
 exports/

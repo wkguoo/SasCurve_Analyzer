@@ -21,6 +21,14 @@ def test_shape_model_names_cover_requested_models() -> None:
     assert MODEL_SPECS["sphere"].parameter_names == ["radius", "scale", "background"]
 
 
+def test_model_specs_have_aligned_complete_fit_parameter_metadata() -> None:
+    for spec in MODEL_SPECS.values():
+        assert len(spec.parameter_names) == len(spec.initial_values)
+        assert len(spec.parameter_names) == len(spec.lower_bounds)
+        assert len(spec.parameter_names) == len(spec.upper_bounds)
+        assert set(spec.units) <= set(spec.parameter_names)
+
+
 def test_shape_models_return_finite_positive_values() -> None:
     q = np.linspace(0.001, 0.2, 30)
     assert np.all(np.isfinite(sphere_model(q, 30.0, 2.0, 0.1)))

@@ -1,5 +1,7 @@
 # Method Notes
 
+> 当前实现说明：下方“Stage 2 自动分析完整输出清单”与 `docs/advanced_methods.md` 是生产实现的权威说明。早期版本记录仅用于追溯，不代表当前功能状态。
+
 This document describes the numerical methods and interpretation boundaries used by `sas_curve_analyzer`.
 
 ## Input Assumptions
@@ -194,6 +196,37 @@ The GUI and exported reports can display warning codes alongside the human-reada
 ## Model Catalog Coverage
 
 The model/formula catalog is a transparency aid, not a proof that a model applies. It covers common plotting views, model-free analyses, shape/form-factor models, empirical or model-dependent descriptions, the experimental P(r) interface, the reserved correlation-function interface, and low-q/high-q extrapolation interfaces. Each entry should state formula, inputs, outputs, assumptions, limitations, and status.
+
+## Stage 2 自动分析完整输出清单
+
+统一单位规则：q 类量沿用输入 q 单位；长度类量使用对应倒数长度单位；I 类量沿用输入强度单位；计数、状态、R²、CV、可靠性和比例通常无量纲。未绝对标定时，强度、prefactor、scale、面积和积分不得解释为绝对物理量。每个方法还输出状态、q 区间、拟合质量、有效性检查、假设、警告、可靠性和产物路径。
+
+| 方法 ID | 标量输出 | 主要表格/曲线 | 单位、前提与限制 |
+| --- | --- | --- | --- |
+| `data_quality` | q_min, q_max, d_min, d_max, point_count, I_min, I_max, dynamic_range, nan_count, negative_count, zero_count, duplicate_q_count, log_usable_points | 数据质量明细 | 仅陈述数据事实，不评价结构 |
+| `derived_coordinates` | q2, ln_q, log10_q, inv_q, d_2pi_over_q, qRg, qD, qR, ln_I, log10_I, qI, q2I, q3I, q4I, q_alpha_I, local_slope, I_over_ref, I_minus_ref | 完整派生坐标表 | 对数要求正值；参考曲线 q 网格需相容，不自动插值 |
+| `guinier` | Rg, I0, slope, intercept, q_start, q_end, qminRg, qmaxRg, R2, chi_square, reduced_chi_square, rmse, fit_points, excluded_points, weighted_fit | 拟合、残差、点级诊断 | Rg 为长度，I0 为强度；要求负斜率和合理低 q 区间；好 R² 不证明有效 |
+| `power_law` | alpha, prefactor, slope, intercept, R2, chi_square, reduced_chi_square, rmse, fit_points, excluded_points, weighted_fit | log-log 拟合与残差 | alpha 无量纲，prefactor 量纲依指数；不唯一证明 Porod/分形机理 |
+| `local_slope` | alpha_q, plateau_count | 局部斜率和平台候选 | 微分放大噪声；平台是候选，不是结构识别 |
+| `crossover` | crossover_q, crossover_d, slope_difference, confidence | 交叉点候选 | 置信度是算法证据，不等于相变概率 |
+| `peaks` | peak_count, q_star, d_star, height, area, FWHM, HWHM, asymmetry, prominence, SNR, correlation_length | 全部峰、峰宽和面积明细 | 面积为强度×q，峰宽为 q；特征长度不自动等于粒径 |
+| `shoulders` | shoulder_q, shoulder_d, curvature, confidence | 肩峰候选 | 对平滑和噪声敏感；不证明独立相 |
+| `oscillations` | extrema_count, period, decay | 极值和周期明细 | 有限 q 振荡不唯一对应形状 |
+| `porod` | alpha, porod_K, relative_K, plateau_mean, plateau_std, plateau_cv, noise_score | q⁴I 平台和诊断 | K/平台为强度×q⁴；无标定和对比度时不能给绝对比表面积 |
+| `kratky` | q_peak, d_peak, q2I_peak, FWHM, area | q²I 曲线和峰明细 | q²I 为强度×q²；仅作形状描述 |
+| `compensated` | alpha, plateau_mean, plateau_std, plateau_cv | q^alpha I 补偿曲线 | 平台量纲依 alpha；稳定平台仍只是区间证据 |
+| `invariant` | Q_measured, Q_low, Q_mid, Q_high, Q_total, volume_fraction | `invariant_integrand` | Q 为强度×q³；外推和体积分数需显式物理前提 |
+| `integrals` | integral_I, integral_qI, integral_q2I, integral_q4I, q10, q50, q90 | 积分和累计贡献 | 依次为强度×q、×q²、×q³、×q⁵；分位 q 仅定位贡献区间 |
+| `pr` | Dmax, Rg_pr, peak_r, peak_height, peak_count, tail_score, negative_fraction, smoothness, backfit_rmse, backfit_chi_square | `pr_distribution`, `pr_backfit` | 需 enable_pr、合理 Dmax/正则化和宽 q 覆盖；反演非唯一 |
+| `correlation` | long_period, correlation_length, hard_phase_thickness, soft_phase_thickness, interface_thickness, phase_fraction_indicator | 相关函数采样表 | 需 enable_correlation 和两相/层片前提；不可辨识时字段为空 |
+| `lamellar` | q0, d0, peak_orders | 峰和级次表 | 仅适用于层片语境；整数级次不证明唯一结构 |
+| `shape_models` | model_name, parameter_name, parameter_value, stderr, ci95_low, ci95_high, bound_hit, AICc, BIC, rank | `parameter_records`, `fit_table`, `residual_rows` | 参数单位与前提见 advanced_methods；排名只在同数据/区间/误差和候选集中有效 |
+
+拟合诊断的通用规则：只有存在有效误差列时才报告加权拟合和可解释的 χ²/reduced χ²；尽可能保留拟合点数、排除点数、残差、初值、边界和边界命中。缺少前提或失败必须通过状态和 `invalid_reason` 明示，不能以零替代。
+
+当前生产模型共 10 个：`sphere`、`core_shell_sphere`、`ellipsoid`、`cylinder`、`disk`、`gaussian_chain`、`dab`、`mass_fractal`、`surface_fractal`、`lamellar_peak_stack`。完整参数、单位、派生量和限制见 `docs/advanced_methods.md`。
+
+最终解释红线：数值收敛、残差较小、参数连续、AICc/BIC 最优或 bootstrap 稳定，均不能单独证明模型唯一、结构唯一或材料机理成立。结论仍需结合实验设计、仪器分辨率、绝对标定、相/成分信息和其他表征交叉验证。
 
 ## Records And Traceability
 
