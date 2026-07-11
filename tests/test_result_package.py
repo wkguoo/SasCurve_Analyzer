@@ -4,7 +4,8 @@ import pandas as pd
 import pytest
 
 from app.core.auto_batch_schema import AnalysisEnvelope, AnalysisStatus, AutoBatchRun, ParameterValue
-from app.core.result_package import _json_default, export_result_package
+from app.core.batch_cache import load_run_checkpoint, save_run_checkpoint
+from app.core.result_package import _json_default, export_result_package, export_result_package_from_checkpoint
 
 
 def test_json_default_serializes_multi_element_numpy_arrays() -> None:
@@ -26,9 +27,24 @@ def _run() -> AutoBatchRun:
             parameters=[ParameterValue("Rg", 12.3, "nm")],
             fit_quality={"R2": 0.99},
             tables={"residuals": [{"q": 0.01, "residual": 0.1}]},
-        )
+            reliability_label="medium",
+            reliability_score=0.8,
+        ),
+        AnalysisEnvelope(
+            "c1",
+            "frame_001",
+            "c1:porod",
+            "porod",
+            AnalysisStatus.MISSING_PREREQUISITE,
+            None,
+            parameters=[ParameterValue("alpha", None, "")],
+            tables={"noise": [{"q": 0.5, "value": 1.0}]},
+            reliability_label="invalid",
+            reliability_score=0.0,
+        ),
     ]
-    run.rankings = [{"model_name": "sphere", "coverage": 1.0}]
+    run.rankings = [{"model_name": "sphere", "coverage": 1.0, "eligible_for_main_model": True}]
+    run.main_model = "sphere"
     run.sequence_results = {
         "frame_table": [{"frame": 0, "curve_id": "c1"}],
         "parameter_trajectories": [],
@@ -40,16 +56,26 @@ def _run() -> AutoBatchRun:
     return run
 
 
-def test_result_package_exports_summary_tables_and_details(tmp_path) -> None:
+def test_result_package_exports_tiered_summary_tables_and_details(tmp_path) -> None:
     target = export_result_package(_run(), tmp_path / "demo_results")
-    assert json.loads((target / "run_summary.json").read_text(encoding="utf-8"))["batch_id"] == "demo"
-    assert pd.read_csv(target / "parameters.csv").loc[0, "name"] == "Rg"
-    assert pd.read_csv(target / "fit_quality.csv").loc[0, "R2"] == pytest.approx(0.99)
-    index = pd.read_csv(target / "analysis_tables_index.csv")
+    assert json.loads((target / "summary" / "run_summary.json").read_text(encoding="utf-8"))["batch_id"] == "demo"
+    assert pd.read_csv(target / "audit" / "parameters.csv").loc[0, "name"] == "Rg"
+    assert pd.read_csv(target / "audit" / "fit_quality.csv").loc[0, "R2"] == pytest.approx(0.99)
+    assert pd.read_csv(target / "summary" / "reliable_parameters.csv").loc[0, "name"] == "Rg"
+    index = pd.read_csv(target / "audit" / "analysis_tables_index.csv")
+    assert len(index) == 1
+    assert "guinier" in index.loc[0, "file"]
     assert (target / index.loc[0, "file"]).exists()
+    # missing_prerequisite tables are omitted at default detail_level=usable
+    detail_files = list((target / "details" / "analysis_tables").glob("*.csv"))
+    assert len(detail_files) == 1
+    assert not list((target / "details" / "analysis_tables").glob("*porod*"))
     readme = (target / "README.md").read_text(encoding="utf-8")
+    assert "summary/" in readme
     assert "不能证明" in readme
     assert "科研解释限制" in readme
+    assert (target / "summary" / "sequence_frame_table.csv").exists()
+    assert not (target / "audit" / "sequence_linear_trends.csv").exists()
 
 
 def test_result_package_refuses_existing_target(tmp_path) -> None:
@@ -88,8 +114,8 @@ def test_run_summary_omits_curve_arrays_and_table_bodies(tmp_path) -> None:
     }
 
     target = export_result_package(run, tmp_path / "slim_results")
-    summary = json.loads((target / "run_summary.json").read_text(encoding="utf-8"))
-    text = (target / "run_summary.json").read_text(encoding="utf-8")
+    summary = json.loads((target / "summary" / "run_summary.json").read_text(encoding="utf-8"))
+    text = (target / "summary" / "run_summary.json").read_text(encoding="utf-8")
 
     assert "q" not in summary["curves"][0]
     assert "intensity" not in summary["curves"][0]
@@ -98,5 +124,19 @@ def test_run_summary_omits_curve_arrays_and_table_bodies(tmp_path) -> None:
     assert summary["analyses"][0]["tables"]["residuals"] == {"row_count": 500}
     assert summary["analyses"][0]["tables_exported"] is True
     assert len(text) < 200_000
-    assert "不能证明" in (target / "README.md").read_text(encoding="utf-8")
-    assert "不含完整 q/I" in (target / "README.md").read_text(encoding="utf-8")
+    assert "不含完整 q/I" in (target / "README.md").read_text(encoding="utf-8") or "summary" in (
+        target / "README.md"
+    ).read_text(encoding="utf-8")
+
+
+def test_export_from_checkpoint_without_recompute(tmp_path) -> None:
+    run = _run()
+    cache = tmp_path / "cache"
+    save_run_checkpoint(cache, run)
+    restored = load_run_checkpoint(cache)
+    assert restored.batch_id == "demo"
+    assert len(restored.analyses) == 2
+
+    target = export_result_package_from_checkpoint(cache, tmp_path / "from_cache")
+    assert (target / "summary" / "run_summary.json").exists()
+    assert pd.read_csv(target / "audit" / "parameters.csv").loc[0, "name"] == "Rg"

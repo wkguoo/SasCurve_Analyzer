@@ -17,6 +17,7 @@ from app.core.auto_batch_schema import (
     ParameterValue,
     ProgressEvent,
 )
+from app.core.batch_cache import job_cache_key, load_job_envelopes, save_job_envelopes, save_run_checkpoint
 from app.core.batch_consensus import resolve_consensus_regions
 from app.core.batch_inputs import collect_batch_inputs
 from app.core.data_model import CurveData, utc_now_iso
@@ -320,6 +321,46 @@ def _append_cancelled_jobs(
         )
 
 
+def _remap_cached_envelopes(
+    envelopes: list[AnalysisEnvelope],
+    curve: CurveData,
+    method_id: str,
+) -> list[AnalysisEnvelope]:
+    """Rebind cached envelopes to the freshly imported curve identity."""
+
+    remapped: list[AnalysisEnvelope] = []
+    for item in envelopes:
+        suffix = ""
+        if item.analysis_id and ":" in item.analysis_id:
+            # Preserve model suffix after method id when present: curve:method:model
+            parts = str(item.analysis_id).split(":")
+            if len(parts) >= 3:
+                suffix = ":" + ":".join(parts[2:])
+            elif item.analysis_type == method_id and len(parts) == 2 and parts[-1] != method_id:
+                suffix = f":{parts[-1]}"
+        remapped.append(
+            AnalysisEnvelope(
+                curve_id=curve.curve_id,
+                curve_name=curve.name,
+                analysis_id=f"{curve.curve_id}:{method_id}{suffix}",
+                analysis_type=method_id,
+                status=item.status,
+                q_range=item.q_range,
+                parameters=list(item.parameters),
+                fit_quality=dict(item.fit_quality),
+                tables={name: list(rows) for name, rows in item.tables.items()},
+                validity_checks=list(item.validity_checks),
+                reliability_label=item.reliability_label,
+                reliability_score=item.reliability_score,
+                assumptions=list(item.assumptions),
+                warnings=list(item.warnings),
+                invalid_reason=item.invalid_reason,
+                artifact_paths=dict(item.artifact_paths),
+            )
+        )
+    return remapped
+
+
 def _emit_progress(
     run: AutoBatchRun,
     callback: Callable[[ProgressEvent], None] | None,
@@ -344,19 +385,23 @@ def run_auto_batch(
     progress_callback: Callable[[ProgressEvent], None] | None = None,
     cancel_requested: Callable[[], bool] | None = None,
     analysis_runner: AnalysisRunner | None = None,
+    cache_dir: str | Path | None = None,
 ) -> AutoBatchRun:
     """Run every applicable method while isolating each individual method failure.
 
     The function only reads source files through :func:`collect_batch_inputs`.
-    It never writes an output package or changes the imported curves.  Unless
-    a caller deliberately injects a test/custom runner, it uses the production
-    registry runner and validates dispatch completeness before input work.
+    It never writes a user result package or changes the imported curves.
+    Optional ``cache_dir`` stores per-job envelopes and a final compute
+    checkpoint so a failed export or interrupted batch can resume without
+    recomputing finished jobs.
     """
 
     run = AutoBatchRun(
         batch_id=config.batch_id,
         config_snapshot=asdict(config),
     )
+    cache_root = Path(cache_dir) if cache_dir is not None else None
+    cache_hits = 0
 
     if analysis_runner is None:
         validate_registered_handlers(config)
@@ -402,19 +447,44 @@ def run_auto_batch(
     for job_index, (curve, method_id) in enumerate(jobs):
         if _cancel_requested(run, cancel_requested):
             _append_cancelled_jobs(run, jobs[job_index:])
+            if cache_root is not None:
+                save_run_checkpoint(cache_root, run)
             return _finish_cancelled(run)
 
         q_range = _q_range_for_method(run, curve, method_id)
-        try:
-            envelopes = _validate_runner_output(
-                runner(curve, method_id, q_range, config),
-                curve,
-                method_id,
-            )
-        except Exception as exc:
-            had_failure = True
-            reason = _exception_text(exc)
-            envelopes = [_failure_envelope(curve, method_id, q_range, reason)]
+        cache_key = job_cache_key(curve, method_id, config) if cache_root is not None else None
+        envelopes: list[AnalysisEnvelope] | None = None
+        used_cache = False
+        if cache_root is not None and cache_key is not None:
+            cached = load_job_envelopes(cache_root, cache_key)
+            if cached is not None:
+                remapped = _remap_cached_envelopes(cached, curve, method_id)
+                try:
+                    envelopes = _validate_runner_output(remapped, curve, method_id)
+                    used_cache = True
+                    cache_hits += 1
+                except Exception:
+                    envelopes = None
+
+        if envelopes is None:
+            try:
+                envelopes = _validate_runner_output(
+                    runner(curve, method_id, q_range, config),
+                    curve,
+                    method_id,
+                )
+            except Exception as exc:
+                had_failure = True
+                reason = _exception_text(exc)
+                envelopes = [_failure_envelope(curve, method_id, q_range, reason)]
+            if cache_root is not None and cache_key is not None:
+                try:
+                    save_job_envelopes(cache_root, cache_key, envelopes)
+                except Exception as exc:
+                    _append_warning_once(
+                        run,
+                        f"Failed to write job cache for '{curve.name}'/{method_id}: {_exception_text(exc)}.",
+                    )
 
         run.analyses.extend(envelopes)
         if any(item.status in _PARTIAL_FAILURE_STATUSES for item in envelopes):
@@ -423,10 +493,18 @@ def run_auto_batch(
         _emit_progress(
             run,
             progress_callback,
-            ProgressEvent(completed, total, curve.name, method_id),
+            ProgressEvent(
+                completed,
+                total,
+                curve.name,
+                method_id,
+                message="cache_hit" if used_cache else "computed",
+            ),
         )
         if _cancel_requested(run, cancel_requested):
             _append_cancelled_jobs(run, jobs[job_index + 1 :])
+            if cache_root is not None:
+                save_run_checkpoint(cache_root, run)
             return _finish_cancelled(run)
 
     try:
@@ -452,6 +530,13 @@ def run_auto_batch(
 
     run.status = _finalize_batch_status(run, had_failure=had_failure)
     run.finished_at = utc_now_iso()
+    if cache_hits:
+        _append_warning_once(run, f"Restored {cache_hits} analysis job(s) from compute cache.")
+    if cache_root is not None:
+        try:
+            save_run_checkpoint(cache_root, run)
+        except Exception as exc:
+            _append_warning_once(run, f"Failed to write run checkpoint: {_exception_text(exc)}.")
     return run
 
 

@@ -1077,7 +1077,15 @@ Task 8 verification on 2026-07-11: `compileall` passed; the fit-diagnostics/anal
 
 ## Stage 4: Result Package and One-click GUI
 
-`app/core/result_package.py` exports a completed `AutoBatchRun` into a newly created directory. It refuses an existing target and writes into a unique incomplete sibling before the final rename. The package contains the full JSON record, parameter and fit-quality summaries, model rankings, source manifest/failures/warnings, sequence tables, PCA/cluster scores, an analysis-table index, individual method/model tables, and a Chinese README with interpretation limits.
+`app/core/result_package.py` exports a completed `AutoBatchRun` into a newly created directory. It refuses an existing target and writes into a unique incomplete sibling before the final rename. Packages use a three-tier layout:
+
+- `summary/`: slim `run_summary.json`, reliable parameters, usable fit quality, model rankings, input manifest, non-empty frame table
+- `audit/`: full parameters/fit quality/warnings/failures, table index, non-empty sequence audit tables
+- `details/analysis_tables/`: method detail CSVs (default only for usable envelopes; `detail_level='all'|'none'` overrides)
+
+`export_result_package_from_checkpoint(cache_dir, output_dir)` reloads `run_checkpoint.json` from `app/core/batch_cache.py` and re-exports without recomputing.
+
+`run_auto_batch(..., cache_dir=...)` stores per-job envelopes under `cache_dir/jobs/` and a final `run_checkpoint.json`. Job keys use source file name + method id + config fingerprint so a second run with the same inputs can skip finished work. Cached envelopes are remapped onto freshly imported `curve_id` values.
 
 `app/ui/auto_batch_tab.py` adds the “全自动批量分析” page. The user selects a read-only curve directory, result parent, batch name, sample type, and optional assumption-dependent methods. A `QThread` worker runs the production batch and exporter without blocking the GUI and creates a run-ID-specific result folder. It does not change source curves or silently overwrite an old result.
 

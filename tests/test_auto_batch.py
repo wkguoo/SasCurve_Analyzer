@@ -789,3 +789,30 @@ def test_hard_failure_with_success_remains_partial_success(
     run = run_auto_batch(tmp_path, AutoBatchConfig(batch_id="mixed-hard"), analysis_runner=runner)
 
     assert run.status == "partial_success"
+
+
+def test_job_cache_resumes_without_rerunning_methods(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_curve(tmp_path / "s_001.csv", 1)
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    calls: list[str] = []
+
+    def runner(curve, method_id, q_range, config):
+        calls.append(method_id)
+        return [_success_envelope(curve, method_id, q_range)]
+
+    config = AutoBatchConfig(batch_id="cache-demo")
+    cache = tmp_path / "compute_cache"
+    first = run_auto_batch(tmp_path, config, analysis_runner=runner, cache_dir=cache)
+    first_calls = list(calls)
+    assert first_calls
+    assert (cache / "run_checkpoint.json").exists()
+
+    calls.clear()
+    second = run_auto_batch(tmp_path, config, analysis_runner=runner, cache_dir=cache)
+
+    assert calls == []
+    assert len(second.analyses) == len(first.analyses)
+    assert any("Restored" in warning and "cache" in warning for warning in second.warnings)

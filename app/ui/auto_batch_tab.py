@@ -56,14 +56,16 @@ class BatchWorker(QObject):
                     f"{event.curve_name or ''} · {event.operation}",
                 )
 
+            cache_dir = self.output / f"{self.config.batch_id}_compute_cache"
             result = run_auto_batch(
                 self.source,
                 self.config,
                 progress_callback=report,
                 cancel_requested=self.cancellation_requested,
+                cache_dir=cache_dir,
             )
             requested_target = self.output / f"{self.config.batch_id}_{result.run_id[:8]}_results"
-            target = export_result_package(result, requested_target)
+            target = export_result_package(result, requested_target, detail_level="usable")
             accepted = {AnalysisStatus.SUCCESS, AnalysisStatus.ASSUMPTION_DEPENDENT}
             failed_or_unfinished = {
                 AnalysisStatus.FIT_FAILED,

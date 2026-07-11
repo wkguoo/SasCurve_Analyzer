@@ -1,5 +1,41 @@
 # CHANGELOG
 
+## 2026-07-11 - Batch compute cache and tiered result packages
+
+### Task Objective
+
+解决十帧批处理计算量大却无法断点续算、导出失败需全量重跑，以及默认输出过于庞杂（数百明细表）的问题。
+
+### Added Files
+
+- `app/core/batch_cache.py`
+
+### Modified Files
+
+- `app/core/auto_batch.py`
+- `app/core/result_package.py`
+- `app/ui/auto_batch_tab.py`
+- `tests/test_auto_batch.py`
+- `tests/test_result_package.py`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Changes
+
+- **计算缓存 / 断点续算**：`run_auto_batch(..., cache_dir=...)` 按「源文件名+方法+配置指纹」缓存每作业信封；中断后可复用已完成作业；结束写入 `run_checkpoint.json`。
+- **计算与导出分离**：`export_result_package_from_checkpoint(cache_dir, output_dir)` 可在导出失败后仅重导包，不重算拟合。
+- **三级结果包**：`summary/`（报告入口、可靠参数、排名）、`audit/`（全量参数/警告/索引）、`details/`（方法明细）。
+- 默认 `detail_level='usable'`：仅导出 success/assumption_dependent 的明细表；跳过空序列 CSV。
+- GUI 自动将缓存写到输出目录下 `{batch_id}_compute_cache`。
+
+### Out of scope / follow-up
+
+- 形状模型「快速预筛再精拟合」可作为后续配置项；本轮以缓存续算为主降低重复成本。
+
+### Tests
+
+- 作业缓存二次运行零 runner 调用；checkpoint 重导出；三级目录与 usable 明细过滤。
+
 ## 2026-07-11 - Main model residual and quality gates
 
 ### Task Objective
