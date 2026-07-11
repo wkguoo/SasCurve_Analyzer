@@ -5,13 +5,67 @@ import pytest
 
 from app.core.auto_batch_schema import AnalysisEnvelope, AnalysisStatus, AutoBatchRun, ParameterValue
 from app.core.batch_cache import load_run_checkpoint, save_run_checkpoint
-from app.core.result_package import _json_default, export_result_package, export_result_package_from_checkpoint
+from app.core.result_package import (
+    _json_default,
+    _reliable_parameter_rows,
+    export_result_package,
+    export_result_package_from_checkpoint,
+)
 
 
 def test_json_default_serializes_multi_element_numpy_arrays() -> None:
     import numpy as np
 
     assert _json_default(np.array([1.0, 2.0])) == [1.0, 2.0]
+
+
+@pytest.mark.parametrize(
+    ("parameter_status", "reliability_score"),
+    [
+        (AnalysisStatus.INVALID, 0.8),
+        (AnalysisStatus.SUCCESS, None),
+    ],
+)
+def test_reliable_parameters_reject_invalid_parameters_and_missing_scores(
+    parameter_status: AnalysisStatus,
+    reliability_score: float | None,
+) -> None:
+    run = AutoBatchRun(batch_id="reliable-gate")
+    run.analyses = [
+        AnalysisEnvelope(
+            curve_id="c1",
+            curve_name="curve",
+            analysis_id="c1:test",
+            analysis_type="test",
+            status=AnalysisStatus.SUCCESS,
+            q_range=(0.01, 0.02),
+            parameters=[ParameterValue("value", 123.0, status=parameter_status)],
+            reliability_label="medium",
+            reliability_score=reliability_score,
+        )
+    ]
+
+    assert _reliable_parameter_rows(run) == []
+
+
+@pytest.mark.parametrize("value", [{"radius": 12.3}, ["radius"], float("nan"), float("inf")])
+def test_reliable_parameters_reject_non_scalar_and_non_finite_values(value: object) -> None:
+    run = AutoBatchRun(batch_id="reliable-scalars")
+    run.analyses = [
+        AnalysisEnvelope(
+            curve_id="c1",
+            curve_name="curve",
+            analysis_id="c1:test",
+            analysis_type="test",
+            status=AnalysisStatus.SUCCESS,
+            q_range=(0.01, 0.02),
+            parameters=[ParameterValue("value", value, status=AnalysisStatus.SUCCESS)],
+            reliability_label="medium",
+            reliability_score=0.8,
+        )
+    ]
+
+    assert _reliable_parameter_rows(run) == []
 
 
 def _run() -> AutoBatchRun:

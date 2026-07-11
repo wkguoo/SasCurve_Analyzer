@@ -118,7 +118,8 @@ def test_edge_truncated_peak_does_not_report_width_area_or_size_as_valid() -> No
     assert peak["area"] is None
     assert peak["correlation_length"] is None
     assert peak["asymmetry"] is None
-    assert {"prominence", "snr", "valid", "validity_reason"} <= peak.keys()
+    assert {"prominence", "peak_snr", "valid", "validity_reason"} <= peak.keys()
+    assert "snr" not in peak
     assert peak["valid"] is False
     assert peak["validity_reason"] is not None
 

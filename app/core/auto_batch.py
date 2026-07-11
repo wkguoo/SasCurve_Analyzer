@@ -452,7 +452,7 @@ def run_auto_batch(
             return _finish_cancelled(run)
 
         q_range = _q_range_for_method(run, curve, method_id)
-        cache_key = job_cache_key(curve, method_id, config) if cache_root is not None else None
+        cache_key = job_cache_key(curve, method_id, config, q_range) if cache_root is not None else None
         envelopes: list[AnalysisEnvelope] | None = None
         used_cache = False
         if cache_root is not None and cache_key is not None:
@@ -477,7 +477,8 @@ def run_auto_batch(
                 had_failure = True
                 reason = _exception_text(exc)
                 envelopes = [_failure_envelope(curve, method_id, q_range, reason)]
-            if cache_root is not None and cache_key is not None:
+            cacheable = not any(item.status in _PARTIAL_FAILURE_STATUSES for item in envelopes)
+            if cache_root is not None and cache_key is not None and cacheable:
                 try:
                     save_job_envelopes(cache_root, cache_key, envelopes)
                 except Exception as exc:

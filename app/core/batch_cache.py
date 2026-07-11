@@ -15,8 +15,15 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
+from app import __version__ as SOFTWARE_VERSION
 from app.core.auto_batch_schema import AnalysisEnvelope, AnalysisStatus, AutoBatchConfig, AutoBatchRun, ParameterValue
 from app.core.data_model import CurveData
+
+
+CACHE_SCHEMA_VERSION = "2"
+ANALYSIS_ALGORITHM_VERSION = "1"
 
 
 def _json_default(value: Any) -> Any:
@@ -45,10 +52,65 @@ def config_fingerprint(config: AutoBatchConfig) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
 
 
-def job_cache_key(curve: CurveData, method_id: str, config: AutoBatchConfig) -> str:
+def _array_fingerprint(digest: Any, name: str, values: Any | None) -> None:
+    """Add a deterministic numeric-array representation to ``digest``."""
+
+    digest.update(name.encode("utf-8"))
+    if values is None:
+        digest.update(b"<none>")
+        return
+    array = np.ascontiguousarray(np.asarray(values, dtype="<f8"))
+    digest.update(str(array.shape).encode("ascii"))
+    digest.update(array.tobytes())
+
+
+def curve_content_fingerprint(curve: CurveData) -> str:
+    """Hash numerical content, units, and metadata that can affect analysis/export."""
+
+    digest = hashlib.sha256()
+    digest.update(CACHE_SCHEMA_VERSION.encode("ascii"))
+    digest.update(str(SOFTWARE_VERSION).encode("utf-8"))
+    digest.update(str(ANALYSIS_ALGORITHM_VERSION).encode("utf-8"))
+    digest.update(str(curve.q_unit).encode("utf-8"))
+    digest.update(str(curve.intensity_unit).encode("utf-8"))
+    metadata_json = json.dumps(
+        curve.metadata,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=_json_default,
+    )
+    digest.update(metadata_json.encode("utf-8"))
+    _array_fingerprint(digest, "q", curve.q)
+    _array_fingerprint(digest, "intensity", curve.intensity)
+    _array_fingerprint(digest, "error", curve.error)
+    return digest.hexdigest()
+
+
+def job_cache_key(
+    curve: CurveData,
+    method_id: str,
+    config: AutoBatchConfig,
+    q_range: tuple[float, float] | None = None,
+) -> str:
     source = Path(curve.source_file or curve.name).name
+    normalized_q_range = None if q_range is None else [float(q_range[0]), float(q_range[1])]
+    identity = json.dumps(
+        {
+            "cache_schema_version": CACHE_SCHEMA_VERSION,
+            "software_version": SOFTWARE_VERSION,
+            "analysis_algorithm_version": ANALYSIS_ALGORITHM_VERSION,
+            "source": source,
+            "curve_content": curve_content_fingerprint(curve),
+            "method_id": method_id,
+            "config": config_fingerprint(config),
+            "q_range": normalized_q_range,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
     digest = hashlib.sha256(
-        f"{source}|{method_id}|{config_fingerprint(config)}".encode("utf-8")
+        identity.encode("utf-8")
     ).hexdigest()[:20]
     return f"{_safe_token(source)}__{_safe_token(method_id)}__{digest}"
 
@@ -221,6 +283,10 @@ def load_run_checkpoint(cache_dir: str | Path) -> AutoBatchRun:
 
 
 __all__ = [
+    "ANALYSIS_ALGORITHM_VERSION",
+    "CACHE_SCHEMA_VERSION",
+    "SOFTWARE_VERSION",
+    "curve_content_fingerprint",
     "config_fingerprint",
     "job_cache_key",
     "load_job_envelopes",

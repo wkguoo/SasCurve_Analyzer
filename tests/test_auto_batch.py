@@ -6,9 +6,11 @@ import numpy as np
 import pytest
 
 import app.core.auto_batch as auto_batch
+import app.core.batch_cache as batch_cache
 from app.core.auto_batch import run_auto_batch
 from app.core.auto_batch_schema import AnalysisEnvelope, AnalysisStatus, AutoBatchConfig, ParameterValue
 from app.core.batch_consensus import ConsensusRegion
+from app.core.batch_cache import job_cache_key
 from app.core.batch_inputs import BatchInputCollection
 from app.core.data_model import CurveData
 from app.core.metric_registry import applicable_method_ids
@@ -816,3 +818,78 @@ def test_job_cache_resumes_without_rerunning_methods(
     assert calls == []
     assert len(second.analyses) == len(first.analyses)
     assert any("Restored" in warning and "cache" in warning for warning in second.warnings)
+
+
+def test_job_cache_key_changes_with_curve_content_and_effective_q_range() -> None:
+    config = AutoBatchConfig(batch_id="cache-content")
+    first = CurveData.create(
+        name="same",
+        q=[0.01, 0.02, 0.03],
+        intensity=[10.0, 5.0, 2.0],
+        source_file="same.csv",
+    )
+    changed = CurveData.create(
+        name="same",
+        q=[0.01, 0.02, 0.03],
+        intensity=[10.0, 6.0, 2.0],
+        source_file="same.csv",
+    )
+
+    first_key = job_cache_key(first, "guinier", config, (0.01, 0.02))
+
+    assert first_key != job_cache_key(changed, "guinier", config, (0.01, 0.02))
+    assert first_key != job_cache_key(first, "guinier", config, (0.01, 0.03))
+
+
+def test_job_cache_key_changes_with_metadata_and_algorithm_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = AutoBatchConfig(batch_id="cache-metadata")
+    first = CurveData.create(
+        name="same",
+        q=[0.01, 0.02, 0.03],
+        intensity=[10.0, 5.0, 2.0],
+        source_file="same.csv",
+        metadata={"temperature_C": 300, "tags": ["in_situ"]},
+    )
+    changed_metadata = CurveData.create(
+        name="same",
+        q=[0.01, 0.02, 0.03],
+        intensity=[10.0, 5.0, 2.0],
+        source_file="same.csv",
+        metadata={"temperature_C": 400, "tags": ["in_situ"]},
+    )
+
+    first_key = job_cache_key(first, "guinier", config, (0.01, 0.02))
+    assert first_key != job_cache_key(changed_metadata, "guinier", config, (0.01, 0.02))
+
+    monkeypatch.setattr(batch_cache, "ANALYSIS_ALGORITHM_VERSION", "test-new-algorithm")
+    assert first_key != job_cache_key(first, "guinier", config, (0.01, 0.02))
+
+    monkeypatch.setattr(batch_cache, "SOFTWARE_VERSION", "test-new-software")
+    assert first_key != job_cache_key(first, "guinier", config, (0.01, 0.02))
+
+
+def test_hard_failure_is_not_restored_from_job_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_curve(tmp_path / "frame_001.csv", 1.0)
+    monkeypatch.setattr(auto_batch, "applicable_method_ids", lambda config: ["guinier"])
+    calls = 0
+
+    def runner(curve, method_id, q_range, config):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("transient failure")
+        return [_success_envelope(curve, method_id, q_range)]
+
+    config = AutoBatchConfig(batch_id="retry-failure")
+    cache = tmp_path / "compute_cache"
+    first = run_auto_batch(tmp_path, config, analysis_runner=runner, cache_dir=cache)
+    second = run_auto_batch(tmp_path, config, analysis_runner=runner, cache_dir=cache)
+
+    assert first.analyses[0].status == AnalysisStatus.FIT_FAILED
+    assert second.analyses[0].status == AnalysisStatus.SUCCESS
+    assert calls == 2

@@ -258,7 +258,6 @@ def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: 
                     "asymmetry": asymmetry,
                     "prominence": peak_prominence,
                     "SNR": peak_snr,
-                    "snr": peak_snr,
                     "correlation_length": correlation_length,
                     "edge_truncation": edge_truncation,
                     "edge_truncated": edge_truncation,

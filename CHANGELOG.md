@@ -1,5 +1,125 @@
 # CHANGELOG
 
+## 2026-07-12 - Bind cache to software, algorithms, and metadata
+
+### Task Objective
+
+完成第二轮缓存与结果导出复核：使算法/软件/metadata 变化可靠地使缓存失效，并保证可靠参数 CSV 只包含有限标量。
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/batch_cache.py`
+- `app/core/result_package.py`
+- `tests/test_auto_batch.py`
+- `tests/test_result_package.py`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- 缓存指纹加入 `app.__version__`、独立 `ANALYSIS_ALGORITHM_VERSION` 和排序后的曲线 metadata JSON。
+- 保留 q/I/error、单位、有效 q 区间、配置与缓存格式版本等已有缓存身份字段。
+- `reliable_parameters.csv` 只保留字符串、布尔、整数和有限浮点标量；NumPy 标量转换为原生标量；字典、列表、NaN 和 inf 留在完整审计输出中。
+- 新增回归测试验证 metadata、软件/算法版本变化均产生新缓存键，并验证复合值和非有限值不会进入可靠参数表。
+- 开发文档明确：数值方法、自动选区、拟合诊断、可靠性规则或模型实现变化时必须提升 `ANALYSIS_ALGORITHM_VERSION`；缓存格式变化时提升 `CACHE_SCHEMA_VERSION`。
+
+### Reason
+
+只绑定数据数组和缓存格式仍可能在算法升级或 metadata 变化后复用陈旧结果；将字典和列表写入“可靠标量参数表”也会破坏 Excel/Origin 兼容性和逐帧统计口径。
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python -B -m pytest -q
+```
+
+### Generated Output Files
+
+- 测试仅使用临时目录；未生成或修改实验结果文件。
+
+### How To Check Success
+
+- metadata/版本缓存失效及可靠标量筛选目标测试共 7 项通过。
+- 全量测试应通过，且 `git diff --check` 无空白错误。
+
+### Notes And Risks
+
+- 新缓存身份会自然忽略此前生成的旧缓存文件，但不会自动删除旧缓存。
+- metadata 全量进入指纹是保守策略：无关 metadata 变化也可能导致重新计算，但不会错误复用科研结果。
+- 未修改原始实验数据，未打包，未执行 Git commit/push。
+
+## 2026-07-12 - Harden batch cache and reliable-result export
+
+### Task Objective
+
+修复 Ti15 实例复核确认的缓存失效、失败缓存、可靠参数误收录、JSON 字段兼容和 pytest 配置问题。
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/batch_cache.py`
+- `app/core/auto_batch.py`
+- `app/core/result_package.py`
+- `app/core/feature_extraction.py`
+- `pytest.ini`
+- `tests/test_auto_batch.py`
+- `tests/test_result_package.py`
+- `tests/test_peak_analysis.py`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- 缓存键新增缓存格式版本、实际 q/I/error 数组指纹、单位和本次方法使用的有效 q 区间；同名但内容不同的曲线或不同共识区间不再复用旧结果。
+- `FIT_FAILED`、`INVALID`、`CANCELLED` 等硬失败结果不再写入逐作业缓存，后续运行会重新尝试计算。
+- `reliable_parameters.csv` 同时要求分析信封和参数自身状态可用，并要求可靠性评分存在且不低于 0.5。
+- 峰明细移除仅大小写不同的 `snr` 重复别名，保留注册指标 `SNR` 和明确字段 `peak_snr`，避免大小写不敏感 JSON 工具冲突。
+- 将无效 pytest `cache_dir` 配置替换为受支持的 `addopts = -p no:cacheprovider`。
+- 新增测试覆盖输入内容/q 区间缓存失效、硬失败重试、无效参数与缺失评分拦截、峰字段唯一性。
+
+### Reason
+
+旧缓存只依赖文件名、方法和配置，可能在同名实验数据变化或共识 q 区间变化后错误复用结果；硬失败也可能被永久复用。可靠参数表则可能收录参数状态为 invalid 或没有可靠性评分的数值。这些行为会产生不可接受的科研可追溯性风险。
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python -B -m pytest -q
+```
+
+### Generated Output Files
+
+- 测试仅生成临时目录内容；未生成或修改实验分析结果。
+
+### How To Check Success
+
+- 新增的 5 个目标回归用例全部通过。
+- 缓存、自动批处理、结果包、峰和指标注册相关测试共 118 项通过。
+- 全量测试应无 `Unknown config option: cache_dir` 警告。
+- `git diff --check` 应无空白错误。
+
+### Notes And Risks
+
+- 缓存格式版本已提升为 `2`，旧逐作业缓存不会命中新键，但不会自动删除。
+- 此修复不改变原始实验数据、SAXS 数值算法或已生成的旧结果包。
+- 未打包，未执行 Git commit 或 Git push。
+
 ## 2026-07-11 - Batch compute cache and tiered result packages
 
 ### Task Objective

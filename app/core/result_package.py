@@ -178,12 +178,27 @@ def _is_usable_envelope(status: AnalysisStatus | str) -> bool:
     return value in {item.value for item in _USABLE_DETAIL_STATUSES}
 
 
+def _reliable_scalar(value: Any) -> str | bool | int | float | None:
+    """Return a CSV-safe scalar, rejecting containers and non-finite numbers."""
+
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float) and np.isfinite(value):
+        return value
+    return None
+
+
 def _reliable_parameter_rows(run: AutoBatchRun) -> list[dict[str, Any]]:
     rows = []
     for row in _parameter_rows(run):
         if row.get("analysis_status") not in {AnalysisStatus.SUCCESS.value, AnalysisStatus.ASSUMPTION_DEPENDENT.value}:
             continue
-        if row.get("value") is None:
+        if row.get("status") not in {AnalysisStatus.SUCCESS.value, AnalysisStatus.ASSUMPTION_DEPENDENT.value}:
+            continue
+        scalar_value = _reliable_scalar(row.get("value"))
+        if scalar_value is None:
             continue
         label = str(row.get("reliability_label") or "")
         score = row.get("reliability_score")
@@ -193,8 +208,9 @@ def _reliable_parameter_rows(run: AutoBatchRun) -> list[dict[str, Any]]:
             numeric_score = None
         if label in {"invalid", "low"}:
             continue
-        if numeric_score is not None and numeric_score < 0.5:
+        if numeric_score is None or numeric_score < 0.5:
             continue
+        row["value"] = scalar_value
         rows.append(row)
     return rows
 

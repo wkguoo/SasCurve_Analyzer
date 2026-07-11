@@ -1087,6 +1087,8 @@ Task 8 verification on 2026-07-11: `compileall` passed; the fit-diagnostics/anal
 
 `run_auto_batch(..., cache_dir=...)` stores per-job envelopes under `cache_dir/jobs/` and a final `run_checkpoint.json`. Job keys use source file name + method id + config fingerprint so a second run with the same inputs can skip finished work. Cached envelopes are remapped onto freshly imported `curve_id` values.
 
+Cache identity also includes the actual q/I/error arrays, q/intensity units, normalized curve metadata, the effective method q range, `app.__version__`, `CACHE_SCHEMA_VERSION`, and `ANALYSIS_ALGORITHM_VERSION`. Increment `ANALYSIS_ALGORITHM_VERSION` whenever a numerical method, region-selection rule, fit diagnostic, reliability rule, or model implementation changes in a way that can alter results. Increment `CACHE_SCHEMA_VERSION` when the cache wire format changes. Hard-failure envelopes are not cached and are retried on the next run.
+
 `app/ui/auto_batch_tab.py` adds the “全自动批量分析” page. The user selects a read-only curve directory, result parent, batch name, sample type, and optional assumption-dependent methods. A `QThread` worker runs the production batch and exporter without blocking the GUI and creates a run-ID-specific result folder. It does not change source curves or silently overwrite an old result.
 
 Final Stage 3/4 verification on 2026-07-11: `compileall` passed; the combined result-package/GUI/sequence/regression suite passed 62 tests; the complete Qt-offscreen/Agg suite passed 517 tests. `git diff --check` and the scoped conflict-marker check passed. Git status was inspected and all pre-existing Stage 1/2 changes were preserved; no dependency, package, commit, or push was created.
