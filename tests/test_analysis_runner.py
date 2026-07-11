@@ -163,3 +163,28 @@ def test_shape_models_return_every_allowed_model_and_isolate_a_failed_model(
         == [metric.name for metric in METHOD_REGISTRY["shape_models"].metrics]
         for item in envelopes
     )
+
+
+def test_envelope_status_is_invalid_when_reliability_label_is_invalid() -> None:
+    curve = _curve()
+    result = AnalysisResult.create(
+        curve=curve,
+        analysis_type="shape_fit:sphere",
+        q_range=(0.01, 0.2),
+        results={
+            "model_name": "sphere",
+            "converged": True,
+            "AICc": 20.0,
+            "reliability_label": "invalid",
+            "reliability_score": 0.12,
+            "parameter_records": [{"name": "radius", "value": 5.0, "unit": "A"}],
+            "export_tables": {"fit_curves": []},
+        },
+    )
+
+    envelope = analysis_runner._envelope_from_result(curve, "shape_models", result)
+
+    assert envelope.status is AnalysisStatus.INVALID
+    assert envelope.reliability_label == "invalid"
+    assert envelope.invalid_reason
+    assert "invalid" in envelope.invalid_reason

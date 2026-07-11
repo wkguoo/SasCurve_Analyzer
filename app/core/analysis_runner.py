@@ -15,6 +15,7 @@ from typing import Any
 
 import numpy as np
 
+from app.core.analysis_schema import RELIABILITY_ASSUMPTION_DEPENDENT, RELIABILITY_INVALID
 from app.core.auto_batch_schema import AnalysisEnvelope, AnalysisStatus, AutoBatchConfig, ParameterValue
 from app.core.correlation import compute_correlation_function
 from app.core.data_model import AnalysisResult, CurveData
@@ -188,13 +189,26 @@ def _result_status(result: AnalysisResult) -> AnalysisStatus:
     status = _status_from_text(results.get("analysis_status"), default=AnalysisStatus.SUCCESS)
     if status is not AnalysisStatus.SUCCESS:
         return status
-    if results.get("reliability_label") == "assumption_dependent":
+    label = results.get("reliability_label")
+    if label == RELIABILITY_ASSUMPTION_DEPENDENT or label == "assumption_dependent":
         return AnalysisStatus.ASSUMPTION_DEPENDENT
+    if label == RELIABILITY_INVALID or label == "invalid":
+        return AnalysisStatus.INVALID
     return AnalysisStatus.SUCCESS
 
 
 def _reliability(result: AnalysisResult, status: AnalysisStatus) -> tuple[str, float]:
-    label = str(result.results.get("reliability_label", "medium" if status is not AnalysisStatus.FIT_FAILED else "invalid"))
+    default_label = (
+        RELIABILITY_INVALID
+        if status in {AnalysisStatus.FIT_FAILED, AnalysisStatus.INVALID}
+        else "medium"
+    )
+    label = str(result.results.get("reliability_label", default_label))
+    if status in {AnalysisStatus.FIT_FAILED, AnalysisStatus.INVALID} and label not in {
+        RELIABILITY_INVALID,
+        "invalid",
+    }:
+        label = RELIABILITY_INVALID
     score = _finite_float(result.results.get("reliability_score"))
     return label, 0.0 if score is None else max(0.0, min(1.0, score))
 
@@ -225,6 +239,16 @@ def _fit_quality_for_envelope(result: AnalysisResult) -> dict[str, Any]:
     return quality
 
 
+def _envelope_invalid_reason(result: AnalysisResult, status: AnalysisStatus, score: float) -> str | None:
+    if status not in {AnalysisStatus.FIT_FAILED, AnalysisStatus.INVALID}:
+        return None
+    if result.results.get("error_message"):
+        return str(result.results.get("error_message"))
+    if status is AnalysisStatus.FIT_FAILED:
+        return "Fit did not converge or failed numerical checks."
+    return f"reliability_label is invalid (score={score:.3f})."
+
+
 def _envelope_from_result(curve: CurveData, method_id: str, result: AnalysisResult) -> AnalysisEnvelope:
     status = _result_status(result)
     label, score = _reliability(result, status)
@@ -249,11 +273,7 @@ def _envelope_from_result(curve: CurveData, method_id: str, result: AnalysisResu
         reliability_score=score,
         assumptions=[str(item) for item in result.results.get("assumptions", [])] if isinstance(result.results.get("assumptions"), list) else [],
         warnings=warnings,
-        invalid_reason=(
-            str(result.results.get("error_message"))
-            if status is AnalysisStatus.FIT_FAILED and result.results.get("error_message")
-            else None
-        ),
+        invalid_reason=_envelope_invalid_reason(result, status, score),
     )
 
 

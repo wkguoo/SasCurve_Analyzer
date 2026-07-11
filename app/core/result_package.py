@@ -10,9 +10,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import numpy as np
 import pandas as pd
 
 from app.core.auto_batch_schema import AutoBatchRun
+from app.core.data_model import CurveData
 
 
 def _json_default(value: Any) -> Any:
@@ -30,6 +32,92 @@ def _json_default(value: Any) -> Any:
 def _safe_name(value: object) -> str:
     text = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("._")
     return text[:100] or "unnamed"
+
+
+def _finite_minmax(values: Any) -> tuple[float | None, float | None]:
+    try:
+        array = np.asarray(values, dtype=float)
+    except (TypeError, ValueError):
+        return None, None
+    if array.size == 0:
+        return None, None
+    finite = array[np.isfinite(array)]
+    if finite.size == 0:
+        return None, None
+    return float(np.min(finite)), float(np.max(finite))
+
+
+def _curve_summary_for_export(curve: Any) -> dict[str, Any]:
+    """Metadata-only curve record for run_summary.json (no q/I arrays)."""
+
+    if isinstance(curve, CurveData):
+        q_min, q_max = _finite_minmax(curve.q)
+        n_points = int(np.asarray(curve.q).size)
+        return {
+            "curve_id": curve.curve_id,
+            "name": curve.name,
+            "q_unit": curve.q_unit,
+            "intensity_unit": curve.intensity_unit,
+            "source_file": curve.source_file,
+            "parent_id": curve.parent_id,
+            "created_at": curve.created_at,
+            "n_points": n_points,
+            "q_min": q_min,
+            "q_max": q_max,
+            "has_error": curve.error is not None,
+        }
+    if isinstance(curve, dict):
+        summary = {
+            key: curve.get(key)
+            for key in (
+                "curve_id",
+                "name",
+                "q_unit",
+                "intensity_unit",
+                "source_file",
+                "parent_id",
+                "created_at",
+            )
+            if key in curve
+        }
+        q_min, q_max = _finite_minmax(curve.get("q"))
+        if "q" in curve:
+            try:
+                summary["n_points"] = int(np.asarray(curve.get("q")).size)
+            except (TypeError, ValueError):
+                summary["n_points"] = None
+        summary["q_min"] = q_min
+        summary["q_max"] = q_max
+        summary["has_error"] = curve.get("error") is not None
+        return summary
+    return {"repr": str(curve)}
+
+
+def _analysis_summary_for_export(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Drop full table bodies from run_summary; keep row counts only."""
+
+    payload = dict(analysis)
+    tables = payload.get("tables") or {}
+    if isinstance(tables, dict):
+        payload["tables"] = {
+            str(name): {"row_count": len(rows) if isinstance(rows, list) else 0}
+            for name, rows in tables.items()
+        }
+        payload["tables_exported"] = True
+    return payload
+
+
+def _run_summary_payload(run: AutoBatchRun) -> dict[str, Any]:
+    """Build a compact run_summary that does not embed full curve arrays or fit tables."""
+
+    payload = asdict(run)
+    payload["curves"] = [_curve_summary_for_export(curve) for curve in run.curves]
+    analyses = payload.get("analyses") or []
+    if isinstance(analyses, list):
+        payload["analyses"] = [
+            _analysis_summary_for_export(item) if isinstance(item, dict) else item for item in analyses
+        ]
+    return payload
 
 
 def _parameter_rows(run: AutoBatchRun) -> list[dict[str, Any]]:
@@ -92,7 +180,7 @@ def export_result_package(run: AutoBatchRun, output_dir: str | Path) -> Path:
     staging = target.with_name(f".{target.name}.incomplete-{uuid4().hex[:8]}")
     staging.mkdir()
 
-    payload = asdict(run)
+    payload = _run_summary_payload(run)
     (staging / "run_summary.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8"
     )
@@ -140,6 +228,8 @@ def export_result_package(run: AutoBatchRun, output_dir: str | Path) -> Path:
         f"- curves: {len(run.curves)}\n- analysis envelopes: {len(run.analyses)}\n\n"
         "`parameters.csv` 汇总所有方法和模型参数；`fit_quality.csv` 保存拟合质量；"
         "`sequence_*.csv` 保存原位时序结果；`analysis_tables/` 保存拟合点、残差及方法明细。\n\n"
+        "`run_summary.json` 仅含运行元数据、曲线摘要（不含完整 q/I 数组）与分析信封摘要"
+        "（tables 仅保留行数）；完整曲线点请使用输入源文件与 `analysis_tables/`。\n\n"
         "## 科研解释限制\n\n"
         "数值收敛、R²、AICc/BIC、bootstrap、参数连续、突变标记、PCA 或聚类均不能证明模型、"
         "结构、相变或机理唯一。请结合 q 范围、误差、标定、材料条件和其他表征复核。\n",

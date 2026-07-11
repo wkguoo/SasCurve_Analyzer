@@ -1,5 +1,30 @@
 # CHANGELOG
 
+## 2026-07-11 - Ti15 instance P0: slim run_summary + status/reliability consistency
+
+### Task Objective
+
+根据 `results/17_Ti15_300_2_iso_first10_.../instance_review_zh.md` 修复两项 P0：结果包 `run_summary.json` 体积失控，以及 `status=success` 与 `reliability_label=invalid` 并存。
+
+### Modified Files
+
+- `app/core/result_package.py`
+- `app/core/analysis_runner.py`
+- `tests/test_result_package.py`
+- `tests/test_analysis_runner.py`
+- `CHANGELOG.md`
+
+### Changes
+
+- `run_summary.json` 仅写入曲线元数据摘要（`n_points`/`q_min`/`q_max` 等），不再嵌入完整 q/I 数组；分析 `tables` 仅保留 `row_count`（明细仍在 `analysis_tables/`）。
+- `_result_status`：当 `reliability_label=invalid` 时返回 `AnalysisStatus.INVALID`，并补全 `invalid_reason`；失败态下 reliability 标签与状态对齐。
+- README 结果包说明同步更新。
+
+### Tests
+
+- `tests/test_result_package.py`：长曲线摘要与体积断言。
+- `tests/test_analysis_runner.py`：invalid reliability → INVALID envelope。
+
 ## 2026-07-11 - Priority review fixes (P0–P3)
 
 ### Task Objective

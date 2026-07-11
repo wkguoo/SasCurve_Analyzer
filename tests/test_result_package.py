@@ -71,3 +71,32 @@ def test_cancelled_result_package_is_explicitly_incomplete(tmp_path) -> None:
     assert target.name == "demo_results_incomplete"
     assert target.is_dir()
     assert not (tmp_path / "demo_results").exists()
+
+
+def test_run_summary_omits_curve_arrays_and_table_bodies(tmp_path) -> None:
+    import numpy as np
+
+    from app.core.data_model import CurveData
+
+    q = np.linspace(0.01, 1.0, 4000)
+    intensity = np.exp(-q * 3.0)
+    curve = CurveData.create(name="long_curve", q=q, intensity=intensity)
+    run = _run()
+    run.curves = [curve]
+    run.analyses[0].tables = {
+        "residuals": [{"q": float(x), "residual": 0.01} for x in q[:500]],
+    }
+
+    target = export_result_package(run, tmp_path / "slim_results")
+    summary = json.loads((target / "run_summary.json").read_text(encoding="utf-8"))
+    text = (target / "run_summary.json").read_text(encoding="utf-8")
+
+    assert "q" not in summary["curves"][0]
+    assert "intensity" not in summary["curves"][0]
+    assert summary["curves"][0]["n_points"] == 4000
+    assert summary["curves"][0]["name"] == "long_curve"
+    assert summary["analyses"][0]["tables"]["residuals"] == {"row_count": 500}
+    assert summary["analyses"][0]["tables_exported"] is True
+    assert len(text) < 200_000
+    assert "不能证明" in (target / "README.md").read_text(encoding="utf-8")
+    assert "不含完整 q/I" in (target / "README.md").read_text(encoding="utf-8")
