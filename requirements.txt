@@ -1,7 +1,6 @@
-numpy
-pandas
-scipy
-matplotlib
-PySide6
-pytest
-
+numpy>=2.0,<3
+pandas>=2.0,<3
+scipy>=1.11,<2
+matplotlib>=3.8,<4
+PySide6>=6.6,<7
+pytest>=8,<10

@@ -33,8 +33,13 @@ This software does not perform:
 - Exposure-time normalization.
 - Absolute intensity calibration.
 - Two-dimensional detector image integration.
-- Complex structural model fitting.
-- Automatic material structure identification.
+- Automatic material structure identification or unique morphological assignment from a fit alone.
+
+Optional analysis capabilities (assumption-dependent; review reliability labels and method warnings before formal use):
+
+- Limited shape/form-factor and empirical model fitting with fit diagnostics and model ranking.
+- Automated batch analysis of calibrated curve folders into an audit-friendly result package (read-only inputs, cancellable runs).
+- Experimental or reserved interfaces for P(r), correlation functions, and low/high-q extrapolation; these are not validated production methods for formal quantitative conclusions.
 
 ## Features
 
@@ -281,6 +286,8 @@ The GUI code should call `app/core` modules for numerical work. New analysis beh
 - 导出报告页已简化为高频稳定入口，并支持导出当前曲线第一手转换数据 CSV：`q`、`I(q)`、`q²`、`ln q`、`log10 q`、`ln I(q)`、`log10 I(q)`、`q²I(q)`、`q⁴I(q)` 等列可直接在 Origin、Excel 或 Python 中复核。
 - 批量页提供序列管理表和 `sequence_index.csv` 导出，便于复核原位/时间序列导入顺序、frame、q 范围和 warning。
 - 支持通过 `项目` 菜单新建、打开、保存和另存为项目；未保存更改会在窗口标题中显示 `*`，关闭/新建/打开前可选择保存、不保存或取消。
+- 可选有限形状/经验模型拟合、拟合诊断与模型排序；结果依赖假设，须结合可靠性标签与方法警告再用于正式报告。
+- 支持对已校准曲线目录做自动批处理，导出可审计结果包（原始输入只读，运行可取消）。
 
 ### 快速开始
 
@@ -297,7 +304,8 @@ python main.py
 
 ### 注意事项
 
-- 软件不做原始二维图像积分、背景扣除、透过率校正、厚度校正或绝对强度校准。
+- 软件不做原始二维图像积分、背景扣除、透过率校正、厚度校正或绝对强度校准，也不根据单次拟合自动判定材料结构或唯一形貌。
+- 提供有限的形状/经验模型拟合与自动批处理结果包时，参数均为假设依赖；数值收敛或模型排序不证明结构唯一。
 - 原始导入数据不会被直接修改，派生处理会生成新的曲线或输出文件。
 - 轻微负强度可保留并单独标注，但 log 图和 log 分析仍会排除 `I(q) <= 0`。
 - 曲线分析区域的 `q_min/q_max` 始终表示原始物理 q 范围；`ln q` 等图上负横坐标需要先换算回正的 raw q。

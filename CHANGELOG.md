@@ -1,5 +1,107 @@
 # CHANGELOG
 
+## 2026-07-11 - Priority review fixes (P0–P3)
+
+### Task Objective
+
+按代码审查优先级修复：项目加载安全、结果包序列化、文档范围对齐、依赖钉版本、启动器去硬编码、最小 CI，以及静默异常收窄。
+
+### Added Files
+
+- `.github/workflows/tests.yml`
+- `pytest.ini`
+
+### Modified Files
+
+- `app/core/project.py`
+- `app/core/records.py`
+- `app/core/result_package.py`
+- `app/core/import_preview.py`
+- `app/ui/plotting_tab.py`
+- `tests/test_project.py`
+- `tests/test_records.py`
+- `tests/test_result_package.py`
+- `README.md`
+- `requirements.txt`
+- `Start_SasCurve_Analyzer.bat`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Changes
+
+- `load_project` 拒绝绝对路径与路径穿越的 `data_file`；解析后必须落在项目根内。
+- 项目与记录 JSON 反序列化改为 dataclass 字段白名单，未知键静默忽略。
+- 结果包 `_json_default` 优先 `tolist()`，修复多元素 NumPy 数组无法写入 `run_summary.json`。
+- README 中英文 Scope 对齐实际能力：有限模型拟合与自动批处理为假设依赖；去掉“完全不做复杂模型拟合”的过时表述。
+- `requirements.txt` 增加兼容版本范围；启动器仅在 bat 旁存在 `main.py` 时启动，去掉 `E:\desktop\...` 硬编码。
+- 新增 GitHub Actions pytest（Ubuntu、`QT_QPA_PLATFORM=offscreen`）；`pytest.ini` 将 cache 写入 `.tmp/pytest_cache`。
+- 收窄 plotting cursor disconnect 与 import preview 列推断的异常捕获类型。
+
+### Deferred
+
+- 拆分 `model_free.py` / `model_fitting.py`。
+- UI ProjectController 解耦。
+
+### Tests
+
+- 新增路径穿越、绝对路径拒绝、未知字段忽略相关用例。
+- 全量测试：`529 passed`（`QT_QPA_PLATFORM=offscreen`，临时目录指向仓库内 `.tmp`）。
+
+## 2026-07-11 22:15:00 +08:00 - Ti15 300 ℃ SAXS 前十帧分析
+
+### 任务目标
+
+使用 SAS Curve Analyzer 严格分析 `ti15_00001_abs2d_cm-1.csv` 至 `ti15_00010_abs2d_cm-1.csv`，输出可追溯参数表、论文级图件和中文报告，同时保持原始数据只读。
+
+### 新增文件
+
+- `scripts/analyze_ti15_first10.py`
+- `../results/17_Ti15_300_2_iso_first10_20260711_220140/` 下的结果包、表格、图件、完整性记录和报告。
+
+### 修改文件
+
+- `app/core/result_package.py`
+- `tests/test_result_package.py`
+- `CHANGELOG.md`
+
+### 删除文件
+
+- 无。
+
+### 具体修改及原因
+
+- 新增可重复运行的前十帧专用分析脚本，以临时只读副本限制批处理输入，并在结果清单中保留原始绝对路径和 SHA-256。
+- 输出逐帧数据质量、完整参数审计、可靠参数筛选、600 dpi PNG/SVG/PDF 图件和中文结论报告。
+- 修复结果包导出时多元素 NumPy 数组不能序列化的问题，并添加回归测试；该问题曾在完成计算后阻止 `run_summary.json` 导出。
+- 定量报告要求方法/参数状态可用、可靠性至少为 medium 且评分不低于 0.5。
+
+### 如何运行
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python scripts\analyze_ti15_first10.py
+```
+
+默认输入为用户提供的外部 `spectra_csv` 目录；输出为项目上级 `results` 下新的时间戳目录。当前机器完整运行约需 5 分钟。
+
+### 生成的输出文件
+
+- `final_report_zh.md`、`data_quality.csv`、`reliable_parameters.csv`、`accepted_parameters.csv`、`all_parameters_audit.csv`。
+- 软件原生拟合/序列表、`run_summary.json` 和 550 个方法明细表。
+- `figures/` 下 9 个 PNG/SVG/PDF 图件。
+
+### 成功检查
+
+- 运行摘要：`RUN_STATUS=completed`、`CURVES=10`、`ANALYSES=240`、`SOURCE_INTEGRITY=PASS`。
+- 输入清单严格包含 `00001–00010`，不含室温参考；十个原始文件均通过前后哈希、大小和时间戳检查。
+- 全量测试：`525 passed`；`git diff --check` 无空白错误。
+
+### 注意事项和风险
+
+- 中等可靠性的共同峰位为 `q*=0.00925269 Å^-1`，对应特征尺度 `67.91 nm`，不可自动解释为颗粒直径。
+- 没有获得可接受的 Guinier、幂律或 Porod 定量参数；散射不变量约下降 3.70%，但可靠性低，仅作描述性观察。
+- 原始负强度未截断或平移；未修改原始数据，未打包，未执行 Git commit/push。
+
 ## 2026-07-11 21:31:58 +08:00 - Repair Sequence Safety And Batch Cancellation Contracts
 
 ### Task Objective

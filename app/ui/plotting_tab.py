@@ -374,7 +374,8 @@ class PlottingTab(QWidget):
         if self._motion_cid is not None:
             try:
                 self.canvas.mpl_disconnect(self._motion_cid)
-            except Exception:
+            except (TypeError, ValueError, RuntimeError, KeyError):
+                # Already disconnected or canvas disposed during tab refresh.
                 pass
         self._motion_cid = self.canvas.mpl_connect("motion_notify_event", self._on_mouse_move)
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from app.core.records import create_formal_record, create_history_record, load_records, save_records
 
 
@@ -23,4 +25,22 @@ def test_save_and_load_records(tmp_path) -> None:
     loaded_history, loaded_formal = load_records(path)
     assert loaded_history[0].action_type == "analysis"
     assert loaded_formal[0].title == "Selected analysis"
+
+
+def test_load_records_ignores_unknown_fields(tmp_path) -> None:
+    history = [create_history_record("analysis", input_ids=["curve"], output_ids=["analysis"])]
+    formal = [create_formal_record("analysis", "analysis", "Selected analysis")]
+    path = tmp_path / "records.json"
+    save_records(path, history, formal)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["history"][0]["unexpected_history_field"] = "x"
+    payload["formal"][0]["unexpected_formal_field"] = "y"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded_history, loaded_formal = load_records(path)
+    assert loaded_history[0].action_type == "analysis"
+    assert loaded_formal[0].title == "Selected analysis"
+    assert not hasattr(loaded_history[0], "unexpected_history_field")
+    assert not hasattr(loaded_formal[0], "unexpected_formal_field")
 

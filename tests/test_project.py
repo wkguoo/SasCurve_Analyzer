@@ -117,6 +117,71 @@ def test_project_revision_tracks_changes_and_load_resets_clean_baseline(tmp_path
     assert loaded.revision == 0
 
 
+def test_load_project_rejects_path_traversal_data_file(tmp_path) -> None:
+    project = ProjectState()
+    project.add_curve(CurveData.create(name="curve", q=[0.1, 0.2], intensity=[10, 20]))
+    save_project(project, tmp_path)
+
+    outside = tmp_path.parent / "outside_secret.json"
+    outside.write_text(json.dumps({"q": [1.0], "I": [2.0], "error": None}), encoding="utf-8")
+
+    project_path = tmp_path / "project.json"
+    payload = json.loads(project_path.read_text(encoding="utf-8"))
+    payload["curves"][0]["data_file"] = f"../{outside.name}"
+    project_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    try:
+        load_project(tmp_path)
+        raise AssertionError("Expected path traversal data_file to be rejected")
+    except ValueError as exc:
+        assert "escapes the project folder" in str(exc) or "relative path" in str(exc)
+
+
+def test_load_project_rejects_absolute_data_file(tmp_path) -> None:
+    project = ProjectState()
+    project.add_curve(CurveData.create(name="curve", q=[0.1, 0.2], intensity=[10, 20]))
+    save_project(project, tmp_path)
+
+    project_path = tmp_path / "project.json"
+    payload = json.loads(project_path.read_text(encoding="utf-8"))
+    absolute = (tmp_path / payload["curves"][0]["data_file"]).resolve()
+    payload["curves"][0]["data_file"] = str(absolute)
+    project_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    try:
+        load_project(tmp_path)
+        raise AssertionError("Expected absolute data_file to be rejected")
+    except ValueError as exc:
+        assert "relative path" in str(exc)
+
+
+def test_load_project_ignores_unknown_curve_fields(tmp_path) -> None:
+    project = ProjectState()
+    project.add_curve(CurveData.create(name="curve", q=[0.1, 0.2], intensity=[10, 20]))
+    save_project(project, tmp_path)
+
+    project_path = tmp_path / "project.json"
+    payload = json.loads(project_path.read_text(encoding="utf-8"))
+    payload["curves"][0]["unexpected_future_field"] = {"nested": True}
+    payload["groups"] = [
+        {
+            "group_id": "g1",
+            "name": "group",
+            "curve_ids": [payload["curves"][0]["curve_id"]],
+            "unexpected_group_field": 123,
+        }
+    ]
+    project_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_project(tmp_path)
+
+    assert len(loaded.curves) == 1
+    assert loaded.curves[0].name == "curve"
+    assert len(loaded.groups) == 1
+    assert loaded.groups[0].name == "group"
+    assert not hasattr(loaded.curves[0], "unexpected_future_field")
+
+
 def test_main_window_save_and_open_project_lifecycle(tmp_path) -> None:
     _app()
     window = MainWindow()

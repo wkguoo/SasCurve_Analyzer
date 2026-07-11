@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 import json
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +63,38 @@ def _json_default(value: Any):
     return str(value)
 
 
+def _dataclass_kwargs(cls: type, payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep only fields declared on a dataclass; ignore unknown keys."""
+
+    allowed = {item.name for item in fields(cls)}
+    return {key: value for key, value in payload.items() if key in allowed}
+
+
+def _as_float_pair(value: Any) -> tuple[float, float] | None:
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError(f"Expected a length-2 q_range, got {value!r}.")
+    return float(value[0]), float(value[1])
+
+
+def _resolve_project_data_file(project_root: Path, data_file: object) -> Path:
+    """Resolve a curve data path that must stay inside the project folder."""
+
+    if not isinstance(data_file, str) or not data_file.strip():
+        raise ValueError("Project curve entry is missing a valid data_file path.")
+    candidate = Path(data_file)
+    if candidate.is_absolute():
+        raise ValueError("Project data_file must be a relative path inside the project folder.")
+    root = project_root.resolve()
+    resolved = (root / candidate).resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError("Project data_file escapes the project folder.")
+    if not resolved.is_file():
+        raise FileNotFoundError(f"Project curve data file was not found: {data_file}")
+    return resolved
+
+
 def save_project(project: ProjectState, folder: str | Path) -> Path:
     target_folder = Path(folder)
     target_folder.mkdir(parents=True, exist_ok=True)
@@ -101,22 +132,62 @@ def load_project(folder: str | Path) -> ProjectState:
     project = ProjectState()
 
     for curve_payload in payload.get("curves", []):
-        data = json.loads((target_folder / curve_payload.pop("data_file")).read_text(encoding="utf-8"))
+        if not isinstance(curve_payload, dict):
+            raise ValueError("Project curve entries must be JSON objects.")
+        data_path = _resolve_project_data_file(target_folder, curve_payload.pop("data_file", None))
+        data = json.loads(data_path.read_text(encoding="utf-8"))
+        curve_fields = _dataclass_kwargs(CurveData, curve_payload)
+        curve_fields.pop("q", None)
+        curve_fields.pop("intensity", None)
+        curve_fields.pop("error", None)
         curve = CurveData(
             q=np.asarray(data["q"], dtype=float),
             intensity=np.asarray(data["I"], dtype=float),
             error=None if data.get("error") is None else np.asarray(data["error"], dtype=float),
-            **curve_payload,
+            **curve_fields,
         )
         project.add_curve(curve)
 
-    project.groups = [CurveGroup(**group) for group in payload.get("groups", [])]
-    project.analysis_results = [AnalysisResult(**result) for result in payload.get("analysis_results", [])]
-    project.comparison_results = [
-        ComparisonResult(q=np.asarray(result.pop("q"), dtype=float), values=np.asarray(result.pop("values"), dtype=float), **result)
-        for result in payload.get("comparison_results", [])
+    project.groups = [CurveGroup(**_dataclass_kwargs(CurveGroup, group)) for group in payload.get("groups", [])]
+
+    analysis_results: list[AnalysisResult] = []
+    for result in payload.get("analysis_results", []):
+        fields_payload = _dataclass_kwargs(AnalysisResult, result)
+        if "q_range" in fields_payload:
+            pair = _as_float_pair(fields_payload["q_range"])
+            if pair is None:
+                raise ValueError("AnalysisResult.q_range cannot be null.")
+            fields_payload["q_range"] = pair
+        analysis_results.append(AnalysisResult(**fields_payload))
+    project.analysis_results = analysis_results
+
+    comparison_results: list[ComparisonResult] = []
+    for result in payload.get("comparison_results", []):
+        if not isinstance(result, dict):
+            raise ValueError("Project comparison entries must be JSON objects.")
+        result_copy = dict(result)
+        q = np.asarray(result_copy.pop("q"), dtype=float)
+        values = np.asarray(result_copy.pop("values"), dtype=float)
+        fields_payload = _dataclass_kwargs(ComparisonResult, result_copy)
+        fields_payload.pop("q", None)
+        fields_payload.pop("values", None)
+        if "q_range" in fields_payload:
+            pair = _as_float_pair(fields_payload["q_range"])
+            if pair is None:
+                raise ValueError("ComparisonResult.q_range cannot be null.")
+            fields_payload["q_range"] = pair
+        comparison_results.append(ComparisonResult(q=q, values=values, **fields_payload))
+    project.comparison_results = comparison_results
+
+    project.history_records = [
+        HistoryRecord(**_dataclass_kwargs(HistoryRecord, record)) for record in payload.get("history_records", [])
     ]
-    project.history_records = [HistoryRecord(**record) for record in payload.get("history_records", [])]
-    project.formal_records = [FormalRecord(**record) for record in payload.get("formal_records", [])]
+    formal_records: list[FormalRecord] = []
+    for record in payload.get("formal_records", []):
+        fields_payload = _dataclass_kwargs(FormalRecord, record)
+        if "q_range" in fields_payload and fields_payload["q_range"] is not None:
+            fields_payload["q_range"] = _as_float_pair(fields_payload["q_range"])
+        formal_records.append(FormalRecord(**fields_payload))
+    project.formal_records = formal_records
     project.revision = 0
     return project

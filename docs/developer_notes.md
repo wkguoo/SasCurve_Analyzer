@@ -54,6 +54,15 @@ Project folders contain a top-level `project.json` plus internal curve data file
 
 New project saves write curve arrays to `curves/<curve_id>.json`. Loading still reads the `data_file` path stored in `project.json`, so old project entries pointing to `.csv` files with JSON content remain readable.
 
+`load_project()` resolves each curve `data_file` with a safety check:
+
+- `data_file` must be a non-empty relative path string.
+- Absolute paths are rejected.
+- After `Path.resolve()`, the file must remain inside the project root (`is_relative_to`).
+- Path traversal such as `../outside.json` raises `ValueError`.
+
+Deserialization uses a dataclass field whitelist (`_dataclass_kwargs`). Unknown JSON keys are ignored so older/newer project files can still load. The same whitelist pattern applies to `load_records()`.
+
 User-facing curve export remains CSV and is separate from internal project storage.
 
 `ProjectState.revision` is an in-memory dirty-state counter. It increments when project objects are added through `add_curve()`, `add_analysis_result()`, `add_group()`, `add_comparison_result()`, `add_history_record()`, or `add_formal_record()`. It is not serialized. `load_project()` resets the loaded project revision to `0`.
@@ -67,6 +76,18 @@ User-facing curve export remains CSV and is separate from internal project stora
 - `open_project_folder()`: loads a folder containing `project.json` and refreshes GUI state.
 
 Visible main-window close events prompt before discarding unsaved project changes. Offscreen/unshown windows close without a prompt so automated tests do not block. When adding new UI actions that mutate existing project lists directly, prefer using `ProjectState` add methods or call `MainWindow.mark_project_dirty()` after the mutation so the title marker stays current.
+
+## Testing Notes
+
+- `pytest.ini` stores the pytest cache under `.tmp/pytest_cache` (gitignored via `.tmp/`).
+- On restricted Windows sandboxes, keep pytest temporary files inside the repo:
+
+```powershell
+$env:TEMP="$PWD\.tmp"; $env:TMP="$PWD\.tmp"; $env:PYTEST_DEBUG_TEMPROOT="$PWD\.tmp"
+python -m pytest
+```
+
+CI runs on Ubuntu with `QT_QPA_PLATFORM=offscreen` via `.github/workflows/tests.yml`.
 
 ## Settings
 
@@ -90,12 +111,16 @@ Do not read arbitrary sensitive paths for settings. Keep the default settings fi
 
 `Start_SasCurve_Analyzer.bat` is the double-click launcher for normal Windows desktop use.
 
-The script resolves the project folder in two ways:
+The script only starts when `main.py` sits next to the bat file (`%~dp0`). There is no hardcoded machine path fallback. If the bat is copied alone to the desktop without the project tree, it prints an error and exits.
 
-- If the bat file is in the project root, it uses its own directory.
-- If the bat file is copied to the Windows desktop, it falls back to the fixed project path `E:\Desktop\SasCurve_Analyzer`.
+The launcher checks that Python is available, reports missing PySide6 dependencies with the install command, and then starts the GUI with `python main.py` or `py -3 main.py`. Use `Start_SasCurve_Analyzer.bat --check` to print the resolved project folder without starting the GUI.
 
-The launcher checks that Python is available, reports missing PySide6 dependencies with the install command, and then starts the GUI with `python main.py` or `py -3 main.py`. Keep the desktop copy synchronized with the project-root copy when the launcher changes.
+## Follow-up Maintainability Work
+
+These items were reviewed but deliberately deferred:
+
+- Split `app/core/model_free.py` and `app/core/model_fitting.py` into method-focused modules with a re-export facade.
+- Introduce a light project controller so UI tabs do not hold a full `MainWindow` reference for all state.
 
 ## Batch In Situ Import
 

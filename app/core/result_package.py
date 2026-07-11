@@ -20,10 +20,10 @@ def _json_default(value: Any) -> Any:
         return value.value
     if isinstance(value, Path):
         return str(value)
-    if hasattr(value, "item"):
-        return value.item()
     if hasattr(value, "tolist"):
         return value.tolist()
+    if hasattr(value, "item"):
+        return value.item()
     return str(value)
 
 

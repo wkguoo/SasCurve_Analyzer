@@ -4,7 +4,13 @@ import pandas as pd
 import pytest
 
 from app.core.auto_batch_schema import AnalysisEnvelope, AnalysisStatus, AutoBatchRun, ParameterValue
-from app.core.result_package import export_result_package
+from app.core.result_package import _json_default, export_result_package
+
+
+def test_json_default_serializes_multi_element_numpy_arrays() -> None:
+    import numpy as np
+
+    assert _json_default(np.array([1.0, 2.0])) == [1.0, 2.0]
 
 
 def _run() -> AutoBatchRun:

@@ -100,7 +100,7 @@ def preview_curve_file(
         else:
             try:
                 inferred = infer_curve_columns(columns)
-            except Exception:
+            except (ValueError, TypeError, KeyError):
                 inferred = None
 
         q_unit = (q_unit.strip() if isinstance(q_unit, str) else q_unit) or None
