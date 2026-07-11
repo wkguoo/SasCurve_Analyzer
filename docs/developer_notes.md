@@ -1100,3 +1100,30 @@ Final Stage 3/4 verification on 2026-07-11: `compileall` passed; the combined re
 - Fix: sort local curve copies before interpolation/integration; filter finite positive q/I pairs before the common-grid PCA path; populate failed/cancelled parameters and units from `METHOD_REGISTRY`; materialize all known unexecuted jobs as cancelled envelopes; check cancellation again after each runner; add a thread-safe cancellation event; export cancelled runs with `_incomplete`; replace corrupted strings with UTF-8 Chinese.
 - Tests: added public-seam regression coverage in `test_sequence_analysis.py`, `test_auto_batch.py`, `test_result_package.py`, and `test_auto_batch_ui.py`.
 - Follow-up: the full results-package roadmap (Excel workbook, plots, and per-fit directory contract) remains separate unfinished work.
+
+## 2026-07-12 - Log-q Adaptive Automatic Region Scanning
+
+Per-frame region scanning must be invariant to whether a calibrated curve is sampled uniformly in q, uniformly in log(q), or irregularly. The former implementation chose three point-count widths and advanced starts by a fraction of the total row count. On a 5500-point linear q grid spanning about four decades, this skipped narrow low-q and peak-tail intervals while allowing eight-point high-q fluctuations to dominate candidate ranking.
+
+`app/core/region_scanners.py` now generates candidate windows at five log-q spans (`0.12`, `0.20`, `0.35`, `0.50`, and `0.75` decades) and distributes their starts across log(q). Windows are mapped to existing measured rows by `searchsorted`; no interpolation, smoothing, offset, clipping, or background subtraction occurs. The configured `max_scanned_windows` remains a hard cap, with capped windows sampled across the full proposed log-q coverage instead of stopping only at the first q region.
+
+Method-specific rules are:
+
+- Guinier windows are limited to the lower `0.45` of the selected log-q span, record span/point evidence, require a negative slope and finite Rg, and cannot be fit-ready above `qRg_max=1.3`.
+- Power-law stability uses slopes from contiguous log-linear chunks rather than pointwise gradients, which amplify noise when adjacent linear-q points have tiny `delta log(q)`. A window below `0.10` decades is audit-only. Candidate rows record log span, point score, chunked-slope stability, and `window_sampling=log_q_multiscale`.
+- Porod windows use the same multiscale proposals. A high-q noise/background score is applied only when the candidate overlaps that risk band. Automatic fit readiness additionally requires alpha within the configured `4 +/- tolerance`, q4I CV at or below the caution boundary, and no severe overlapping noise band.
+- Low-q upturn comparison uses the first two log-q bands with minimum-point protection. High-q noise/background assessment uses the upper log-q band and includes non-positive fraction and robust dispersion, rather than discarding negative tail values before risk assessment.
+
+The result contract version is `auto_detection_version=2.0`. `ANALYSIS_ALGORITHM_VERSION` is `2`, intentionally invalidating job-cache identities created under the old range-selection rules.
+
+Read-only Ti15 frames 1–10 validation recovers a power-law consensus for all ten frames at `0.0131780802–0.0219634670 A^-1`; the shared-range fitted alpha values span approximately `3.399–3.488`. Peak consensus is unchanged. Guinier and Porod remain absent because their method-specific conditions are not satisfied; the repair improves per-frame coverage without manufacturing unsupported quantities. Focused regressions passed `103` tests and the full offscreen/Agg suite passed `550` tests.
+
+## 2026-07-12 - Manual Explanation Of Coverage Versus Acceptance
+
+`docs/user_manual_zh.md` now documents the critical distinction between automatic candidate coverage and method-specific acceptance. Section 9.7 is the authoritative user-facing explanation: failure to scan a physically meaningful interval is an algorithm/data-range problem, while scanning an interval and rejecting it after Guinier or Porod validation is a correct scientific outcome. The manual explicitly states that missing method values must not be filled by lowering thresholds, copying a prior frame, or fitting an unrelated q region.
+
+Section 8.3.2 retains Ti15 frames 1–10 as the concrete evidence case. It records the read-only data profile, shared peak and power-law ranges, per-frame alpha/R2 bounds, high-q risk, conditional `Ds=6-alpha` interpretation, and the current limitation that pointwise local slope and whole-curve crossover are not yet reliable primary quantities for this dataset. Sections 10 and 17 link back to the authoritative explanations. The manual also states that old result directories do not change after an algorithm update and gives a non-overwriting timestamped rerun command.
+
+The documentation validation also exposed the existing top-level table-of-contents link `#附录` without a matching heading. The manual now has an explicit `## 附录` parent and Appendices A–D are nested below it; their individual anchors remain unchanged.
+
+This documentation task changed no analysis algorithm, schema, cache version, raw data, or existing result package. The previously validated numerical values were reused without recomputation or reinterpretation.

@@ -4630,6 +4630,54 @@ $env:QT_QPA_PLATFORM='offscreen'; $env:MPLBACKEND='Agg'; $env:TEMP="$PWD\.tmp"; 
 - Bootstrap and range sensitivity are optional. A completed summary describes variability under resampling/range perturbation; it does not prove the primary fit is statistically valid or a morphology unique.
 - No `CurveData` arrays or source experimental files were modified. No dependencies were installed and no package, commit, or push was performed.
 
+## 2026-07-12 00:37:14 +08:00 — Repair GitHub Actions Linux test environment
+
+### Task Objective
+
+Diagnose and repair the red GitHub Actions status on commit `b57987d` without changing raw data or overwriting the user's existing uncommitted code changes.
+
+### Files Modified
+
+- `.github/workflows/tests.yml`
+- `CHANGELOG.md`
+
+### Specific Changes
+
+- Upgraded `actions/checkout` from `v4` to `v5` and `actions/setup-python` from `v5` to `v6` to remove the Node.js 20 deprecation warning reported by GitHub Actions.
+- Added an Ubuntu-only system-library installation step for the EGL, OpenGL, XKB, and XCB libraries required when PySide6 tests are collected and run with `QT_QPA_PLATFORM=offscreen`.
+- Preserved the existing Python 3.11 dependency installation and complete `pytest` command.
+
+### Reason
+
+The failing GitHub job completed checkout, Python setup, and Python dependency installation, then exited with code 2 during `pytest`. An isolated export of the exact commit passed all 549 tests on Windows, identifying the remaining difference as the Ubuntu Qt/PySide6 runtime environment rather than a Python test assertion failure.
+
+### How To Run
+
+The workflow runs automatically after this change is committed and pushed to GitHub. Local verification:
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+$env:QT_QPA_PLATFORM='offscreen'
+python -m pytest -q
+```
+
+### Generated Output Files
+
+- No experimental-data, processed-data, figure, analysis-result, or package files were generated.
+- A temporary commit export was created under `.tmp/sas_b57987d_repro` only for isolated reproduction and is ignored by Git.
+
+### How To Check Success
+
+- The isolated `b57987d` export ends with `549 passed`; the current working tree ends with `550 passed` because it also contains unrelated uncommitted test changes.
+- After commit and push, the repository's `Tests / pytest (3.11)` check should become green.
+- The `Install Linux GUI libraries` and `Run tests` workflow steps should both complete successfully.
+
+### Notes And Risks
+
+- The GitHub-hosted Ubuntu runner must have access to the standard Ubuntu package repositories.
+- The unrelated uncommitted files `app/core/auto_regions.py`, `app/core/batch_cache.py`, `app/core/region_scanners.py`, and `tests/test_auto_regions.py` were not modified by this task.
+- No raw data was changed, and no package, commit, or push was performed.
+
 ## 2026-07-11 21:35 +08:00 — Stage 4 结果包与全自动 GUI
 
 ### 任务目标与文件
@@ -4922,3 +4970,140 @@ $env:QT_QPA_PLATFORM='offscreen'; $env:MPLBACKEND='Agg'; $env:TEMP="$PWD\.tmp"; 
 - Complete shape-model comparison may be computationally expensive on long curves because the existing all-candidate fitting contract is intentionally preserved; no hidden fast path was added.
 - The main model and transition flags are conditional numerical summaries, not proof of unique morphology or mechanism.
 - No `CurveData` arrays or source experimental files were modified. No dependencies were installed and no package, commit, or push was performed.
+
+## 2026-07-12 00:40:50 +08:00 - Log-q Adaptive Per-frame Auto-region Repair
+
+### Task Objective
+
+Repair incomplete automatic processing of each individual SAXS frame on a wide, linearly sampled q grid, using the Ti15 frames 1–10 under `results\spectra_csv` as read-only validation data.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/region_scanners.py`
+- `app/core/auto_regions.py`
+- `app/core/batch_cache.py`
+- `tests/test_auto_regions.py`
+- `CHANGELOG.md`
+- `docs/developer_notes.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Replaced row-index stepping and three fixed point-count windows with multiscale windows distributed in `log10(q)`. The scanner maps windows back to measured rows without interpolation, smoothing, background subtraction, or mutation.
+- Added logarithmic-span and point-count evidence to Guinier candidates. Automatic Guinier scanning is confined to the low-log-q part of each frame, and `qRg_max > 1.3` cannot be fit-ready.
+- Reworked power-law scoring to use chunked log-linear slope stability rather than point-to-point numerical derivatives. Windows narrower than `0.10` q decades are retained for audit but cannot become automatically fit-ready.
+- Made Porod noise penalties local to candidate windows that overlap the detected high-q risk band. Porod fit readiness now also requires alpha within the configured target tolerance, acceptable q4I plateau variation, and no severe overlapping high-q risk.
+- Changed low-q upturn and high-q noise/background risk bands from row-count fractions to log-q bands with minimum point protection. This prevents a linear q grid from labelling the range through approximately `0.1 A^-1` as one low-q upturn.
+- Bumped `auto_detection_version` from `1.0` to `2.0` and `ANALYSIS_ALGORITHM_VERSION` from `1` to `2` so old cached ranges are not reused after the numerical rule change.
+- Added a regression curve with 5500 linearly spaced q points and a narrow `q^-3.4` segment, proving that the automatic scanner no longer jumps over the physically useful interval or accepts an eight-point high-q fluctuation as its best result.
+
+### Reason
+
+The previous step sizes were proportional to total row count. For the Ti15 files, this meant jumps of roughly 120 points for Guinier and 180 points for power-law/Porod scanning. Because q is approximately linear from `9.35e-5` to `1.03 A^-1`, those jumps skipped the peak-adjacent decay interval near `0.01–0.03 A^-1`; candidate ranking then favored isolated eight-point fluctuations.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python -m py_compile app\core\region_scanners.py app\core\auto_regions.py app\core\batch_cache.py
+$env:QT_QPA_PLATFORM='offscreen'; $env:MPLBACKEND='Agg'; $env:TEMP="$PWD\.tmp"; $env:TMP="$PWD\.tmp"; $env:PYTEST_DEBUG_TEMPROOT="$PWD\.tmp"; python -B -m pytest -q -p no:cacheprovider
+```
+
+To generate a new timestamped Ti15 result set after reviewing this repair:
+
+```powershell
+python scripts\analyze_ti15_first10.py --input-dir C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\results\spectra_csv --results-root C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\results
+```
+
+### Generated Output Files
+
+- No persistent research result, figure, workbook, package, or rewritten source-data file was generated during this repair.
+- Real-data verification was in memory only; `py_compile` may refresh ignored interpreter-cache files.
+
+### How To Check Success
+
+- Focused auto-region/batch regressions pass `103` tests.
+- The complete Qt-offscreen/Agg suite passes `550` tests.
+- Read-only validation on Ti15 frames 1–10 produces a 10/10-frame power-law consensus at `0.013178–0.021963 A^-1` with per-frame alpha values `3.399–3.488`; peak consensus remains available.
+- The same validation does not fabricate Guinier or Porod acceptance when their method-specific criteria are not met.
+
+### Notes And Risks
+
+- A stable alpha around 3.4 is a surface-fractal-like candidate only under the relevant scattering assumptions; it is not proof of morphology or mechanism.
+- This application still does not silently smooth, interpolate, or subtract physical background. If background correction is required, it must remain an explicit derived-data workflow with provenance.
+- Log-q multiscale scanning evaluates more representative windows than the old row-step algorithm and may take somewhat longer on very long curves.
+- Original CSV data and the existing `results\17_Ti15_300_2_iso_first10_20260711_220140` output were read only and not modified. No package, dependency installation, Git commit, or push was performed.
+
+## 2026-07-12 00:56:52 +08:00 - Document Auto-scan Coverage Versus Method Acceptance
+
+### Task Objective
+
+Add the prior explanation of “the interval was scanned, but Guinier/Porod criteria were not met” to the Simplified Chinese software manual, using the Ti15 first-ten-frame data as an auditable example.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `docs/user_manual_zh.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Expanded Section 8.3 with a beginner-oriented explanation of what a log-log plot can and cannot establish, followed by a Ti15 frames 1–10 example covering the peak, shared power-law interval, high-q risk, valid quantitative outputs, conditional surface-fractal interpretation, and current local-slope/crossover limitations.
+- Added Section 9.7 as the primary requested explanation. It separates automatic processing into (1) candidate q-interval coverage and (2) method-specific acceptance, then explains the Guinier and Porod checks and why “every frame contains information” does not imply every method must return a value.
+- Added cross-references and cautions to the power-law, local-slope, and Porod analysis sections.
+- Added FAQ 17.9 so users encountering empty Guinier/Porod results can reach the two-layer explanation directly.
+- Added a reproducible rerun command, input/output description, and success checks for producing a new timestamped Ti15 result directory without overwriting the existing output.
+- Added an explicit `附录` parent heading and nested Appendices A–D beneath it, repairing the pre-existing table-of-contents target `#附录` discovered during Markdown validation.
+
+### Reason
+
+Users need to distinguish an algorithmic coverage failure from a scientifically correct method rejection. Without this distinction, an empty Rg or Porod field may be incorrectly treated as a software bug and “repaired” by lowering thresholds or forcing a fit.
+
+### How To Run
+
+The manual is Markdown and can be opened directly:
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+Get-Content docs\user_manual_zh.md -Encoding utf8
+```
+
+Optional Ti15 rerun described by the manual:
+
+```powershell
+python scripts\analyze_ti15_first10.py --input-dir ..\results\spectra_csv --results-root ..\results
+```
+
+### Generated Output Files
+
+- No analysis result, processed-data file, figure, workbook, package, or rewritten experimental file was generated.
+- Only documentation and project records were updated.
+
+### How To Check Success
+
+- `docs/user_manual_zh.md` contains Sections `8.3.1`, `8.3.2`, `9.7`, and `17.9`.
+- Internal links from Sections 10 and 17 resolve to the Ti15 example and the two-layer automatic-recognition explanation.
+- The manual records the validated Ti15 shared power-law interval `0.013178–0.021963 A^-1`, `alpha=3.399–3.488`, `R²=0.9972–0.9993`, and the explicit reasons Guinier/Porod remain empty.
+- A Markdown structure check reports no duplicate generated heading anchors, broken internal heading targets, conflict markers, or trailing whitespace in the modified documentation.
+
+### Notes And Risks
+
+- The numerical example records existing read-only validation evidence; it does not add a new material-mechanism conclusion.
+- `Ds=6-alpha` remains explicitly conditional on a valid surface-fractal interpretation.
+- Existing result directories are not regenerated or modified by a manual edit.
+- No package, dependency installation, Git commit, or push was performed.

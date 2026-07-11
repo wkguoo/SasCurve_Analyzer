@@ -412,6 +412,10 @@ def detect_auto_regions(
         q_start = float(row["q_min"])
         q_end = float(row["q_max"])
         score = float(row.get("score") or 0.0)
+        alpha_ready = row.get("alpha_within_tolerance") is True
+        plateau_cv = _optional_float(row.get("q4I_plateau_cv"))
+        plateau_ready = plateau_cv is not None and plateau_cv <= opts.porod_plateau_cv_caution
+        noise_ready = float(row.get("high_q_noise_score") or 0.0) < 0.70
         candidates.append(
             _candidate(
                 curve=curve,
@@ -422,7 +426,12 @@ def detect_auto_regions(
                 n_points=int(row.get("fit_points") or 0),
                 detection_method="sliding_window_porod",
                 score=score,
-                fit_ready=bool(score >= opts.caution_confidence_threshold),
+                fit_ready=bool(
+                    score >= opts.caution_confidence_threshold
+                    and alpha_ready
+                    and plateau_ready
+                    and noise_ready
+                ),
                 recommended_analysis="porod_deep_analysis",
                 metrics=row,
                 warnings=list(row.get("warnings") or []),
@@ -561,7 +570,7 @@ def detect_auto_regions(
         label = RELIABILITY_MEDIUM
 
     results = {
-        "auto_detection_version": "1.0",
+        "auto_detection_version": "2.0",
         "candidates": candidate_dicts,
         "candidate_count": len(candidate_dicts),
         "guinier_candidate_count": len([row for row in candidate_dicts if row["region_type"] == "guinier_candidate"]),

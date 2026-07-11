@@ -23,7 +23,7 @@ from app.core.data_model import CurveData
 
 
 CACHE_SCHEMA_VERSION = "2"
-ANALYSIS_ALGORITHM_VERSION = "1"
+ANALYSIS_ALGORITHM_VERSION = "2"
 
 
 def _json_default(value: Any) -> Any:

@@ -75,6 +75,29 @@ def test_detect_auto_regions_finds_power_law_candidate() -> None:
     assert best["metrics"]["alpha"] == pytest.approx(alpha, rel=0.12)
 
 
+def test_power_law_scan_covers_narrow_log_region_on_wide_linear_q_grid() -> None:
+    """A linear q grid must not make the scanner jump over a short SAS tail."""
+
+    q = np.linspace(1.0e-4, 1.0, 5500)
+    intensity = np.full_like(q, 0.008)
+    tail = (q >= 0.0095) & (q <= 0.035)
+    intensity[tail] = 0.6 * (q[tail] / 0.01) ** -3.4
+    curve = CurveData.create(name="wide-linear-q-with-narrow-tail", q=q, intensity=intensity)
+
+    result = detect_auto_regions(curve)
+    candidates = _candidate_by_type(result, "power_law_candidate")
+    ready = [candidate for candidate in candidates if candidate["fit_ready"]]
+
+    assert ready
+    best = ready[0]
+    assert best["q_start"] < 0.02 < best["q_end"]
+    assert best["n_points"] > AutoRegionOptions().min_points_power_law
+    assert best["metrics"]["window_sampling"] == "log_q_multiscale"
+    assert best["metrics"]["log_q_span_decades"] >= 0.10
+    assert best["metrics"]["local_alpha_method"] == "chunked_log_linear"
+    assert best["metrics"]["alpha"] == pytest.approx(3.4, rel=0.03)
+
+
 def test_detect_auto_regions_finds_peak_candidate_with_boundaries() -> None:
     q = np.linspace(0.02, 0.3, 180)
     q_star = 0.12
