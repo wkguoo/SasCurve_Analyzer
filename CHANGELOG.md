@@ -5396,3 +5396,48 @@ GitHub Desktop expanded the Junction and displayed approximately 15,539 external
 ### Notes And Risks
 
 - This change only affects Git ignore behavior; it does not remove dependencies or change analysis results.
+
+## 2026-07-12 13:40:09 +08:00 — Fix NumPy 2.x pytest collection failure
+
+### Task Objective
+
+Resolve the red GitHub Actions check for commit `878e89c`.
+
+### Files Modified
+
+- `app/core/plot_analysis.py`
+- `tests/test_plot_analysis.py`
+- `CHANGELOG.md`
+
+### Specific Changes
+
+- Replaced the eager fallback expression `getattr(np, "trapezoid", np.trapz)` with the NumPy 2.x-supported `np.trapezoid` in production code and its matching test helper.
+- Documented why the fallback expression is unsafe: Python evaluates `np.trapz` before calling `getattr`, while NumPy 2.x no longer exposes that attribute.
+
+### Reason
+
+The GitHub Actions log showed six collection errors with `AttributeError: module 'numpy' has no attribute 'trapz'` at `app/core/plot_analysis.py:46`. The project already requires `numpy>=2.0,<3`, so direct use of `np.trapezoid` matches the declared dependency.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python -m pytest -q
+python -m py_compile app\core\plot_analysis.py tests\test_plot_analysis.py
+```
+
+### Generated Output Files
+
+- No experimental data, processed data, figures, or package files were generated.
+
+### How To Check Success
+
+- Local full suite: `562 passed` in the current working tree.
+- `py_compile` exits with code 0.
+- `git diff --check` passes.
+- After this change is committed and pushed, the GitHub `Tests / pytest (3.11)` run should proceed past test collection.
+
+### Notes And Risks
+
+- The current working tree contains other uncommitted changes from earlier work; they were preserved and not rewritten.
+- No commit or push was performed automatically.

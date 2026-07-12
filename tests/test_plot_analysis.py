@@ -5,7 +5,7 @@ import numpy as np
 from app.core.data_model import CurveData
 from app.core.plot_analysis import PLOT_ANALYSIS_FORMULAS, analyze_curve_plot
 
-_trapezoid = getattr(np, "trapezoid", np.trapz)
+_trapezoid = np.trapezoid
 
 
 def test_loglog_plot_analysis_recovers_power_law_alpha() -> None:

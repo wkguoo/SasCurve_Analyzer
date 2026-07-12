@@ -43,7 +43,10 @@ PRIMARY_METRIC_BY_PLOT = {
     "local_slope": "average_alpha_in_selected_range",
 }
 
-_trapezoid = getattr(np, "trapezoid", np.trapz)
+# NumPy 2.x removed ``np.trapz`` and this project requires NumPy >= 2.0.
+# Use the supported spelling directly; a fallback expression such as
+# ``getattr(np, "trapezoid", np.trapz)`` still evaluates ``np.trapz`` first.
+_trapezoid = np.trapezoid
 
 
 @dataclass(frozen=True)
