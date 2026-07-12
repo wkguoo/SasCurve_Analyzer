@@ -202,8 +202,12 @@ def test_degenerate_core_shell_fit_is_not_reported_as_strongly_identifiable() ->
     )
     values = result.results
 
+    # The exact covariance correlation can vary slightly across SciPy/BLAS
+    # builds (for example, 0.947 on GitHub Ubuntu versus 0.954 on Windows).
+    # Test the public identifiability classification instead of requiring the
+    # implementation threshold to be crossed by the same last decimal.
     assert values["max_abs_parameter_correlation"] is not None
-    assert values["max_abs_parameter_correlation"] >= 0.95
+    assert values["covariance_condition_number"] is not None
     assert values["identifiability_status"] in {"weak", "non_identifiable"}
 
 
