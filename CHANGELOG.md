@@ -5366,3 +5366,33 @@ python scripts\analyze_ti15_first10.py --q-min 0.01 --q-max 0.05
 - Range restriction is selection only. The software does not smooth, shift, truncate, background-correct, or overwrite raw input files.
 - Existing Ti15 result packages were produced before this range-control change and are not silently relabeled; rerun into a new timestamped directory when updated results are needed.
 - No dependency installation, packaging, Git commit, Git push, or raw-data modification was performed.
+
+## 2026-07-12 13:25:00 +08:00 - Ignore External Node Runtime Junction
+
+### Task Objective
+
+Prevent the Git client from displaying the external Codex Node runtime dependencies under `scripts/node_modules/` as thousands of project changes.
+
+### Modified Files
+
+- `.gitignore`
+- `CHANGELOG.md`
+
+### Specific Changes
+
+- Added `scripts/node_modules/` to `.gitignore`.
+- The directory is a Windows Junction pointing to the user-level Codex runtime cache; its files were not deleted, moved, or committed.
+
+### Reason
+
+GitHub Desktop expanded the Junction and displayed approximately 15,539 external dependency files as untracked changes, although they are not project source files.
+
+### How To Check Success
+
+- Run `git status -sb` in the `sas_curve_analyzer` repository.
+- `scripts/node_modules/` should no longer appear as an untracked path.
+- The workbook builder can continue using the existing local Node runtime.
+
+### Notes And Risks
+
+- This change only affects Git ignore behavior; it does not remove dependencies or change analysis results.
