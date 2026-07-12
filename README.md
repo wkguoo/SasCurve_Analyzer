@@ -196,7 +196,7 @@ Fits `ln I(q)` against `q²` in a selected low-q interval and reports Rg, I(0), 
 
 ### Power-Law Slope
 
-Fits `ln I(q)` against `ln q` and reports the exponent `α`. The exponent can suggest Porod-like, fractal-like, or rough-interface behavior, but it is not a unique structural diagnosis.
+Fits `lg I(q)` against `lg q` and reports the exponent `α`. The exponent can suggest Porod-like, fractal-like, or rough-interface behavior, but it is not a unique structural diagnosis.
 
 ### Local Slope
 
@@ -246,7 +246,7 @@ User-facing exports include:
 - Slightly negative calibrated intensities are preserved and can be shown in linear or non-log transformed plots. They are classified separately from significant negative values; non-positive points are still excluded from logarithmic plots and log-based analyses.
 - Slight-negative classification can be configured in Settings with an enable switch, a relative abs-ratio threshold, and a negative-point fraction threshold. Wider thresholds can hide data-quality problems, so they should be reported with the analysis.
 - Plot axis limits are display-only controls and do not change imported curve data.
-- Curve analysis area `q_min/q_max` values are raw physical q ranges. Negative display coordinates such as `ln q < 0` can be converted back to positive raw q before analysis, but negative raw q is not accepted.
+- Curve analysis area `q_min/q_max` values are raw physical q ranges. Negative display coordinates such as `lg q < 0` can be converted back to positive raw q before analysis, but negative raw q is not accepted.
 - Missing error columns are allowed; unweighted fitting is used where relevant.
 - Finite invariant values are measured-range descriptors unless explicit extrapolation and contrast assumptions are supplied externally.
 - Porod metrics are descriptive unless the user supplies the physical assumptions needed for absolute surface calculations.
@@ -333,6 +333,6 @@ The main window now uses four top-level workspaces:
 
 The main plotting combo box is restricted to eight views: `linear`, `semilog`, `loglog`, `guinier`, `kratky`, `porod`, `invariant`, and `local_slope`. The former `invariant_contribution` and `peak_spacing` entries are no longer main plot types; peak q and `d = 2π/q*` remain auxiliary information for linear plots or advanced peak analysis.
 
-All plot analysis outputs use the shared derived-data table. Main logarithmic views use natural logarithms (`ln`). `log10`/`lg` columns are export helpers only. Local slope is reported as `α(q) = -d ln I / d ln q`; the raw derivative column is still exported as `local_slope_dlnI_dlnq`.
+All plot analysis outputs use the shared derived-data table. The main `loglog`/power-law view uses base-10 logarithms (`lg`/`log10`); semi-log and Guinier views retain natural logarithms (`ln`). Local slope is reported as `α(q) = -d ln I / d ln q`; the raw derivative column is still exported as `local_slope_dlnI_dlnq`.
 
 The report export page is now intentionally compact: it keeps current-curve CSV, feature table, Origin long table, Origin matrix table, and current-curve transformed-data CSV. The transformed-data CSV is a first-hand wide table generated from the original q/I rows only; it does not fit parameters, smooth data, add constants, delete rows, or restore removed plot types.

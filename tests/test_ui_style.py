@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QLineEdit, QPushButton, QTableWidget, QTabWidget
@@ -223,6 +225,31 @@ def test_import_tab_q_range_filter_defaults_to_enabled() -> None:
         window.import_tab.limit_q_range.setChecked(False)
         assert not window.import_tab.import_q_min.isEnabled()
         assert not window.import_tab.import_q_max.isEnabled()
+    finally:
+        window.close()
+
+
+def test_analysis_tabs_require_confirmation_of_default_effective_q_range() -> None:
+    _app()
+    window = MainWindow()
+    try:
+        assert window.analysis_tab.q_min.value() == pytest.approx(0.01)
+        assert window.analysis_tab.q_max.value() == pytest.approx(0.05)
+        assert window.deep_analysis_tab.q_min.value() == pytest.approx(0.01)
+        assert window.deep_analysis_tab.q_max.value() == pytest.approx(0.05)
+    finally:
+        window.close()
+
+
+def test_deep_analysis_rejects_reversed_effective_q_range_before_run() -> None:
+    _app()
+    window = MainWindow()
+    try:
+        window.add_curve(CurveData.create(name="q-check", q=[0.01, 0.02], intensity=[2.0, 1.0]))
+        window.deep_analysis_tab.q_min.setValue(0.05)
+        window.deep_analysis_tab.q_max.setValue(0.01)
+        window.deep_analysis_tab.run_deep_analysis()
+        assert "有效 q 范围必须满足" in window.deep_analysis_tab.output.toPlainText()
     finally:
         window.close()
 

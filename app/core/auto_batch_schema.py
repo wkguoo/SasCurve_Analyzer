@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from math import isfinite
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -64,11 +65,16 @@ class ProgressEvent:
     message: str = ""
 
 
+DEFAULT_EFFECTIVE_Q_RANGE: tuple[float, float] = (0.01, 0.05)
+
+
 @dataclass
 class AutoBatchConfig:
     batch_id: str
     sample_type: str = "unknown"
     allowed_models: list[str] = field(default_factory=list)
+    enable_shape_models: bool = True
+    effective_q_range: tuple[float, float] = DEFAULT_EFFECTIVE_Q_RANGE
     q_unit_override: str | None = None
     intensity_unit_override: str | None = None
     consensus_min_coverage: float = 0.70
@@ -99,6 +105,19 @@ class AutoBatchConfig:
     def __post_init__(self) -> None:
         if not self.batch_id.strip():
             raise ValueError("batch_id must not be empty")
+        if not isinstance(self.effective_q_range, (tuple, list)) or len(self.effective_q_range) != 2:
+            raise ValueError("effective_q_range must contain two finite ascending q bounds")
+        q_low, q_high = self.effective_q_range
+        if isinstance(q_low, bool) or isinstance(q_high, bool):
+            raise ValueError("effective_q_range must contain two finite ascending q bounds")
+        try:
+            q_low = float(q_low)
+            q_high = float(q_high)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("effective_q_range must contain two finite ascending q bounds") from exc
+        if not isfinite(q_low) or not isfinite(q_high) or q_low < 0.0 or q_low >= q_high:
+            raise ValueError("effective_q_range must contain two finite ascending q bounds")
+        self.effective_q_range = (q_low, q_high)
         if not 0.0 < self.consensus_min_coverage <= 1.0:
             raise ValueError("consensus_min_coverage must be in (0, 1]")
         if self.bootstrap_samples < 1:

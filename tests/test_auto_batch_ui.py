@@ -15,10 +15,28 @@ def test_main_window_exposes_auto_batch_tab(tmp_path) -> None:
         assert tab.run_button.text() == "开始全自动分析并导出"
         assert tab.cancel_button.text() == "取消"
         assert not tab.cancel_button.isEnabled()
+        assert tab.effective_q_min.value() == 0.01
+        assert tab.effective_q_max.value() == 0.05
         tab.input_dir.setText(str(tmp_path / "missing"))
         tab.start_run()
         assert "有效的数据文件夹" in tab.output.toPlainText()
         assert window.advanced_workspace_tab.tabs.indexOf(tab) >= 0
+    finally:
+        window.close()
+
+
+def test_effective_q_range_is_validated_before_worker_start(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        tab = window.auto_batch_tab
+        tab.input_dir.setText(str(tmp_path))
+        tab.effective_q_min.setValue(0.05)
+        tab.effective_q_max.setValue(0.01)
+        tab.start_run()
+
+        assert tab.worker is None
+        assert "有效 q 范围必须满足" in tab.output.toPlainText()
     finally:
         window.close()
 

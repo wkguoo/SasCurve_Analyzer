@@ -33,6 +33,17 @@ def test_sequence_analysis_orders_frames_and_preserves_inputs() -> None:
         assert curve.metadata == expected[2]
 
 
+def test_sequence_reference_comparison_uses_effective_q_range() -> None:
+    curves = [_curve(0), _curve(1, 1.1)]
+    config = AutoBatchConfig(batch_id="b", effective_q_range=(0.02, 0.03))
+
+    result = analyze_sequence(curves, [], config)
+
+    assert result["effective_q_range"] == [0.02, 0.03]
+    assert result["reference_comparisons"][0]["overlap_q_start"] == pytest.approx(0.02)
+    assert result["reference_comparisons"][0]["overlap_q_end"] == pytest.approx(0.03)
+
+
 def test_sequence_analysis_flags_robust_parameter_jump() -> None:
     curves = [_curve(i) for i in range(6)]
     values = [1.0, 1.1, 1.2, 8.0, 8.1, 8.2]

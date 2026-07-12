@@ -15,7 +15,7 @@ Q_AXIS_PLOT_TYPES = {"linear", "semilog", "kratky", "porod", "invariant", "local
 PLOT_DERIVED_MAPPING = {
     "linear": {"x": "q", "y": "I"},
     "semilog": {"x": "q", "y": "ln_I"},
-    "loglog": {"x": "ln_q", "y": "ln_I"},
+    "loglog": {"x": "log10_q", "y": "log10_I"},
     "guinier": {"x": "q2", "y": "ln_I"},
     "kratky": {"x": "q", "y": "q2I"},
     "invariant": {"x": "q", "y": "q2I"},
@@ -41,7 +41,7 @@ def transform_x_for_plot(q, plot_type: str):
     if plot_type in Q_AXIS_PLOT_TYPES:
         return q_array
     if plot_type == "loglog":
-        return np.log(q_array)
+        return np.log10(q_array)
     if plot_type == "guinier":
         return q_array**2
     raise ValueError(f"Unsupported plot_type: {plot_type}")
@@ -56,7 +56,7 @@ def display_x_range_to_q_range(x_min: float, x_max: float, plot_type: str) -> tu
     if plot_type in Q_AXIS_PLOT_TYPES:
         q_values = [x0, x1]
     elif plot_type == "loglog":
-        q_values = [float(np.exp(x0)), float(np.exp(x1))]
+        q_values = [float(np.power(10.0, x0)), float(np.power(10.0, x1))]
     elif plot_type == "guinier":
         if x0 < 0 or x1 < 0:
             raise ValueError("Guinier display x is q², so it cannot be negative.")
@@ -116,7 +116,7 @@ def format_plot_cursor_coordinates(x: float | None, y: float | None, plot_type: 
     if x is None or y is None or not np.isfinite(x) or not np.isfinite(y):
         return "Coordinates: -"
     if plot_type == "loglog":
-        return f"Coordinates: ln q = {x:.5g}, ln I = {y:.5g}; q \u2248 {np.exp(x):.5g}, I \u2248 {np.exp(y):.5g}"
+        return f"Coordinates: lg q = {x:.5g}, lg I = {y:.5g}; q \u2248 {np.power(10.0, x):.5g}, I \u2248 {np.power(10.0, y):.5g}"
     if plot_type == "guinier":
         q = np.sqrt(x) if x >= 0 else float("nan")
         return f"Coordinates: q\u00b2 = {x:.5g}, ln I = {y:.5g}; q \u2248 {q:.5g}, I \u2248 {np.exp(y):.5g}"
@@ -181,9 +181,12 @@ def create_curve_figure(
             error_values = table.loc[mask, "error"].to_numpy(dtype=float)
             if np.any(~np.isfinite(error_values)) or np.any(error_values < 0):
                 warnings.append(f"{curve.name}: error bars were hidden because error contains invalid values.")
-            elif plot_type in {"semilog", "loglog", "guinier"}:
+            elif plot_type in {"semilog", "guinier"}:
                 intensity_values = table.loc[mask, "I"].to_numpy(dtype=float)
                 yerr = error_values / intensity_values
+            elif plot_type == "loglog":
+                intensity_values = table.loc[mask, "I"].to_numpy(dtype=float)
+                yerr = error_values / (intensity_values * np.log(10.0))
             elif plot_type in {"kratky", "invariant"}:
                 q_values = table.loc[mask, "q"].to_numpy(dtype=float)
                 yerr = (q_values**2) * error_values
@@ -200,8 +203,8 @@ def create_curve_figure(
             x_label = f"q ({q_unit})"
             y_label = f"ln I(q) ({intensity_unit})"
         elif plot_type == "loglog":
-            x_label = f"ln q ({q_unit})"
-            y_label = f"ln I(q) ({intensity_unit})"
+            x_label = f"lg q ({q_unit})"
+            y_label = f"lg I(q) ({intensity_unit})"
         elif plot_type == "guinier":
             x_label = f"q\u00b2 ({q_unit})\u00b2"
             y_label = f"ln I(q) ({intensity_unit})"

@@ -74,27 +74,27 @@ Reference ratio/difference columns do not interpolate. If q grids differ, the re
 
 ## Plotting
 
-Supported plot types include linear `I(q) vs q`, semi-log `ln I(q) vs q`, log-log/power-law `ln I(q) vs ln q`, Guinier `ln I(q) vs q²`, Kratky `q²I(q) vs q`, Porod `q⁴I(q) vs q`, invariant-integrand `q²I(q) vs q`, log-q contribution `q³I(q) vs ln q`, local slope `α(q) vs q`, and peak/d-spacing `I(q) vs q` with `d = 2π/q*` annotation.
+Supported plot types include linear `I(q) vs q`, semi-log `ln I(q) vs q`, log-log/power-law `lg I(q) vs lg q`, Guinier `ln I(q) vs q²`, Kratky `q²I(q) vs q`, Porod `q⁴I(q) vs q`, invariant-integrand `q²I(q) vs q`, log-q contribution `q³I(q) vs ln q`, local slope `α(q) vs q`, and peak/d-spacing `I(q) vs q` with `d = 2π/q*` annotation.
 
 Semilog, loglog, and Guinier plots filter `I(q) <= 0` before applying logarithms. Loglog, Guinier, and q³I invariant-contribution plots filter `q <= 0` where the transform requires positive q. Filtering returns warnings rather than raising numerical runtime warnings.
 
-When error bars are shown on log-intensity plots, the propagated error is `sigma_lnI = sigma_I / I`. Invalid propagated errors are hidden and reported as warnings.
+When error bars are shown on log-intensity plots, the propagated error is `sigma_lnI = sigma_I / I` for natural-log views and `sigma_lgI = sigma_I / (I ln(10))` for the log-log view. Invalid propagated errors are hidden and reported as warnings.
 
-Manual X/Y axis limits and quick full/low/mid/high q buttons only change the displayed axes. They do not modify `CurveData`, saved data, or analysis ranges. For transformed views, the X range is in display coordinates: q² for Guinier and ln q for log-log or log-q contribution plots. Cursor readout reports display coordinates and, where useful, approximate back-transformed q/I values.
+Manual X/Y axis limits and quick full/low/mid/high q buttons only change the displayed axes. They do not modify `CurveData`, saved data, or analysis ranges. For transformed views, the X range is in display coordinates: q² for Guinier, lg q for log-log, and ln q for log-q contribution plots. Cursor readout reports display coordinates and, where useful, approximate back-transformed q/I values.
 
 The plotting tab and model-free analysis tab are linked through a shared plot/analysis mapping. The link is user-triggered: selecting a plot type does not automatically change tabs, but the user can send supported plot views to the matching analysis or show the matching plot for a selected analysis.
 
-Plotting data for transformed views comes from the same derived-table formulas used by export. For example, Guinier uses `q2` and `ln_I`, log-log uses `ln_q` and `ln_I`, Kratky/invariant use `q2I`, Porod uses `q4I`, and local slope uses `local_slope_dlnI_dlnq`.
+Plotting data for transformed views comes from the same derived-table formulas used by export. For example, Guinier uses `q2` and `ln_I`, log-log uses `log10_q` and `log10_I`, Kratky/invariant use `q2I`, Porod uses `q4I`, and local slope uses `local_slope_dlnI_dlnq`.
 
 Analysis `q_min/q_max` values remain raw physical q ranges. Physical q must be positive for analysis-range conversion. Display coordinates can be negative when they are transformed values, for example `ln q < 0` when `0 < q < 1`. The GUI can read the current plot x-limits and convert them back to raw q before analysis:
 
 - raw-q plots: `q = x`;
-- log-log and log-q contribution plots: `q = exp(x)`;
+- log-log plots: `q = 10^x`; log-q contribution plots: `q = exp(x)`;
 - Guinier plots: `q = sqrt(x)` because the display x-axis is q².
 
 If a transformed range cannot be converted to a positive increasing raw q range, the analysis tab reports the conversion error and does not change the raw q fields.
 
-When the source range comes from Matplotlib axis limits, the GUI first intersects the requested display x range with the current curve's valid display x range. This prevents automatic plot padding, such as a slightly negative raw-q or Guinier q² left edge, from invalidating an otherwise valid analysis interval. Negative `ln q` remains valid display x and is converted with `q = exp(x)`.
+When the source range comes from Matplotlib axis limits, the GUI first intersects the requested display x range with the current curve's valid display x range. This prevents automatic plot padding, such as a slightly negative raw-q or Guinier q² left edge, from invalidating an otherwise valid analysis interval. Negative `lg q` remains valid display x and is converted with `q = 10^x`.
 
 The optional top axis `d = 2π/q` is available only when the plot X-axis is raw q. This d value is an approximate characteristic scale or correlation distance, not a particle diameter.
 
@@ -132,7 +132,7 @@ Important limits:
 Power-law analysis fits:
 
 ```text
-ln I(q) = ln prefactor - alpha ln q
+lg I(q) = lg prefactor - alpha lg q
 ```
 
 The output exponent `alpha` is descriptive. It can suggest Porod-like, mass-fractal-like, or surface-fractal-like behavior, but it does not uniquely determine structure without material context and q-range justification.
@@ -245,7 +245,7 @@ Main plotting is restricted to eight analysis-linked views. All formulas use the
 | --- | --- | --- |
 | `linear` | `I(q)` vs `q` | finite/negative/zero/non-finite counts and intensity range |
 | `semilog` | `ln I(q)` vs `q` | valid `ln_I` count and filtered non-positive intensity count |
-| `loglog` | `ln I(q)` vs `ln q` | `fit_slope_m`, `α = -m`, `A = exp(b)`, `R2`, residuals |
+| `loglog` | `lg I(q)` vs `lg q` | `fit_slope_m`, `α = -m`, `A = 10^b`, `R2`, residuals |
 | `guinier` | `ln I(q)` vs `q²` | `Rg`, `I0`, slope/intercept, qRg range, `R2`, residuals |
 | `kratky` | `q²I(q)` vs `q` | peak position/intensity, FWHM, selected-range area, trend slope |
 | `porod` | `q⁴I(q)` vs `q` | loglog slope/α, q⁴I mean/std/CV, stability score, relative Porod constant |

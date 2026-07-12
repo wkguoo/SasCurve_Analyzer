@@ -126,7 +126,9 @@ def _reference_rows(curves: Sequence[CurveData], axes: Sequence[float], config: 
             continue
         q, intensity = q[valid_curve], intensity[valid_curve]
         rq, ri = rq[valid_reference], ri[valid_reference]
-        low, high = max(float(np.nanmin(q)), float(np.nanmin(rq))), min(float(np.nanmax(q)), float(np.nanmax(rq)))
+        effective_low, effective_high = config.effective_q_range
+        low = max(effective_low, float(np.nanmin(q)), float(np.nanmin(rq)))
+        high = min(effective_high, float(np.nanmax(q)), float(np.nanmax(rq)))
         mask = np.isfinite(q) & np.isfinite(intensity) & (q >= low) & (q <= high)
         if np.count_nonzero(mask) < 2 or not low < high:
             continue
@@ -180,11 +182,18 @@ def _linear_trends(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
 def _exploratory_statistics(curves: Sequence[CurveData], axes: Sequence[float], config: AutoBatchConfig) -> dict[str, Any]:
     if len(curves) < 2:
         return {"status": "not_applicable", "reason": "at_least_two_curves_required"}
+    effective_low, effective_high = config.effective_q_range
     prepared: list[tuple[np.ndarray, np.ndarray]] = []
     for curve in curves:
         q = np.asarray(curve.q, dtype=float)
         intensity = np.asarray(curve.intensity, dtype=float)
-        valid = np.isfinite(q) & np.isfinite(intensity) & (intensity > 0)
+        valid = (
+            np.isfinite(q)
+            & np.isfinite(intensity)
+            & (intensity > 0)
+            & (q >= effective_low)
+            & (q <= effective_high)
+        )
         if np.count_nonzero(valid) < 2:
             return {
                 "status": "not_applicable",
@@ -236,6 +245,7 @@ def analyze_sequence(curves: Sequence[CurveData], analyses: Sequence[AnalysisEnv
     result: dict[str, Any] = {
         "status": "success" if ordered else "not_applicable",
         "sequence_axis": axis_name,
+        "effective_q_range": list(config.effective_q_range),
         "frame_table": [{"frame": i, "axis_value": axes[i], "curve_id": curve.curve_id, "curve_name": curve.name} for i, curve in enumerate(ordered)],
         "parameter_trajectories": rows,
         "reference_comparisons": references,

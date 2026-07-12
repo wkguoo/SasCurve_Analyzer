@@ -28,3 +28,10 @@ def test_default_config_is_strict_batch_consensus():
     config = AutoBatchConfig(batch_id="series")
     assert config.consensus_min_coverage == 0.70
     assert config.allow_per_frame_range_fallback is False
+    assert config.effective_q_range == (0.01, 0.05)
+
+
+@pytest.mark.parametrize("q_range", [(0.05, 0.01), (-0.01, 0.05), (0.01, float("inf"))])
+def test_effective_q_range_must_be_finite_nonnegative_and_ascending(q_range):
+    with pytest.raises(ValueError, match="effective_q_range"):
+        AutoBatchConfig(batch_id="series", effective_q_range=q_range)

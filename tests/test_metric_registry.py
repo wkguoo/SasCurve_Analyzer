@@ -257,7 +257,7 @@ EXPECTED_REGISTRY = {
             "rank",
         ),
         (),
-        None,
+        "enable_shape_models",
     ),
 }
 
@@ -550,6 +550,12 @@ def test_applicable_method_ids_follow_the_complete_profile_truth_matrix(
     expected_method_ids: list[str],
 ):
     assert applicable_method_ids(config) == expected_method_ids
+
+
+def test_shape_models_can_be_disabled_for_model_free_batch():
+    config = AutoBatchConfig(batch_id="model-free", enable_shape_models=False)
+
+    assert "shape_models" not in applicable_method_ids(config)
 
 
 def test_metric_and_method_specs_are_frozen_with_tuple_metrics():

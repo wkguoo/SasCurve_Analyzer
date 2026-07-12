@@ -230,13 +230,13 @@ Combo boxes that drive core logic should show researcher-facing labels and store
 
 User-visible math labels should use standard symbols such as `q²`, `q³`, `q⁴`, `α(q)`, and `2π/q`. Internal plot keys, transform keys, JSON fields, and CSV column names should remain stable ASCII identifiers.
 
-`PlottingTab` supports display-only X/Y axis limits, quick q-range buttons, d-axis display for raw-q plots, peak/d-spacing annotations, and cursor coordinate readout. Range controls must not mutate `CurveData`; transformed views use transformed display coordinates such as q² or ln q. Cursor formatting lives in `app/core/plotting.py` so it can be tested without a full interactive mouse event.
+`PlottingTab` supports display-only X/Y axis limits, quick q-range buttons, d-axis display for raw-q plots, peak/d-spacing annotations, and cursor coordinate readout. Range controls must not mutate `CurveData`; transformed views use transformed display coordinates such as q², lg q, or ln q depending on the plot. Cursor formatting lives in `app/core/plotting.py` so it can be tested without a full interactive mouse event.
 
 The plot coordinate readout should stay in its own row, separate from axis range controls, so long transformed-coordinate messages do not compress X/Y inputs or q-range shortcut buttons.
 
 Plotting/analysis navigation is centralized in `app/core/method_mapping.py`. Update `PLOT_TO_ANALYSIS`, `ANALYSIS_TO_PLOT`, UI combo-box items, the model catalog, and tests together when adding or renaming a plot type or model-free analysis type. The UI should call `MainWindow.set_plot_type()`, `MainWindow.set_analysis_type()`, `show_plotting_tab()`, and `show_analysis_tab()` rather than duplicating tab indices.
 
-Display x-range to raw q-range conversion lives in `app/core/plotting.py::display_x_range_to_q_range()`. Use `display_x_limits_to_q_range_for_curve()` when converting Matplotlib axis limits, because automatic axis padding can extend raw-q or Guinier q² views outside the valid data range. Keep raw analysis q ranges positive; negative values are valid only for transformed display axes such as `ln q`.
+Display x-range to raw q-range conversion lives in `app/core/plotting.py::display_x_range_to_q_range()`. Use `display_x_limits_to_q_range_for_curve()` when converting Matplotlib axis limits, because automatic axis padding can extend raw-q or Guinier q² views outside the valid data range. Keep raw analysis q ranges positive; negative values are valid only for transformed display axes such as `lg q` or `ln q`.
 
 Top-level tabs should prioritize the main workflow. Lower-frequency project output pages are grouped under `MainWindow.output_tabs` inside the `项目与输出` top-level tab while preserving `self.records_tab`, `self.export_tab`, and `self.templates_tab` attributes for existing callers.
 
@@ -1127,3 +1127,16 @@ Section 8.3.2 retains Ti15 frames 1–10 as the concrete evidence case. It recor
 The documentation validation also exposed the existing top-level table-of-contents link `#附录` without a matching heading. The manual now has an explicit `## 附录` parent and Appendices A–D are nested below it; their individual anchors remain unchanged.
 
 This documentation task changed no analysis algorithm, schema, cache version, raw data, or existing result package. The previously validated numerical values were reused without recomputation or reinterpretation.
+
+## 2026-07-12 - Require Effective q-Range Confirmation Before Analysis
+
+The analysis workflow now exposes and records a user-confirmed effective q interval. The default is `0.01–0.05 Å^-1`; it is an initial assumption, not a universal instrument limit.
+
+- `app/core/auto_batch_schema.py` adds `DEFAULT_EFFECTIVE_Q_RANGE` and validates `AutoBatchConfig.effective_q_range` as finite, nonnegative, and strictly ascending.
+- `app/core/auto_batch.py` applies the configured interval to full finite q ranges, clips consensus ranges to it, and records the applied interval in run warnings/configuration without modifying curve arrays.
+- `app/core/batch_consensus.py` passes the interval into automatic region detection. `app/core/sequence_analysis.py` applies it to reference comparisons and optional exploratory statistics.
+- `app/ui/analysis_tab.py`, `app/ui/deep_analysis_tab.py`, and `app/ui/auto_batch_tab.py` present the interval before analysis; the first two analysis pages and the batch page default to `0.01–0.05 Å^-1`.
+- `scripts/analyze_ti15_first10.py` accepts `--q-min` and `--q-max`, writes the selected range to the report/config/quality outputs, and plots only positive points inside that range. The raw input remains unchanged.
+- `app/core/batch_cache.py` increments `ANALYSIS_ALGORITHM_VERSION` to `3` so cache entries created under the previous unrestricted range behavior are not reused.
+
+Focused regression tests cover schema validation, batch range enforcement, consensus dispatch, sequence clipping, the three GUI entry points, and the Ti15 script configuration seam. Existing result directories are intentionally not regenerated by this code change.

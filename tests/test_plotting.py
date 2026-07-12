@@ -76,11 +76,11 @@ def test_transform_x_for_plot_matches_display_axis() -> None:
     q = np.array([1.0, 2.0, 4.0])
     assert np.allclose(transform_x_for_plot(q, "linear"), q)
     assert np.allclose(transform_x_for_plot(q, "guinier"), q**2)
-    assert np.allclose(transform_x_for_plot(q, "loglog"), np.log(q))
+    assert np.allclose(transform_x_for_plot(q, "loglog"), np.log10(q))
 
 
 def test_display_x_range_to_q_range_inverts_display_axis() -> None:
-    assert np.allclose(display_x_range_to_q_range(np.log(0.01), np.log(0.1), "loglog"), (0.01, 0.1))
+    assert np.allclose(display_x_range_to_q_range(np.log10(0.01), np.log10(0.1), "loglog"), (0.01, 0.1))
     assert np.allclose(display_x_range_to_q_range(0.01, 0.04, "guinier"), (0.1, 0.2))
     assert np.allclose(display_x_range_to_q_range(0.1, 0.2, "linear"), (0.1, 0.2))
 
@@ -119,10 +119,10 @@ def test_display_x_limits_to_q_range_clips_guinier_negative_autopad() -> None:
     assert warnings
 
 
-def test_display_x_limits_to_q_range_loglog_negative_ln_is_valid() -> None:
+def test_display_x_limits_to_q_range_loglog_negative_lg_is_valid() -> None:
     curve = CurveData.create(name="test", q=[0.1, 0.2, 0.3], intensity=[10, 8, 6])
 
-    q_range, warnings = display_x_limits_to_q_range_for_curve(curve, np.log(0.12), np.log(0.28), "loglog")
+    q_range, warnings = display_x_limits_to_q_range_for_curve(curve, np.log10(0.12), np.log10(0.28), "loglog")
 
     assert np.allclose(q_range, (0.12, 0.28))
     assert warnings == []
@@ -140,7 +140,7 @@ def test_display_x_limits_to_q_range_errors_when_no_overlap() -> None:
 
 
 def test_cursor_coordinate_format_includes_back_transforms() -> None:
-    loglog_text = format_plot_cursor_coordinates(np.log(2.0), np.log(10.0), "loglog")
+    loglog_text = format_plot_cursor_coordinates(np.log10(2.0), np.log10(10.0), "loglog")
     guinier_text = format_plot_cursor_coordinates(4.0, np.log(10.0), "guinier")
     slope_text = format_plot_cursor_coordinates(0.2, 3.0, "local_slope")
 
@@ -187,7 +187,7 @@ def test_plotting_uses_same_columns_as_derived_table_for_transformed_views() -> 
     derived = build_curve_derived_table(curve, preserve_input_order=False).table
     cases = {
         "guinier": ("q2", "ln_I"),
-        "loglog": ("ln_q", "ln_I"),
+        "loglog": ("log10_q", "log10_I"),
         "kratky": ("q", "q2I"),
         "porod": ("q", "q4I"),
         "local_slope": ("q", "alpha_local"),

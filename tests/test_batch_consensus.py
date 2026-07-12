@@ -257,7 +257,7 @@ def test_resolve_consensus_regions_maps_real_auto_region_types_without_mutating_
         for curve in curves
     }
 
-    def fake_detect_auto_regions(curve: CurveData) -> SimpleNamespace:
+    def fake_detect_auto_regions(curve: CurveData, q_range=None) -> SimpleNamespace:
         return SimpleNamespace(results={"candidates": candidates_by_id[curve.curve_id]})
 
     monkeypatch.setattr(batch_consensus, "detect_auto_regions", fake_detect_auto_regions)
@@ -297,7 +297,7 @@ def test_resolve_consensus_regions_ignores_foreign_and_none_candidate_ids(monkey
         ],
     }
 
-    def fake_detect_auto_regions(curve: CurveData) -> SimpleNamespace:
+    def fake_detect_auto_regions(curve: CurveData, q_range=None) -> SimpleNamespace:
         return SimpleNamespace(results={"candidates": candidates_by_id[curve.curve_id]})
 
     monkeypatch.setattr(batch_consensus, "detect_auto_regions", fake_detect_auto_regions)
@@ -322,7 +322,7 @@ def test_resolve_consensus_regions_bounds_coverage_and_deduplicates_support_for_
     ]
     curves[1].curve_id = curves[0].curve_id
 
-    def fake_detect_auto_regions(curve: CurveData) -> SimpleNamespace:
+    def fake_detect_auto_regions(curve: CurveData, q_range=None) -> SimpleNamespace:
         return SimpleNamespace(
             results={
                 "candidates": [

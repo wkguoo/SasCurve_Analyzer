@@ -24,10 +24,10 @@ PLOT_ANALYSIS_TYPES = [
 PLOT_ANALYSIS_FORMULAS = {
     "linear": "I(q) vs q",
     "semilog": "ln I(q) vs q",
-    "loglog": "ln I(q) = m ln q + b; α = -m; A = exp(b)",
+    "loglog": "lg I(q) = m lg q + b; α = -m; A = 10^b",
     "guinier": "ln I(q) = ln I(0) - Rg²q² / 3",
     "kratky": "q²I(q) vs q; area = ∫ q²I(q) dq",
-    "porod": "q⁴I(q) vs q plus ln I vs ln q over the same q range",
+    "porod": "q⁴I(q) vs q plus lg I vs lg q over the same q range",
     "invariant": "Q_measured = ∫ q²I(q) dq over the measured finite q range",
     "local_slope": "α(q) = -d ln I(q) / d ln q",
 }
@@ -203,14 +203,14 @@ def _semilog_diagnostics(curve: CurveData, q_range: tuple[float, float]) -> Anal
 
 def _loglog_fit(curve: CurveData, q_range: tuple[float, float]) -> AnalysisResult:
     _table, selected, warnings = _selected_table(curve, q_range, "loglog")
-    valid = _valid_xy(selected, "ln_q", "ln_I")
+    valid = _valid_xy(selected, "log10_q", "log10_I")
     if len(valid) < 2:
         warnings.append("Loglog fit needs at least two rows with q > 0 and I > 0.")
         fit = None
     else:
-        fit = _linear_fit(valid["ln_q"].to_numpy(dtype=float), valid["ln_I"].to_numpy(dtype=float))
+        fit = _linear_fit(valid["log10_q"].to_numpy(dtype=float), valid["log10_I"].to_numpy(dtype=float))
     if _filtered_count(selected, valid):
-        warnings.append(f"Filtered {_filtered_count(selected, valid)} rows outside ln-domain; no constant was added.")
+        warnings.append(f"Filtered {_filtered_count(selected, valid)} rows outside lg-domain; no constant was added.")
     alpha_values = valid["alpha_local"].to_numpy(dtype=float) if "alpha_local" in valid else np.array([])
     alpha_values = alpha_values[np.isfinite(alpha_values)]
     results: dict[str, Any] = {
@@ -230,9 +230,9 @@ def _loglog_fit(curve: CurveData, q_range: tuple[float, float]) -> AnalysisResul
                 "fit_slope_m": fit.slope,
                 "alpha": -fit.slope,
                 "intercept_b": fit.intercept,
-                "A": float(np.exp(fit.intercept)),
+                "A": float(np.power(10.0, fit.intercept)),
                 "R2": fit.r2,
-                "export_tables": {"residuals": _fit_export_rows(valid, x_column="ln_q", y_column="ln_I", fit=fit)},
+                "export_tables": {"residuals": _fit_export_rows(valid, x_column="log10_q", y_column="log10_I", fit=fit)},
             }
         )
     return AnalysisResult.create(curve=curve, analysis_type="plot_analysis:loglog", q_range=q_range, results=results, warnings=warnings)
@@ -338,13 +338,13 @@ def _kratky_metrics(curve: CurveData, q_range: tuple[float, float]) -> AnalysisR
 def _porod_metrics(curve: CurveData, q_range: tuple[float, float]) -> AnalysisResult:
     _table, selected, warnings = _selected_table(curve, q_range, "porod")
     plateau = _valid_xy(selected, "q", "q4I")
-    log_valid = _valid_xy(selected, "ln_q", "ln_I")
+    log_valid = _valid_xy(selected, "log10_q", "log10_I")
     values = plateau["q4I"].to_numpy(dtype=float)
     mean = float(np.mean(values)) if values.size else None
     std = float(np.std(values, ddof=1)) if values.size > 1 else 0.0 if values.size == 1 else None
     cv = float(std / abs(mean)) if mean not in (None, 0.0) and std is not None else None
     stability = float(1.0 / (1.0 + cv)) if cv is not None and np.isfinite(cv) else None
-    fit = _linear_fit(log_valid["ln_q"].to_numpy(dtype=float), log_valid["ln_I"].to_numpy(dtype=float)) if len(log_valid) >= 2 else None
+    fit = _linear_fit(log_valid["log10_q"].to_numpy(dtype=float), log_valid["log10_I"].to_numpy(dtype=float)) if len(log_valid) >= 2 else None
     results: dict[str, Any] = {
         "plot_type": "porod",
         "analysis_kind": "porod_metrics",
@@ -366,7 +366,7 @@ def _porod_metrics(curve: CurveData, q_range: tuple[float, float]) -> AnalysisRe
                 "Porod_slope_on_loglog": fit.slope,
                 "Porod_alpha_from_loglog": -fit.slope,
                 "R2": fit.r2,
-                "export_tables": {"residuals": _fit_export_rows(log_valid, x_column="ln_q", y_column="ln_I", fit=fit)},
+                "export_tables": {"residuals": _fit_export_rows(log_valid, x_column="log10_q", y_column="log10_I", fit=fit)},
             }
         )
     return AnalysisResult.create(curve=curve, analysis_type="plot_analysis:porod", q_range=q_range, results=results, warnings=warnings)

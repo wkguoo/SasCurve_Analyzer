@@ -28,7 +28,7 @@ PLOT_TYPE_KEYS = [
 PLOT_TYPE_ITEMS = [
     ("Linear: I(q) vs q", "linear"),
     ("Semi-log: ln I(q) vs q", "semilog"),
-    ("Log-log / power-law: ln I(q) vs ln q", "loglog"),
+    ("Log-log / power-law: lg I(q) vs lg q", "loglog"),
     ("Guinier: ln I(q) vs q\u00b2", "guinier"),
     ("Kratky: q\u00b2I(q) vs q", "kratky"),
     ("Porod: q\u2074I(q) vs q", "porod"),

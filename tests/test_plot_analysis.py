@@ -156,4 +156,4 @@ def test_porod_plot_analysis_excludes_inf_from_plateau_statistics() -> None:
     np.testing.assert_allclose(result.results["q4I_plateau_mean"], 2.0)
     assert result.results["fit_point_count"] == 2
     residuals = result.results["export_tables"]["residuals"]
-    assert all(np.isfinite(row["ln_q"]) and np.isfinite(row["ln_I"]) for row in residuals)
+    assert all(np.isfinite(row["log10_q"]) and np.isfinite(row["log10_I"]) for row in residuals)

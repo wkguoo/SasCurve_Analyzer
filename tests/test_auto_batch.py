@@ -550,6 +550,33 @@ def test_full_range_uses_only_finite_q_and_empty_q_is_passed_as_none(
     assert any("Curve 'empty' has no safe finite full q range" in warning for warning in run.warnings)
 
 
+def test_effective_q_range_limits_full_method_ranges_without_changing_curve_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    curve = CurveData.create(
+        name="limited",
+        q=[0.001, 0.01, 0.02, 0.05, 0.08],
+        intensity=[5.0, 4.0, 3.0, 2.0, 1.0],
+    )
+    collection = BatchInputCollection(curves=[curve], manifest=[])
+    monkeypatch.setattr(auto_batch, "collect_batch_inputs", lambda input_dir, config: collection)
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    q_ranges: dict[str, tuple[float, float] | None] = {}
+
+    def runner(curve, method_id, q_range, config):
+        q_ranges[method_id] = q_range
+        return [_success_envelope(curve, method_id, q_range)]
+
+    config = AutoBatchConfig(batch_id="limited", effective_q_range=(0.01, 0.05))
+    run = run_auto_batch("unused", config, analysis_runner=runner)
+
+    assert run.config_snapshot["effective_q_range"] == (0.01, 0.05)
+    assert q_ranges["data_quality"] == (0.01, 0.05)
+    assert q_ranges["integrals"] == (0.01, 0.05)
+    assert curve.q.tolist() == [0.001, 0.01, 0.02, 0.05, 0.08]
+    assert any("Effective q range applied" in warning for warning in run.warnings)
+
+
 def test_failed_input_rows_make_an_otherwise_successful_run_partial(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

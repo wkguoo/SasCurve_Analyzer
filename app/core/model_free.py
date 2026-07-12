@@ -86,6 +86,16 @@ def _safe_exp(value) -> float | None:
         return None
 
 
+def _safe_pow10(value) -> float | None:
+    number = _native_float(value)
+    if number is None:
+        return None
+    try:
+        return _native_float(math.pow(10.0, number))
+    except OverflowError:
+        return None
+
+
 def _finite_porod_statistics(values: np.ndarray) -> dict:
     """Return finite q⁴I statistics, withholding unsafe floating-point reductions."""
 
@@ -227,6 +237,7 @@ def _prepare_log_fit_selection(
     *,
     require_q_positive: bool = True,
     use_error_for_weighting: bool = True,
+    log_base: float = math.e,
 ) -> tuple[dict, list[str]]:
     """Select a log-domain fit interval without silently dropping raw rows.
 
@@ -318,12 +329,18 @@ def _prepare_log_fit_selection(
     errors = None if error_values is None else np.asarray(selected_error, dtype=float)
     transformed_sigma = None
     weighted_fit = False
+    log_base = float(log_base)
+    sigma_definition = (
+        "sigma_lgI = error / (I * ln(10))"
+        if math.isclose(log_base, 10.0)
+        else "sigma_lnI = error / I"
+    )
     error_audit = {
         "error_column_provided": curve.error is not None,
         "error_column_status": error_issue or "available",
         "error_column_length_matched": error_issue != "error_length_mismatch",
         "strategy": "fit_weighting" if use_error_for_weighting else "not_used_for_local_derivative",
-        "propagation": "sigma_lnI = error / I" if use_error_for_weighting else None,
+        "propagation": sigma_definition if use_error_for_weighting else None,
         "eligible_qI_points": int(indices.size),
         "valid_transformed_sigma_points": 0 if use_error_for_weighting else None,
         "invalid_transformed_sigma_points": 0 if use_error_for_weighting else None,
@@ -343,7 +360,7 @@ def _prepare_log_fit_selection(
         else:
             warnings.append(f"Error column could not be used ({error_issue}); ordinary least squares was used.")
     elif indices.size:
-        propagated = log_intensity_sigma(intensity, errors)
+        propagated = log_intensity_sigma(intensity, errors, base=log_base)
         valid_sigma = np.isfinite(propagated) & (propagated > 0.0)
         invalid_indices = indices[~valid_sigma]
         error_audit.update(
@@ -655,9 +672,9 @@ def guinier_analysis(curve: CurveData, q_range: tuple[float, float], *, min_poin
 
 
 def power_law_analysis(curve: CurveData, q_range: tuple[float, float], *, min_points: int = 5) -> AnalysisResult:
-    """Fit ``ln I(q) = ln(A) - alpha ln(q)`` with complete diagnostics."""
+    """Fit ``lg I(q) = lg(A) - alpha lg(q)`` with complete diagnostics."""
 
-    selection, warnings = _prepare_log_fit_selection(curve, q_range, require_q_positive=True)
+    selection, warnings = _prepare_log_fit_selection(curve, q_range, require_q_positive=True, log_base=10.0)
     q = selection["q"]
     intensity = selection["intensity"]
     indices = selection["indices"]
@@ -667,8 +684,8 @@ def power_law_analysis(curve: CurveData, q_range: tuple[float, float], *, min_po
     if n < min_points:
         warnings.append(f"Too few points for power-law analysis: {n} < {min_points}.")
 
-    x = np.log(q) if n else np.array([], dtype=float)
-    y = np.log(intensity) if n else np.array([], dtype=float)
+    x = np.log10(q) if n else np.array([], dtype=float)
+    y = np.log10(intensity) if n else np.array([], dtype=float)
     fit = _linear_fit_with_uncertainty(x, y, sigma) if n >= 2 else None
     actual_fit_points = n if fit is not None else 0
     fit_not_performed_rows = [] if fit is not None else _fit_not_performed_rows(
@@ -685,7 +702,7 @@ def power_law_analysis(curve: CurveData, q_range: tuple[float, float], *, min_po
     else:
         selection["error_audit"]["fit_performed"] = True
     if n >= 2 and fit is None:
-        warnings.append("Power-law line could not be determined because selected ln(q) values are not sufficiently distinct.")
+        warnings.append("Power-law line could not be determined because selected lg(q) values are not sufficiently distinct.")
 
     fit_quality = fit_diagnostics(
         y if fit is not None else np.array([], dtype=float),
@@ -696,19 +713,19 @@ def power_law_analysis(curve: CurveData, q_range: tuple[float, float], *, min_po
     )
     fit_quality.update(
         {
-            "fit_coordinate": "ln(I) versus ln(q)",
-            "transformed_sigma_definition": "sigma_lnI = error / I",
+            "fit_coordinate": "lg(I) versus lg(q)",
+            "transformed_sigma_definition": "sigma_lgI = error / (I * ln(10))",
             "weighting_policy": selection["error_audit"]["weighting_policy"],
         }
     )
     slope = None if fit is None else fit["slope"]
     intercept = None if fit is None else fit["intercept"]
     alpha = None if slope is None else _native_float(-slope)
-    prefactor = _safe_exp(intercept)
+    prefactor = _safe_pow10(intercept)
     alpha_stderr = None if fit is None else fit["slope_stderr"]
     prefactor_stderr = None
     if prefactor is not None and fit is not None and fit["intercept_stderr"] is not None:
-        prefactor_stderr = _native_float(abs(prefactor * fit["intercept_stderr"]))
+        prefactor_stderr = _native_float(abs(prefactor * math.log(10.0) * fit["intercept_stderr"]))
     q_start = _native_float(np.min(q)) if n else None
     q_end = _native_float(np.max(q)) if n else None
 
@@ -723,7 +740,7 @@ def power_law_analysis(curve: CurveData, q_range: tuple[float, float], *, min_po
             fitted=fit["fitted"],
             sigma=sigma,
             transformed_x=x,
-            coordinate="ln(I) versus ln(q)",
+            coordinate="lg(I) versus lg(q)",
         )
     parameter_rows = parameter_records(
         ["alpha", "prefactor", "slope", "intercept"],
@@ -782,7 +799,7 @@ def power_law_analysis(curve: CurveData, q_range: tuple[float, float], *, min_po
             "reason": validity_reason,
         },
         "assumptions": [
-            "The selected interval is evaluated in ln(I) versus ln(q) coordinates.",
+            "The selected interval is evaluated in lg(I) versus lg(q) coordinates.",
             "The fitted exponent is descriptive and is not a unique material-mechanism assignment.",
         ],
     }

@@ -9,9 +9,11 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QProgressBar,
     QTextEdit,
@@ -100,6 +102,18 @@ class AutoBatchTab(QWidget):
             ("层片", "lamellar"),
         ]:
             self.sample_type.addItem(label, value)
+        self.effective_q_min = QDoubleSpinBox()
+        self.effective_q_min.setRange(0.0, 1_000_000.0)
+        self.effective_q_min.setDecimals(6)
+        self.effective_q_min.setSingleStep(0.001)
+        self.effective_q_min.setValue(0.01)
+        self.effective_q_max = QDoubleSpinBox()
+        self.effective_q_max.setRange(0.0, 1_000_000.0)
+        self.effective_q_max.setDecimals(6)
+        self.effective_q_max.setSingleStep(0.001)
+        self.effective_q_max.setValue(0.05)
+        for control in (self.effective_q_min, self.effective_q_max):
+            control.setToolTip("分析前请确认有效 q 范围；默认值为 0.01–0.05 Å⁻¹。")
         self.enable_pr = QCheckBox("启用 P(r)")
         self.enable_correlation = QCheckBox("启用相关函数")
         self.enable_kinetics = QCheckBox("输出描述性线性趋势")
@@ -142,14 +156,21 @@ class AutoBatchTab(QWidget):
         form = QFormLayout()
         input_row = QHBoxLayout()
         output_row = QHBoxLayout()
+        q_range_row = QHBoxLayout()
         input_row.addWidget(self.input_dir, 1)
         input_row.addWidget(choose_input)
         output_row.addWidget(self.output_dir, 1)
         output_row.addWidget(choose_output)
+        q_range_row.addWidget(self.effective_q_min)
+        q_range_row.addWidget(QLabel("至"))
+        q_range_row.addWidget(self.effective_q_max)
+        q_range_row.addWidget(QLabel("Å⁻¹"))
+        q_range_row.addStretch(1)
         form.addRow("数据文件夹", input_row)
         form.addRow("结果父目录", output_row)
         form.addRow("批次名称", self.batch_id)
         form.addRow("样品类型", self.sample_type)
+        form.addRow("有效 q 范围（分析前请确认）", q_range_row)
         layout.addLayout(form)
         for widget in (
             self.enable_pr,
@@ -182,9 +203,15 @@ class AutoBatchTab(QWidget):
         if not source.is_dir() or not self.output_dir.text().strip() or not batch_id:
             self.output.setPlainText("请填写有效的数据文件夹、结果父目录和批次名称。")
             return
+        q_low = self.effective_q_min.value()
+        q_high = self.effective_q_max.value()
+        if q_low >= q_high:
+            self.output.setPlainText("有效 q 范围必须满足 q 最小值 < q 最大值，请在分析前确认。")
+            return
         config = AutoBatchConfig(
             batch_id=batch_id,
             sample_type=self.sample_type.currentData(),
+            effective_q_range=(q_low, q_high),
             enable_pr=self.enable_pr.isChecked(),
             enable_correlation=self.enable_correlation.isChecked(),
             enable_kinetics=self.enable_kinetics.isChecked(),
@@ -192,7 +219,9 @@ class AutoBatchTab(QWidget):
         )
         self.run_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
-        self.output.setPlainText("正在分析……原始数据不会被修改。")
+        self.output.setPlainText(
+            f"正在分析……有效 q 范围：{q_low:.6g}–{q_high:.6g} Å⁻¹；原始数据不会被修改。"
+        )
         self.thread = QThread(self)
         self.worker = BatchWorker(source, output, config)
         self.worker.moveToThread(self.thread)

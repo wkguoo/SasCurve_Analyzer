@@ -244,6 +244,8 @@ METHOD_REGISTRY: dict[str, MethodSpec] = {
             "BIC",
             "rank",
         ),
+        (),
+        "enable_shape_models",
     ),
 }
 

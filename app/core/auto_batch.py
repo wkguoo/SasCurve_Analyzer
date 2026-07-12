@@ -14,6 +14,7 @@ from app.core.auto_batch_schema import (
     AnalysisStatus,
     AutoBatchConfig,
     AutoBatchRun,
+    DEFAULT_EFFECTIVE_Q_RANGE,
     ParameterValue,
     ProgressEvent,
 )
@@ -127,7 +128,7 @@ def _finalize_batch_status(run: AutoBatchRun, *, had_failure: bool) -> str:
 def _valid_q_range(value: object) -> tuple[float, float] | None:
     """Return a finite, ascending q interval or ``None`` without guessing."""
 
-    if not isinstance(value, tuple) or len(value) != 2:
+    if not isinstance(value, (tuple, list)) or len(value) != 2:
         return None
     try:
         q_start = float(value[0])
@@ -137,6 +138,13 @@ def _valid_q_range(value: object) -> tuple[float, float] | None:
     if not np.isfinite(q_start) or not np.isfinite(q_end) or q_start >= q_end:
         return None
     return (q_start, q_end)
+
+
+def _configured_effective_q_range(run: AutoBatchRun) -> tuple[float, float]:
+    """Read the validated user q interval stored in the run snapshot."""
+
+    configured = _valid_q_range(run.config_snapshot.get("effective_q_range"))
+    return configured or DEFAULT_EFFECTIVE_Q_RANGE
 
 
 def _consensus_q_ranges(
@@ -160,18 +168,35 @@ def _consensus_q_ranges(
                 f"Ignored invalid batch consensus q range for '{normalized_name}'; affected methods receive None.",
             )
             continue
-        q_ranges[normalized_name] = q_range
+        effective_low, effective_high = _configured_effective_q_range(run)
+        clipped = (max(q_range[0], effective_low), min(q_range[1], effective_high))
+        if clipped[0] >= clipped[1]:
+            had_problem = True
+            _append_warning_once(
+                run,
+                f"Ignored batch consensus q range for '{normalized_name}' because it is outside the effective q range.",
+            )
+            continue
+        q_ranges[normalized_name] = clipped
     return q_ranges, had_problem
 
 
-def _full_q_range(curve: CurveData) -> tuple[float, float] | None:
-    """Calculate a usable full finite q range without applying any data repair."""
+def _full_q_range(
+    curve: CurveData,
+    effective_q_range: tuple[float, float] | None = None,
+) -> tuple[float, float] | None:
+    """Calculate a usable finite q range without modifying the curve."""
 
     try:
         q_values = np.asarray(curve.q, dtype=float).reshape(-1)
     except (AttributeError, TypeError, ValueError):
         return None
     finite_q = q_values[np.isfinite(q_values)]
+    if effective_q_range is not None:
+        finite_q = finite_q[
+            (finite_q >= effective_q_range[0])
+            & (finite_q <= effective_q_range[1])
+        ]
     if finite_q.size < 2:
         return None
     q_start = float(np.min(finite_q))
@@ -187,8 +212,16 @@ def _q_range_for_method(
     method_id: str,
 ) -> tuple[float, float] | None:
     region_type = _METHOD_REGION_TYPES.get(method_id)
+    effective_q_range = _configured_effective_q_range(run)
     if region_type is not None:
         q_range = run.consensus_regions.get(region_type)
+        if q_range is not None:
+            q_range = (
+                max(q_range[0], effective_q_range[0]),
+                min(q_range[1], effective_q_range[1]),
+            )
+            if q_range[0] >= q_range[1]:
+                q_range = None
         if q_range is None:
             _append_warning_once(
                 run,
@@ -197,11 +230,12 @@ def _q_range_for_method(
             )
         return q_range
 
-    q_range = _full_q_range(curve)
+    q_range = _full_q_range(curve, effective_q_range)
     if q_range is None:
         _append_warning_once(
             run,
-            f"Curve '{curve.name}' has no safe finite full q range; method '{method_id}' receives None.",
+            f"Curve '{curve.name}' has no safe finite full q range within the effective q interval; "
+            f"method '{method_id}' receives None.",
         )
     return q_range
 
@@ -417,6 +451,11 @@ def run_auto_batch(
     run.input_manifest = list(collected.manifest)
     run.failed_inputs = list(collected.failed_inputs)
     run.warnings = list(collected.warnings)
+    effective_low, effective_high = _configured_effective_q_range(run)
+    _append_warning_once(
+        run,
+        f"Effective q range applied to batch analyses: [{effective_low:.12g}, {effective_high:.12g}] Å^-1.",
+    )
     had_failure = bool(run.failed_inputs)
     methods = applicable_method_ids(config)
     jobs = [(curve, method_id) for curve in run.curves for method_id in methods]

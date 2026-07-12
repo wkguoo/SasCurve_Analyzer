@@ -38,8 +38,8 @@ MODEL_CATALOG: dict[str, ModelCatalogEntry] = {
     ),
     "loglog_power_law_check": ModelCatalogEntry(
         "loglog_power_law_check",
-        "Log-log / power-law: ln I(q) vs ln q",
-        "ln I(q) = a + b ln q",
+        "Log-log / power-law: lg I(q) vs lg q",
+        "lg I(q) = a + b lg q",
         "Positive q and positive I(q).",
         "Power-law slope inspection.",
         "A stable slope can suggest scale-dependent scattering behavior.",
@@ -129,7 +129,7 @@ MODEL_CATALOG: dict[str, ModelCatalogEntry] = {
     "shoulder_visual_check": ModelCatalogEntry(
         "shoulder_visual_check",
         "Shoulder / low-q visual check",
-        "visual inspection on ln I(q) vs ln q or Guinier views",
+        "visual inspection on lg I(q) vs lg q or Guinier views",
         "Positive q and positive I(q) for log views.",
         "Visual indication of shoulders or low-q features.",
         "Useful for guiding range selection and follow-up analysis.",

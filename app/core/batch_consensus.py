@@ -189,7 +189,7 @@ def resolve_consensus_regions(curves: list[CurveData], config: AutoBatchConfig) 
     }
     curve_ids = {str(curve.curve_id) for curve in curves}
     for curve in curves:
-        detection = detect_auto_regions(curve)
+        detection = detect_auto_regions(curve, q_range=config.effective_q_range)
         candidates = detection.results.get("candidates", [])
         if not isinstance(candidates, list):
             continue

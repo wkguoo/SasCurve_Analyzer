@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QComboBox, QDouble
 
 from app.core.analysis_preflight import check_analysis_preflight, format_analysis_preflight
 from app.core.auto_regions import AutoRegionCandidate, detect_auto_regions, region_type_label, run_analysis_for_region
+from app.core.auto_batch_schema import DEFAULT_EFFECTIVE_Q_RANGE
 from app.core.export import export_auto_region_candidates_csv
 from app.core.method_mapping import plot_for_analysis
 from app.core.plot_analysis import analyze_curve_plot
@@ -19,7 +20,7 @@ from app.ui.style import action_button, apply_help
 ANALYSIS_TYPE_ITEMS = [
     ("线性强度诊断: I(q) vs q", "linear"),
     ("半对数诊断: ln I(q) vs q", "semilog"),
-    ("Power-law 拟合: ln I(q) vs ln q", "loglog"),
+    ("Power-law 拟合: lg I(q) vs lg q", "loglog"),
     ("Guinier 拟合: ln I(q) vs q\u00b2", "guinier"),
     ("Kratky 指标: q\u00b2I(q) vs q", "kratky"),
     ("Porod 指标: q\u2074I(q) vs q", "porod"),
@@ -59,14 +60,23 @@ class AnalysisTab(QWidget):
         self.q_min = QDoubleSpinBox()
         self.q_min.setDecimals(6)
         self.q_min.setRange(0.0, 1_000_000.0)
+        self.q_min.setValue(DEFAULT_EFFECTIVE_Q_RANGE[0])
         self.q_max = QDoubleSpinBox()
         self.q_max.setDecimals(6)
         self.q_max.setRange(0.0, 1_000_000.0)
-        self.q_max.setValue(1.0)
+        self.q_max.setValue(DEFAULT_EFFECTIVE_Q_RANGE[1])
         self.q_min.valueChanged.connect(lambda _value: self._set_manual_range_source())
         self.q_max.valueChanged.connect(lambda _value: self._set_manual_range_source())
-        apply_help(self.q_min, tooltip="分析 q 下限。", status_tip="输入本次分析使用的 raw q 最小值。")
-        apply_help(self.q_max, tooltip="分析 q 上限。", status_tip="输入本次分析使用的 raw q 最大值。")
+        apply_help(
+            self.q_min,
+            tooltip="分析前请确认有效 q 下限；默认值为 0.01 Å⁻¹。",
+            status_tip="输入本次分析使用的 raw q 最小值。",
+        )
+        apply_help(
+            self.q_max,
+            tooltip="分析前请确认有效 q 上限；默认值为 0.05 Å⁻¹。",
+            status_tip="输入本次分析使用的 raw q 最大值。",
+        )
 
         run_button = action_button(
             "运行曲线分析",
@@ -108,8 +118,8 @@ class AnalysisTab(QWidget):
 
         form = QFormLayout()
         form.addRow("分析类型", self.analysis_type)
-        form.addRow("q_min", self.q_min)
-        form.addRow("q_max", self.q_max)
+        form.addRow("有效 q_min (Å⁻¹)", self.q_min)
+        form.addRow("有效 q_max (Å⁻¹)", self.q_max)
 
         controls = QHBoxLayout()
         controls.addWidget(fill_button)
@@ -208,16 +218,6 @@ class AnalysisTab(QWidget):
 
         raw_q_range = self._current_raw_q_range()
         messages: list[str] = []
-        default_initial_range = (
-            self.range_source == "manual raw q input"
-            and math.isclose(raw_q_range[0], 0.0, rel_tol=0.0, abs_tol=1e-12)
-            and math.isclose(raw_q_range[1], 1.0, rel_tol=0.0, abs_tol=1e-12)
-        )
-        if default_initial_range:
-            self._set_q_range_without_marking_manual(full_range, range_source="current curve raw q range for auto detection")
-            messages.append("完整 raw q 范围: 已自动使用当前曲线完整 raw q 范围，避免默认 0-1 截断自动识别。")
-            return full_range, messages
-
         if raw_q_range[0] >= raw_q_range[1]:
             self._set_q_range_without_marking_manual(full_range, range_source="current curve raw q range after invalid manual range")
             messages.append("自动改用当前曲线完整 raw q 范围: 手工 q_min/q_max 范围无效。")

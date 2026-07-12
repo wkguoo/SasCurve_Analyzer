@@ -150,8 +150,8 @@ def test_power_law_absolute_sigma_uses_unscaled_wls_covariance_for_parameter_ci(
 
     result = power_law_analysis(curve, (float(q.min()), float(q.max())))
     values = result.results
-    sigma = error / intensity
-    design = np.column_stack((np.log(q), np.ones(q.size)))
+    sigma = error / (intensity * np.log(10.0))
+    design = np.column_stack((np.log10(q), np.ones(q.size)))
     expected_covariance = np.linalg.inv(design.T @ np.diag(1.0 / sigma**2) @ design)
     expected_slope_stderr = math.sqrt(expected_covariance[0, 0])
     alpha_record = next(row for row in values["parameter_records"] if row["name"] == "alpha")

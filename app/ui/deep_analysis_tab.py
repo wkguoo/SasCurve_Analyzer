@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QTextEdit, QVBoxLayout, QWidget
 
+from app.core.auto_batch_schema import DEFAULT_EFFECTIVE_Q_RANGE
 from app.core.deep_analysis import DeepAnalysisOptions, SAMPLE_TYPES, SHAPE_MODELS, run_deep_analysis
 from app.core.records import create_history_record
 from app.core.user_messages import exception_detail, format_user_message, UserMessage
@@ -16,10 +17,21 @@ class DeepAnalysisTab(QWidget):
         self.q_min = QDoubleSpinBox()
         self.q_min.setDecimals(6)
         self.q_min.setRange(0.0, 1_000_000.0)
+        self.q_min.setValue(DEFAULT_EFFECTIVE_Q_RANGE[0])
         self.q_max = QDoubleSpinBox()
         self.q_max.setDecimals(6)
         self.q_max.setRange(0.0, 1_000_000.0)
-        self.q_max.setValue(1.0)
+        self.q_max.setValue(DEFAULT_EFFECTIVE_Q_RANGE[1])
+        apply_help(
+            self.q_min,
+            tooltip="深度分析前请确认有效 q 下限；默认值为 0.01 Å⁻¹。",
+            status_tip="输入本次深度分析使用的 raw q 最小值。",
+        )
+        apply_help(
+            self.q_max,
+            tooltip="深度分析前请确认有效 q 上限；默认值为 0.05 Å⁻¹。",
+            status_tip="输入本次深度分析使用的 raw q 最大值。",
+        )
 
         self.sample_type = QComboBox()
         self.sample_type.addItems(SAMPLE_TYPES)
@@ -66,8 +78,8 @@ class DeepAnalysisTab(QWidget):
         run_button.clicked.connect(self.run_deep_analysis)
 
         form = QFormLayout()
-        form.addRow("q_min", self.q_min)
-        form.addRow("q_max", self.q_max)
+        form.addRow("有效 q_min (Å⁻¹)", self.q_min)
+        form.addRow("有效 q_max (Å⁻¹)", self.q_max)
         form.addRow("样品类型", self.sample_type)
         form.addRow("形状/模型", self.shape_model)
         form.addRow("Dmax", self.dmax)
@@ -120,6 +132,9 @@ class DeepAnalysisTab(QWidget):
             return
 
         q_range = (float(self.q_min.value()), float(self.q_max.value()))
+        if q_range[0] >= q_range[1]:
+            self.output.setPlainText("有效 q 范围必须满足 q 最小值 < q 最大值，请在分析前确认。")
+            return
         contrast = float(self.contrast.value()) if self.use_contrast.isChecked() else None
         options = DeepAnalysisOptions(
             sample_type=self.sample_type.currentText(),
@@ -208,4 +223,3 @@ class DeepAnalysisTab(QWidget):
         else:
             lines.append("- 无")
         return "\n".join(lines)
-

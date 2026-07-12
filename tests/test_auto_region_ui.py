@@ -75,7 +75,7 @@ def test_auto_region_detection_fill_range_and_run_analysis() -> None:
         window.close()
 
 
-def test_auto_region_detection_uses_full_curve_when_default_range_would_truncate() -> None:
+def test_auto_region_detection_uses_default_effective_q_range() -> None:
     _app()
     window = MainWindow()
     try:
@@ -83,15 +83,14 @@ def test_auto_region_detection_uses_full_curve_when_default_range_would_truncate
         curve = CurveData.create(name="wide-q", q=q, intensity=2.0e-4 * q**-4)
         window.add_curve(curve)
 
-        assert window.analysis_tab.q_min.value() == pytest.approx(0.0)
-        assert window.analysis_tab.q_max.value() == pytest.approx(1.0)
+        assert window.analysis_tab.q_min.value() == pytest.approx(0.01)
+        assert window.analysis_tab.q_max.value() == pytest.approx(0.05)
         window.analysis_tab.detect_auto_regions_for_current_curve()
 
         result = window.project.analysis_results[-1]
         assert result.analysis_type == "auto_region_detection"
-        assert result.q_range == (pytest.approx(float(q.min())), pytest.approx(float(q.max())))
-        assert "完整 raw q 范围" in window.analysis_tab.output.toPlainText()
-        assert window.analysis_tab.q_max.value() == pytest.approx(float(q.max()), abs=1e-6)
+        assert result.q_range == (pytest.approx(0.01), pytest.approx(0.05))
+        assert window.analysis_tab.q_max.value() == pytest.approx(0.05)
     finally:
         window.close()
 

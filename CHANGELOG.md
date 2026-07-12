@@ -1,5 +1,75 @@
 # CHANGELOG
 
+## 2026-07-12 13:15:18 +08:00 - Change Log-Log View To Base-10 Coordinates
+
+### Task Objective
+
+Change the project's log-log/power-law view from natural-log coordinates to base-10 coordinates, displayed as `lg I(q)` versus `lg q`.
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/plotting.py`
+- `app/core/plot_analysis.py`
+- `app/core/model_free.py`
+- `app/core/uncertainty.py`
+- `app/ui/plotting_tab.py`
+- `app/ui/analysis_tab.py`
+- `app/core/model_catalog.py`
+- `tests/test_plotting.py`
+- `tests/test_plot_analysis.py`
+- `tests/test_model_free_complete.py`
+- `README.md`
+- `docs/method_notes.md`
+- `docs/developer_notes.md`
+- `docs/user_manual_zh.md`
+- `CHANGELOG.md`
+
+### Deleted Files
+
+- None.
+
+### Specific Changes
+
+- Switched the `loglog` plot mapping to the existing `log10_q` and `log10_I` derived columns.
+- Changed log-log display transforms, cursor readout, and display-range conversion to `log10`/`10^x`.
+- Updated log-log error propagation to `sigma_lgI = sigma_I / (I * ln(10))`.
+- Updated plot-analysis and power-law fits to report `A = 10^b` and use base-10 transformed residual coordinates.
+- Updated visible UI labels, model-catalog text, documentation, and focused tests.
+- Kept semi-log, Guinier, and local-slope natural-log definitions unchanged.
+
+### Reason
+
+The user requested an `lg-lg` presentation for the project's double-log plot. Base-10 coordinates make the displayed axes explicit while preserving the power-law exponent `alpha`.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python main.py
+```
+
+Select `Log-log / power-law: lg I(q) vs lg q` in the curve plotting tab.
+
+### Generated Output Files
+
+- None. No raw experimental data or existing result files were modified.
+
+### How To Check Success
+
+- Focused regression suite: `68 passed`.
+- Run: `python -B -m pytest -q -p no:cacheprovider tests/test_plotting.py tests/test_plot_analysis.py tests/test_power_law.py tests/test_model_free_complete.py tests/test_ui_style.py`.
+- The plot axes should read `lg q` and `lg I(q)`; display x-range conversion should use `q = 10^x`.
+
+### Notes And Risks
+
+- The power-law intercept is now expressed in base-10 coordinates; the exponent and R² remain mathematically unchanged.
+- Existing derived `ln_q`/`ln_I` columns remain available for semi-log, Guinier, local-slope, and export workflows.
+- Existing unrelated uncommitted workspace changes were preserved.
+
 ## 2026-07-12 - Bind cache to software, algorithms, and metadata
 
 ### Task Objective
@@ -5107,3 +5177,192 @@ python scripts\analyze_ti15_first10.py --input-dir ..\results\spectra_csv --resu
 - `Ds=6-alpha` remains explicitly conditional on a valid surface-fractal interpretation.
 - Existing result directories are not regenerated or modified by a manual edit.
 - No package, dependency installation, Git commit, or push was performed.
+
+## 2026-07-12 12:28:37 +08:00 - Run Ti15 First-Ten-Frame Model-Free SAXS Analysis
+
+### Task Objective
+
+Run the requested first-ten-frame SAXS analysis for `17_Ti15_300_2_iso` without modifying source data or using shape-model fitting.
+
+### Added Files
+
+- `scripts/build_summary_workbook.mjs`
+- `results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/` result package and figures
+
+### Modified Files
+
+- `app/core/auto_batch_schema.py`
+- `app/core/metric_registry.py`
+- `scripts/analyze_ti15_first10.py`
+- `tests/test_metric_registry.py`
+- `CHANGELOG.md`
+
+### Specific Changes
+
+- Added `AutoBatchConfig.enable_shape_models`, defaulting to `True` for backward compatibility; the requested run sets it to `False`.
+- Corrected the first-ten-frame input default, recorded the complete configuration snapshot, and clarified the report as sample-label based rather than assuming temperature or elapsed time.
+- Added an audit-only power-law candidate section so fitted values with reliability score `0` are not promoted to the main conclusion.
+- Added an `artifact-tool` workbook builder with an Overview sheet and auditable CSV-derived sheets; numeric data-quality columns are coerced to numeric cell values so summary formulas calculate correctly.
+
+### Reason
+
+The user requested a comprehensive model-free analysis with a reproducible Excel summary, explicit source integrity checks, and no shape-model interpretation.
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python scripts\analyze_ti15_first10.py --input-dir "D:\桌面\PostFile\6_sys\SAXS-学习2\17_Ti15_300_2_iso\17_Ti15_300_2_iso\spectra_csv" --results-root ..\results
+& "C:\Users\wkguopro\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe" scripts\build_summary_workbook.mjs ..\results\17_Ti15_300_2_iso_first10_model_free_20260712_122352
+```
+
+### Generated Output Files
+
+- `results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/final_report_zh.md`
+- `results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/summary_tables.xlsx`
+- CSV audit tables, JSON configuration/summary files, and PNG/SVG/PDF figures under the same result directory
+
+### How To Check Success
+
+- Full test suite: `551 passed`.
+- Runtime result: `CURVES=10`, `ANALYSES=140`, `SOURCE_INTEGRITY=PASS`, `RUN_STATUS=completed_with_limitations`.
+- `all_parameters_audit.csv` contains zero shape-model rows; `run_config.json` records `enable_shape_models=false` and all selected source filenames.
+- Workbook contains 11 sheets and the final formula-error scan matched 0 entries.
+
+### Notes And Risks
+
+- The sequence axis is frame index, not time; no kinetics are inferred.
+- Negative and zero intensities remain in audit tables; logarithmic methods use only positive points.
+- Peak `q*` and `d=2π/q*` are reported as characteristic correlation scales, not particle diameters.
+- Guinier and Porod are retained as unavailable due to method-specific prerequisites. Power-law values are audit candidates only because their reliability score is `0`.
+- No dependency installation, packaging, Git commit, Git push, or raw-data modification was performed.
+
+## 2026-07-12 13:02:06 +08:00 - Rerun Ti15 First Ten Frames With Effective q Range And Replace Result Package
+
+### Task Objective
+
+按用户要求重新运行 Ti15 前十帧无模型 SAXS 分析，明确使用有效 `q=0.01–0.05 Å^-1`，并用新结果覆盖上一版同名结果包。
+
+### Added Files
+
+- Rebuilt files under `results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/`.
+
+### Modified Files
+
+- `results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/`：整包替换
+- `CHANGELOG.md`
+
+### Specific Changes
+
+- 只导入 `ti15_00001_abs2d_cm-1.csv` 至 `ti15_00010_abs2d_cm-1.csv`，排除 `TI15-rt_00001_abs2d_cm-1.csv`。
+- 使用 `--q-min 0.01 --q-max 0.05` 重新运行；配置和中文报告均记录该范围。
+- 新包保留 CSV、JSON、Excel、600 dpi PNG、SVG、PDF、质量审计和源文件完整性记录。
+- 清理了 Excel 构建过程产生的临时 `.inspect.ndjson` 文件和失败的临时 staging 目录。
+
+### Reason
+
+上一版结果是在有效 q 范围控制改造前生成的，用户明确要求覆盖为按 `0.01–0.05 Å^-1` 重新计算的结果。
+
+### How To Run
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python scripts\analyze_ti15_first10.py --input-dir "D:\桌面\PostFile\6_sys\SAXS-学习2\17_Ti15_300_2_iso\17_Ti15_300_2_iso\spectra_csv" --results-root ..\results --q-min 0.01 --q-max 0.05
+& "C:\Users\wkguopro\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe" scripts\build_summary_workbook.mjs ..\results\17_Ti15_300_2_iso_first10_model_free_20260712_122352
+```
+
+### Generated Output Files
+
+- `results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/final_report_zh.md`
+- `results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/summary_tables.xlsx`
+- `results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/data_quality.csv`
+- `results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/all_parameters_audit.csv`
+- `results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/source_integrity_after_analysis.csv`
+- `results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/figures/`
+
+### How To Check Success
+
+- Runtime: `CURVES=10`, `ANALYSES=140`, `RUN_STATUS=completed_with_limitations`, `SOURCE_INTEGRITY=PASS`.
+- `run_config.json` contains `effective_q_range=[0.01, 0.05]` and `enable_shape_models=false`.
+- Effective q data coverage is 214 points per frame; actual measured selected interval is approximately `0.0100004–0.0498150 Å^-1`.
+- `all_parameters_audit.csv` contains zero shape-model rows; Excel formula error scan matched 0 entries.
+- Independent post-run SHA-256 comparison matched all 10 raw files; recorded unchanged rows are 10/10.
+
+### Notes And Risks
+
+- The old result package was explicitly deleted and replaced as requested; no backup copy was retained in the project results directory.
+- The first staging attempt under `C:\tmp` was blocked by directory permissions; the successful rerun used the project results directory and completed normally.
+- Effective-range filtering selects analysis points only; it does not smooth, shift, truncate, background-correct, or modify raw input files.
+- No package archive, Git commit, Git push, or upload was performed.
+
+## 2026-07-12 12:50:02 +08:00 - Require Effective q-Range Confirmation Before Analysis
+
+### Task Objective
+
+修改 SAXS 分析流程，使分析开始前明确确认有效 q 范围，默认使用 `0.01–0.05 Å^-1`，并让批处理、自动选区、序列分析和脚本使用同一范围。
+
+### Added Files
+
+- None.
+
+### Modified Files
+
+- `app/core/auto_batch_schema.py`
+- `app/core/auto_batch.py`
+- `app/core/batch_consensus.py`
+- `app/core/sequence_analysis.py`
+- `app/core/batch_cache.py`
+- `app/ui/analysis_tab.py`
+- `app/ui/deep_analysis_tab.py`
+- `app/ui/auto_batch_tab.py`
+- `scripts/analyze_ti15_first10.py`
+- `tests/test_auto_batch_schema.py`
+- `tests/test_auto_batch.py`
+- `tests/test_batch_consensus.py`
+- `tests/test_sequence_analysis.py`
+- `tests/test_auto_region_ui.py`
+- `tests/test_auto_batch_ui.py`
+- `tests/test_ui_style.py`
+- `docs/user_manual_zh.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Specific Changes
+
+- Added validated `effective_q_range` configuration with default `(0.01, 0.05)` and strict `q_min < q_max` checking.
+- Applied the selected range to full finite q ranges, consensus region detection, sequence reference comparisons, and optional exploratory statistics; no raw curve array is altered.
+- Added editable effective-q controls to the single-curve, deep-analysis, and auto-batch pages. Invalid ranges stop before worker execution.
+- Added `--q-min` and `--q-max` to the Ti15 first-ten-frame script and recorded the range in reports, configuration, quality tables, and overlay plots.
+- Bumped `ANALYSIS_ALGORITHM_VERSION` from `2` to `3` to prevent reuse of unrestricted-range cache entries.
+
+### Reason
+
+The user specified that `0.01–0.05 Å^-1` is the effective q data range and requested confirmation before analysis so results are not silently derived from invalid q tails.
+
+### How To Run
+
+For the GUI, open the relevant analysis page, confirm or edit the effective q lower/upper bounds, then start analysis. For the Ti15 script:
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python scripts\analyze_ti15_first10.py --q-min 0.01 --q-max 0.05
+```
+
+### Generated Output Files
+
+- No new research result package was generated in this code-change task.
+- Existing result directories were not overwritten or regenerated.
+
+### How To Check Success
+
+- Focused regression suite: `75 passed` before the single/deep-analysis default updates and `29 passed` for the affected GUI suite after those updates.
+- Full project test suite must pass with `python -m pytest`.
+- GUI controls show `0.01` and `0.05` by default; reversed bounds do not start a worker.
+- A run configuration contains `effective_q_range`; source CSV hashes and bytes remain outside the analysis write path.
+
+### Notes And Risks
+
+- The default is a user-facing starting point and must still be checked against each instrument/sample; it does not prove that every dataset is valid in this interval.
+- Range restriction is selection only. The software does not smooth, shift, truncate, background-correct, or overwrite raw input files.
+- Existing Ti15 result packages were produced before this range-control change and are not silently relabeled; rerun into a new timestamped directory when updated results are needed.
+- No dependency installation, packaging, Git commit, Git push, or raw-data modification was performed.

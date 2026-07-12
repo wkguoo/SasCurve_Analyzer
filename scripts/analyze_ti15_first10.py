@@ -1,4 +1,4 @@
-"""Analyze Ti15 300 C SAXS frames 1-10 without modifying source data.
+"""Analyze the first ten Ti15 SAXS frames without modifying source data.
 
 Input files are copied to a temporary directory only to constrain the existing
 automatic batch engine to an exact, auditable set of ten curves. All persistent
@@ -14,7 +14,6 @@ import math
 import shutil
 import sys
 import tempfile
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
@@ -31,7 +30,11 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from app.core.auto_batch import run_auto_batch
-from app.core.auto_batch_schema import AnalysisStatus, AutoBatchConfig
+from app.core.auto_batch_schema import (
+    DEFAULT_EFFECTIVE_Q_RANGE,
+    AnalysisStatus,
+    AutoBatchConfig,
+)
 from app.core.result_package import export_result_package
 
 
@@ -84,6 +87,13 @@ def frame_number(name: str) -> int:
     return -1
 
 
+def effective_q_range_from_run(run) -> tuple[float, float]:
+    value = run.config_snapshot.get("effective_q_range", DEFAULT_EFFECTIVE_Q_RANGE)
+    if isinstance(value, (tuple, list)) and len(value) == 2:
+        return float(value[0]), float(value[1])
+    return DEFAULT_EFFECTIVE_Q_RANGE
+
+
 def parameter_rows(run) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for envelope in run.analyses:
@@ -114,11 +124,14 @@ def parameter_rows(run) -> list[dict[str, object]]:
 
 def quality_rows(run) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
+    effective_q_low, effective_q_high = effective_q_range_from_run(run)
     for curve in run.curves:
         q = np.asarray(curve.q, dtype=float)
         intensity = np.asarray(curve.intensity, dtype=float)
         finite = np.isfinite(q) & np.isfinite(intensity)
         positive = finite & (q > 0) & (intensity > 0)
+        effective = finite & (q >= effective_q_low) & (q <= effective_q_high)
+        effective_positive = effective & (q > 0) & (intensity > 0)
         rows.append(
             {
                 "frame": frame_number(curve.name),
@@ -138,6 +151,12 @@ def quality_rows(run) -> list[dict[str, object]]:
                 "q_max_A^-1": float(np.max(q[finite])) if finite.any() else None,
                 "I_min_cm^-1": float(np.min(intensity[finite])) if finite.any() else None,
                 "I_max_cm^-1": float(np.max(intensity[finite])) if finite.any() else None,
+                "effective_q_min_A^-1": float(np.min(q[effective])) if effective.any() else None,
+                "effective_q_max_A^-1": float(np.max(q[effective])) if effective.any() else None,
+                "effective_point_count": int(effective.sum()),
+                "effective_negative_intensity_count": int((effective & (intensity < 0)).sum()),
+                "effective_zero_intensity_count": int((effective & (intensity == 0)).sum()),
+                "effective_log_usable_count": int(effective_positive.sum()),
             }
         )
     return rows
@@ -170,15 +189,23 @@ def save_figure(fig: plt.Figure, figures_dir: Path, stem: str) -> None:
 
 def plot_overlays(run, figures_dir: Path) -> None:
     fig, ax = plt.subplots(figsize=(7.2, 5.2))
+    effective_q_low, effective_q_high = effective_q_range_from_run(run)
     colors = plt.cm.viridis(np.linspace(0.05, 0.95, len(run.curves)))
     for curve, color in zip(run.curves, colors):
         q = np.asarray(curve.q, dtype=float)
         intensity = np.asarray(curve.intensity, dtype=float)
-        mask = np.isfinite(q) & np.isfinite(intensity) & (q > 0) & (intensity > 0)
+        mask = (
+            np.isfinite(q)
+            & np.isfinite(intensity)
+            & (q > 0)
+            & (q >= effective_q_low)
+            & (q <= effective_q_high)
+            & (intensity > 0)
+        )
         ax.loglog(q[mask], intensity[mask], color=color, lw=1.2, label=f"Frame {frame_number(curve.name)}")
     ax.set_xlabel(r"$q$ ($\mathrm{\AA}^{-1}$)")
     ax.set_ylabel(r"$I(q)$ ($\mathrm{cm}^{-1}$)")
-    ax.set_title("Ti15 300 C SAXS: frames 1-10")
+    ax.set_title("17_Ti15_300_2_iso SAXS: frames 1–10")
     ax.legend(ncol=2, fontsize=8, frameon=False)
     ax.grid(alpha=0.18, which="both")
     save_figure(fig, figures_dir, "first10_saxs_overlay")
@@ -270,6 +297,7 @@ def write_report(
     integrity_ok: bool,
 ) -> None:
     accepted = parameters[parameters["accepted"]]
+    effective_q_low, effective_q_high = effective_q_range_from_run(run)
     status_counts = parameters.drop_duplicates(["frame", "analysis_type"])["analysis_status"].value_counts()
     reliable_lines: list[str] = []
     for method, parameter, label in [
@@ -288,20 +316,49 @@ def write_report(
                 f"- {label}：{len(nums)}/10 帧获得可用值；范围 {nums.min():.6g}–{nums.max():.6g}。"
             )
     warning_count = sum(bool(str(item).strip()) for item in parameters["warnings"].fillna(""))
+    audit_candidate_lines: list[str] = []
+    power_alpha = selected_metric(parameters, "power_law", "alpha")
+    if power_alpha.empty:
+        power_alpha = parameters[
+            (parameters["analysis_type"] == "power_law")
+            & (parameters["parameter"] == "alpha")
+            & parameters["accepted"]
+        ].copy()
+    if not power_alpha.empty:
+        alpha_values = pd.to_numeric(power_alpha["numeric_value"], errors="coerce").dropna()
+        power_r2 = parameters[
+            (parameters["analysis_type"] == "power_law")
+            & (parameters["parameter"] == "R2")
+            & parameters["accepted"]
+        ]
+        r2_values = pd.to_numeric(power_r2["numeric_value"], errors="coerce").dropna()
+        q_start = pd.to_numeric(power_alpha["q_start_A^-1"], errors="coerce").dropna()
+        q_end = pd.to_numeric(power_alpha["q_end_A^-1"], errors="coerce").dropna()
+        score = pd.to_numeric(power_alpha["reliability_score"], errors="coerce").dropna()
+        if not alpha_values.empty and not q_start.empty and not q_end.empty:
+            r2_text = "n/a" if r2_values.empty else f"{r2_values.min():.6g}–{r2_values.max():.6g}"
+            score_text = "n/a" if score.empty else f"{score.min():.3g}–{score.max():.3g}"
+            audit_candidate_lines.append(
+                f"- 幂律审计候选：alpha {alpha_values.min():.6g}–{alpha_values.max():.6g}，"
+                f"R² {r2_text}，q 区间 {q_start.min():.6g}–{q_end.max():.6g} Å⁻¹；"
+                f"reliability_score={score_text}，因此不纳入主定量结论。"
+            )
     lines = [
-        "# Ti15 300 ℃ SAXS 前十帧分析报告",
+        "# 17_Ti15_300_2_iso SAXS 前十帧无模型分析报告",
         "",
         "## 分析范围",
         "",
         "主分析严格使用 `ti15_00001_abs2d_cm-1.csv` 至 `ti15_00010_abs2d_cm-1.csv`。",
         "室温参考 `TI15-rt_00001_abs2d_cm-1.csv` 未进入计算。横轴使用 frame 1–10；未假定采集时间。",
+        "本次运行关闭形状模型拟合，只报告无模型分析与数据质量审计结果。",
+        f"有效 q 范围（分析前确认值）：{effective_q_low:.6g}–{effective_q_high:.6g} Å⁻¹；所有逐帧方法和序列比较均在该范围内执行。",
         "",
         "## 数据质量",
         "",
         f"- 曲线数：{len(quality)}；每帧点数范围：{quality['point_count'].min()}–{quality['point_count'].max()}。",
-        f"- q 范围：{quality['q_min_A^-1'].min():.6g}–{quality['q_max_A^-1'].max():.6g} Å⁻¹。",
+        f"- 原始文件 q 范围：{quality['q_min_A^-1'].min():.6g}–{quality['q_max_A^-1'].max():.6g} Å⁻¹；实际纳入分析的 q 范围：{quality['effective_q_min_A^-1'].min():.6g}–{quality['effective_q_max_A^-1'].max():.6g} Å⁻¹。",
         f"- NaN/inf 点总数：{int(quality['nan_or_inf_pair_count'].sum())}。",
-        f"- 负强度点总数：{int(quality['negative_intensity_count'].sum())}；零强度点总数：{int(quality['zero_intensity_count'].sum())}。",
+        f"- 有效 q 范围内负强度点总数：{int(quality['effective_negative_intensity_count'].sum())}；零强度点总数：{int(quality['effective_zero_intensity_count'].sum())}。原始全范围计数保留在 `data_quality.csv`。",
         f"- 原始文件分析前后完整性校验：{'通过' if integrity_ok else '未通过'}。",
         "",
         "## 可用定量结果概览",
@@ -309,6 +366,10 @@ def write_report(
         *reliable_lines,
         "",
         "逐帧数值、q 拟合区间、状态和可靠性评分见 `accepted_parameters.csv` 与 `all_parameters_audit.csv`。",
+        "",
+        "## 审计层候选（不纳入主结论）",
+        "",
+        *(audit_candidate_lines or ["- 没有满足审计层筛选条件的候选参数。"]),
         "",
         "## 方法状态与警告",
         "",
@@ -331,6 +392,7 @@ def write_report(
         "- `accepted_parameters.csv`：状态筛选后的可用标量参数。",
         "- `all_parameters_audit.csv`：所有方法、参数、状态、q 区间、warning 和无效原因。",
         "- `fit_quality.csv`、`sequence_*.csv`：软件原生拟合质量与序列结果。",
+        "- `summary_tables.xlsx`：便于复核的 Excel 汇总表。",
         "- `figures/`：600 dpi PNG、SVG 和 PDF 图件。",
         "- `run_summary.json`：完整配置与软件结果。",
     ]
@@ -341,6 +403,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Analyze Ti15 SAXS frames 1-10 reproducibly.")
     parser.add_argument("--input-dir", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--results-root", type=Path, default=PROJECT_DIR.parent / "results")
+    parser.add_argument("--q-min", type=float, default=DEFAULT_EFFECTIVE_Q_RANGE[0], help="Effective q lower bound in A^-1.")
+    parser.add_argument("--q-max", type=float, default=DEFAULT_EFFECTIVE_Q_RANGE[1], help="Effective q upper bound in A^-1.")
     args = parser.parse_args()
 
     source_paths = [args.input_dir / name for name in FRAME_NAMES]
@@ -350,12 +414,15 @@ def main() -> int:
     before = source_snapshot(source_paths)
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = args.results_root / f"17_Ti15_300_2_iso_first10_{stamp}"
+    output_dir = args.results_root / f"17_Ti15_300_2_iso_first10_model_free_{stamp}"
     config = AutoBatchConfig(
         batch_id="17_Ti15_300_2_iso_first10",
         sample_type="unknown",
+        enable_shape_models=False,
+        effective_q_range=(args.q_min, args.q_max),
         q_unit_override="A^-1",
         intensity_unit_override="cm^-1",
+        absolute_intensity=False,
         enable_pr=False,
         enable_correlation=False,
         enable_bootstrap=False,
@@ -414,10 +481,11 @@ def main() -> int:
         exported / "source_integrity_after_analysis.csv", index=False, encoding="utf-8-sig"
     )
     (exported / "run_config.json").write_text(
-        json.dumps(asdict(config), ensure_ascii=False, indent=2, default=native), encoding="utf-8"
+        json.dumps(run.config_snapshot, ensure_ascii=False, indent=2, default=native), encoding="utf-8"
     )
     write_report(exported, run, quality, parameters, integrity_ok)
 
+    print(f"EFFECTIVE_Q_RANGE={config.effective_q_range[0]:.12g},{config.effective_q_range[1]:.12g}")
     print(f"RESULT_DIR={exported}")
     print(f"RUN_STATUS={run.status}")
     print(f"CURVES={len(run.curves)}")
