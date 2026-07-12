@@ -35,7 +35,7 @@ from app.core.auto_batch_schema import (
     AnalysisStatus,
     AutoBatchConfig,
 )
-from app.core.result_package import export_result_package
+from app.core.result_package import export_details_archive, export_result_package
 
 
 DEFAULT_INPUT = Path(
@@ -128,10 +128,20 @@ def quality_rows(run) -> list[dict[str, object]]:
     for curve in run.curves:
         q = np.asarray(curve.q, dtype=float)
         intensity = np.asarray(curve.intensity, dtype=float)
-        finite = np.isfinite(q) & np.isfinite(intensity)
+        import_filter = curve.metadata.get("import_q_range_filter", {})
+        raw_source_point_count = import_filter.get("raw_point_count")
+        filtered_out_point_count = import_filter.get("filtered_out_point_count")
+        try:
+            raw_source_point_count = int(raw_source_point_count)
+        except (TypeError, ValueError):
+            raw_source_point_count = int(q.size)
+        try:
+            filtered_out_point_count = int(filtered_out_point_count)
+        except (TypeError, ValueError):
+            filtered_out_point_count = max(raw_source_point_count - int(q.size), 0)
+        selected_q = np.isfinite(q) & (q >= effective_q_low) & (q <= effective_q_high)
+        finite = selected_q & np.isfinite(intensity)
         positive = finite & (q > 0) & (intensity > 0)
-        effective = finite & (q >= effective_q_low) & (q <= effective_q_high)
-        effective_positive = effective & (q > 0) & (intensity > 0)
         rows.append(
             {
                 "frame": frame_number(curve.name),
@@ -139,24 +149,25 @@ def quality_rows(run) -> list[dict[str, object]]:
                 "source_file": Path(curve.source_file or "").name,
                 "q_unit": curve.q_unit,
                 "intensity_unit": curve.intensity_unit,
-                "point_count": len(q),
+                "point_count": int(selected_q.sum()),
                 "finite_pair_count": int(finite.sum()),
-                "nan_or_inf_pair_count": int((~finite).sum()),
+                "nan_or_inf_pair_count": int((selected_q & ~finite).sum()),
                 "negative_intensity_count": int((finite & (intensity < 0)).sum()),
                 "zero_intensity_count": int((finite & (intensity == 0)).sum()),
-                "duplicate_q_count": int(pd.Series(q[finite]).duplicated().sum()),
-                "strictly_increasing_q": bool(np.all(np.diff(q[finite]) > 0)),
+                "duplicate_q_count": int(pd.Series(q[selected_q]).duplicated().sum()),
+                "strictly_increasing_q": bool(
+                    selected_q.sum() >= 2 and np.all(np.diff(q[selected_q]) > 0)
+                ),
                 "log_usable_count": int(positive.sum()),
                 "q_min_A^-1": float(np.min(q[finite])) if finite.any() else None,
                 "q_max_A^-1": float(np.max(q[finite])) if finite.any() else None,
                 "I_min_cm^-1": float(np.min(intensity[finite])) if finite.any() else None,
                 "I_max_cm^-1": float(np.max(intensity[finite])) if finite.any() else None,
-                "effective_q_min_A^-1": float(np.min(q[effective])) if effective.any() else None,
-                "effective_q_max_A^-1": float(np.max(q[effective])) if effective.any() else None,
-                "effective_point_count": int(effective.sum()),
-                "effective_negative_intensity_count": int((effective & (intensity < 0)).sum()),
-                "effective_zero_intensity_count": int((effective & (intensity == 0)).sum()),
-                "effective_log_usable_count": int(effective_positive.sum()),
+                "effective_q_low_A^-1": effective_q_low,
+                "effective_q_high_A^-1": effective_q_high,
+                "input_filter_enabled": bool(import_filter.get("enabled", False)),
+                "input_raw_point_count": raw_source_point_count,
+                "input_filtered_out_point_count": filtered_out_point_count,
             }
         )
     return rows
@@ -355,17 +366,17 @@ def write_report(
         "",
         "## 数据质量",
         "",
-        f"- 曲线数：{len(quality)}；每帧点数范围：{quality['point_count'].min()}–{quality['point_count'].max()}。",
-        f"- 原始文件 q 范围：{quality['q_min_A^-1'].min():.6g}–{quality['q_max_A^-1'].max():.6g} Å⁻¹；实际纳入分析的 q 范围：{quality['effective_q_min_A^-1'].min():.6g}–{quality['effective_q_max_A^-1'].max():.6g} Å⁻¹。",
+        f"- 曲线数：{len(quality)}；有效 q 范围内每帧点数范围：{quality['point_count'].min()}–{quality['point_count'].max()}。",
+        f"- 用户有效 q 范围：{effective_q_low:.6g}–{effective_q_high:.6g} Å⁻¹；实际纳入分析的 q 范围：{quality['q_min_A^-1'].min():.6g}–{quality['q_max_A^-1'].max():.6g} Å⁻¹。",
         f"- NaN/inf 点总数：{int(quality['nan_or_inf_pair_count'].sum())}。",
-        f"- 有效 q 范围内负强度点总数：{int(quality['effective_negative_intensity_count'].sum())}；零强度点总数：{int(quality['effective_zero_intensity_count'].sum())}。原始全范围计数保留在 `data_quality.csv`。",
+        f"- 有效 q 范围内负强度点总数：{int(quality['negative_intensity_count'].sum())}；零强度点总数：{int(quality['zero_intensity_count'].sum())}。",
         f"- 原始文件分析前后完整性校验：{'通过' if integrity_ok else '未通过'}。",
         "",
         "## 可用定量结果概览",
         "",
         *reliable_lines,
         "",
-        "逐帧数值、q 拟合区间、状态和可靠性评分见 `accepted_parameters.csv` 与 `all_parameters_audit.csv`。",
+        "逐帧数值、q 拟合区间、状态和可靠性评分见 `review/accepted_parameters.csv` 与 `review/all_parameters_audit.csv`。",
         "",
         "## 审计层候选（不纳入主结论）",
         "",
@@ -387,16 +398,59 @@ def write_report(
         "",
         "## 输出索引",
         "",
-        "- `input_manifest_original.csv`：原始输入路径、时间戳与 SHA-256。",
-        "- `data_quality.csv`：逐帧数据质量统计。",
-        "- `accepted_parameters.csv`：状态筛选后的可用标量参数。",
-        "- `all_parameters_audit.csv`：所有方法、参数、状态、q 区间、warning 和无效原因。",
-        "- `fit_quality.csv`、`sequence_*.csv`：软件原生拟合质量与序列结果。",
-        "- `summary_tables.xlsx`：便于复核的 Excel 汇总表。",
-        "- `figures/`：600 dpi PNG、SVG 和 PDF 图件。",
-        "- `run_summary.json`：完整配置与软件结果。",
+        "- `final_results.csv`：通过可靠性筛选、用于结果总结的最终参数表。",
+        "- `summary_tables.xlsx`：最终汇总工作簿；`accepted_parameters`/`reliable_parameters` 横向按曲线展示，`all_parameters_audit` 保留竖向审计。",
+        "- `audit_full.zip`：独立完整审计压缩包，不重复包含 `details_full.zip`。",
+        "- `details_full.zip`：独立完整逐帧 analysis_tables 明细包（含空表占位），所有 q 数据受有效范围约束。",
+        "- `review/`：数据质量、完整参数审计、序列结果、图件、运行配置和其他复查资料。",
     ]
     (output_dir / "final_report_zh.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def build_full_audit_zip(run, exported: Path) -> tuple[Path, Path]:
+    """Create two independent archives: details and audit."""
+
+    detail_zip = export_details_archive(run, exported / "details_full.zip")
+    with tempfile.TemporaryDirectory(prefix="sas_audit_export_") as temp_name:
+        full_export = export_result_package(run, Path(temp_name) / "full_export", detail_level="all")
+        audit_staging = Path(temp_name) / "audit_full"
+        audit_staging.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(full_export / "audit", audit_staging / "audit")
+        figures_source = exported / "figures"
+        if figures_source.is_dir():
+            shutil.copytree(figures_source, audit_staging / "figures")
+        for filename in (
+            "input_manifest_original.csv",
+            "source_integrity_after_analysis.csv",
+            "data_quality.csv",
+            "all_parameters_audit.csv",
+            "accepted_parameters.csv",
+            "reliable_parameters.csv",
+            "run_config.json",
+            "final_report_zh.md",
+        ):
+            source = exported / filename
+            if source.is_file():
+                shutil.copy2(source, audit_staging / filename)
+        q_low, q_high = effective_q_range_from_run(run)
+        (audit_staging / "README_audit_full.md").write_text(
+            "# 完整 SAXS 审计包\n\n"
+            f"- 有效 q 范围：`{q_low:.12g}–{q_high:.12g} Å⁻¹`\n"
+            "- `audit/`：全量参数、拟合质量、警告、失败输入、序列审计和明细索引。\n"
+            "- `figures/`：本次分析生成的 PNG、SVG 和 PDF 图件。\n"
+            "- 根目录 CSV：数据质量、可接受/可靠参数、输入清单与原始文件完整性检查。\n"
+            "- `details_full.zip` 是主结果目录中的独立明细包，不在本审计压缩包内重复打包。\n"
+            "- 不包含原始实验 CSV；`input_manifest_original.csv` 仅记录原始文件路径、大小、时间戳和 SHA-256。\n",
+            encoding="utf-8",
+        )
+        audit_zip = Path(
+            shutil.make_archive(
+                str(exported / "audit_full"),
+                "zip",
+                root_dir=audit_staging,
+            )
+        )
+    return detail_zip, audit_zip
 
 
 def main() -> int:
@@ -405,6 +459,12 @@ def main() -> int:
     parser.add_argument("--results-root", type=Path, default=PROJECT_DIR.parent / "results")
     parser.add_argument("--q-min", type=float, default=DEFAULT_EFFECTIVE_Q_RANGE[0], help="Effective q lower bound in A^-1.")
     parser.add_argument("--q-max", type=float, default=DEFAULT_EFFECTIVE_Q_RANGE[1], help="Effective q upper bound in A^-1.")
+    parser.add_argument(
+        "--detail-level",
+        choices=("slim", "usable", "all", "none"),
+        default="slim",
+        help="Result-package detail level; slim keeps only non-empty effective-q invariant tables.",
+    )
     args = parser.parse_args()
 
     source_paths = [args.input_dir / name for name in FRAME_NAMES]
@@ -450,8 +510,11 @@ def main() -> int:
     run.config_snapshot["selected_source_files"] = FRAME_NAMES
     run.config_snapshot["excluded_room_temperature_reference"] = "TI15-rt_00001_abs2d_cm-1.csv"
     run.config_snapshot["scientific_scope"] = "frames 1-10; sequence axis is frame, not time"
+    run.config_snapshot["result_detail_level"] = args.detail_level
+    run.config_snapshot["detail_archive"] = "details_full.zip"
+    run.config_snapshot["audit_archive"] = "audit_full.zip"
 
-    exported = export_result_package(run, output_dir)
+    exported = export_result_package(run, output_dir, detail_level=args.detail_level)
     pd.DataFrame(before).to_csv(exported / "input_manifest_original.csv", index=False, encoding="utf-8-sig")
 
     quality = pd.DataFrame(quality_rows(run)).sort_values("frame")
@@ -484,9 +547,12 @@ def main() -> int:
         json.dumps(run.config_snapshot, ensure_ascii=False, indent=2, default=native), encoding="utf-8"
     )
     write_report(exported, run, quality, parameters, integrity_ok)
+    detail_zip, audit_zip = build_full_audit_zip(run, exported)
 
     print(f"EFFECTIVE_Q_RANGE={config.effective_q_range[0]:.12g},{config.effective_q_range[1]:.12g}")
     print(f"RESULT_DIR={exported}")
+    print(f"DETAIL_ARCHIVE={detail_zip}")
+    print(f"AUDIT_ARCHIVE={audit_zip}")
     print(f"RUN_STATUS={run.status}")
     print(f"CURVES={len(run.curves)}")
     print(f"ANALYSES={len(run.analyses)}")

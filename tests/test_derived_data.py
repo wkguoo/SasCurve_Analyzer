@@ -55,6 +55,22 @@ def test_derived_table_preserves_invalid_q_rows_and_flags() -> None:
     assert table["valid_d_2pi_over_q"].tolist() == [False, False, True]
 
 
+def test_derived_table_q_range_keeps_only_selected_rows_and_source_indices() -> None:
+    curve = CurveData.create(
+        name="limited",
+        q=[0.005, 0.01, 0.02, 0.05, 0.1],
+        intensity=[5.0, 4.0, 3.0, 2.0, 1.0],
+    )
+
+    result = build_curve_derived_table(curve, q_range=(0.01, 0.05))
+
+    assert result.table["q"].tolist() == [0.01, 0.02, 0.05]
+    assert result.table["row_index"].tolist() == [1, 2, 3]
+    assert result.metadata["row_count"] == 3
+    assert result.metadata["source_row_count"] == 5
+    assert result.metadata["q_range"] == (0.01, 0.05)
+
+
 def test_derived_table_preserves_invalid_intensity_rows_and_flags() -> None:
     curve = CurveData.create(name="curve", q=[0.1, 0.2, 0.3], intensity=[10.0, 0.0, -1.0])
 
@@ -146,4 +162,3 @@ def test_export_csv_round_trip_preserves_derived_values(tmp_path) -> None:
     assert_close(loaded["ln_q"], table["ln_q"])
     assert_close(loaded["q4I"], table["q4I"])
     assert_close(loaded["q_alpha_I"], table["q_alpha_I"])
-

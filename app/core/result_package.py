@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import zipfile
 from dataclasses import asdict
 from enum import Enum
 from pathlib import Path
@@ -17,11 +18,15 @@ from app.core.auto_batch_schema import AnalysisStatus, AutoBatchRun
 from app.core.batch_cache import load_run_checkpoint
 from app.core.data_model import CurveData
 
-DetailLevel = Literal["usable", "all", "none"]
+DetailLevel = Literal["slim", "usable", "all", "none"]
 
 _USABLE_DETAIL_STATUSES = {
     AnalysisStatus.SUCCESS,
     AnalysisStatus.ASSUMPTION_DEPENDENT,
+}
+
+_EMPTY_DETAIL_COLUMNS = {
+    "crossovers": ["crossover_q", "crossover_d", "slope_difference", "confidence"],
 }
 
 
@@ -55,13 +60,43 @@ def _finite_minmax(values: Any) -> tuple[float | None, float | None]:
     return float(np.min(finite)), float(np.max(finite))
 
 
-def _curve_summary_for_export(curve: Any) -> dict[str, Any]:
+def _valid_q_range(value: object) -> tuple[float, float] | None:
+    if not isinstance(value, (tuple, list)) or len(value) != 2:
+        return None
+    try:
+        q_low = float(value[0])
+        q_high = float(value[1])
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not np.isfinite(q_low) or not np.isfinite(q_high) or q_low >= q_high:
+        return None
+    return q_low, q_high
+
+
+def _effective_q_range_for_run(run: AutoBatchRun) -> tuple[float, float] | None:
+    return _valid_q_range(run.config_snapshot.get("effective_q_range"))
+
+
+def _selected_q_values(values: Any, q_range: tuple[float, float] | None) -> np.ndarray:
+    try:
+        array = np.asarray(values, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        return np.asarray([], dtype=float)
+    finite = array[np.isfinite(array)]
+    if q_range is None:
+        return finite
+    return finite[(finite >= q_range[0]) & (finite <= q_range[1])]
+
+
+def _curve_summary_for_export(
+    curve: Any,
+    effective_q_range: tuple[float, float] | None = None,
+) -> dict[str, Any]:
     """Metadata-only curve record for run_summary.json (no q/I arrays)."""
 
     if isinstance(curve, CurveData):
-        q_min, q_max = _finite_minmax(curve.q)
-        n_points = int(np.asarray(curve.q).size)
-        return {
+        selected_q = _selected_q_values(curve.q, effective_q_range)
+        summary = {
             "curve_id": curve.curve_id,
             "name": curve.name,
             "q_unit": curve.q_unit,
@@ -69,11 +104,14 @@ def _curve_summary_for_export(curve: Any) -> dict[str, Any]:
             "source_file": curve.source_file,
             "parent_id": curve.parent_id,
             "created_at": curve.created_at,
-            "n_points": n_points,
-            "q_min": q_min,
-            "q_max": q_max,
+            "n_points": int(selected_q.size),
+            "q_min": None if selected_q.size == 0 else float(np.min(selected_q)),
+            "q_max": None if selected_q.size == 0 else float(np.max(selected_q)),
             "has_error": curve.error is not None,
         }
+        if effective_q_range is not None:
+            summary["effective_q_range"] = list(effective_q_range)
+        return summary
     if isinstance(curve, dict):
         summary = {
             key: curve.get(key)
@@ -92,27 +130,79 @@ def _curve_summary_for_export(curve: Any) -> dict[str, Any]:
             )
             if key in curve
         }
-        if "n_points" not in summary and "q" in curve:
-            try:
-                summary["n_points"] = int(np.asarray(curve.get("q")).size)
-            except (TypeError, ValueError):
-                summary["n_points"] = None
-            q_min, q_max = _finite_minmax(curve.get("q"))
-            summary["q_min"] = q_min
-            summary["q_max"] = q_max
+        if "q" in curve:
+            selected_q = _selected_q_values(curve.get("q"), effective_q_range)
+            summary["n_points"] = int(selected_q.size)
+            summary["q_min"] = None if selected_q.size == 0 else float(np.min(selected_q))
+            summary["q_max"] = None if selected_q.size == 0 else float(np.max(selected_q))
             summary["has_error"] = curve.get("error") is not None
+        if effective_q_range is not None:
+            summary["effective_q_range"] = list(effective_q_range)
         return summary
     return {"repr": str(curve)}
 
 
-def _analysis_summary_for_export(analysis: dict[str, Any]) -> dict[str, Any]:
+def _filter_detail_rows(
+    table_name: str,
+    rows: object,
+    q_range: tuple[float, float] | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(rows, list):
+        return []
+    normalized = [row for row in rows if isinstance(row, dict)]
+    if q_range is None:
+        return normalized
+    filtered: list[dict[str, Any]] = []
+    for row in normalized:
+        if "q" in row:
+            try:
+                q_value = float(row.get("q"))
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(q_value) and q_range[0] <= q_value <= q_range[1]:
+                filtered.append(row)
+            continue
+        interval_start = row.get("q_start", row.get("q_min"))
+        interval_end = row.get("q_end", row.get("q_max"))
+        if interval_start is not None or interval_end is not None:
+            try:
+                start_value = float(interval_start)
+                end_value = float(interval_end)
+            except (TypeError, ValueError):
+                continue
+            if (
+                np.isfinite(start_value)
+                and np.isfinite(end_value)
+                and q_range[0] <= start_value <= end_value <= q_range[1]
+            ):
+                filtered.append(row)
+            continue
+        # Rows without a q-bearing field are metadata/status rows rather
+        # than data coordinates, so retaining them does not introduce an
+        # out-of-range q value.
+        filtered.append(row)
+    return filtered
+
+
+def _analysis_summary_for_export(
+    analysis: dict[str, Any],
+    effective_q_range: tuple[float, float] | None = None,
+) -> dict[str, Any]:
     """Drop full table bodies from run_summary; keep row counts only."""
 
     payload = dict(analysis)
     tables = payload.get("tables") or {}
     if isinstance(tables, dict):
         payload["tables"] = {
-            str(name): {"row_count": len(rows) if isinstance(rows, list) else 0}
+            str(name): {
+                "row_count": len(
+                    _filter_detail_rows(
+                        str(name),
+                        rows,
+                        effective_q_range,
+                    )
+                )
+            }
             for name, rows in tables.items()
         }
         payload["tables_exported"] = True
@@ -123,11 +213,17 @@ def _run_summary_payload(run: AutoBatchRun) -> dict[str, Any]:
     """Build a compact run_summary that does not embed full curve arrays or fit tables."""
 
     payload = asdict(run)
-    payload["curves"] = [_curve_summary_for_export(curve) for curve in run.curves]
+    effective_q_range = _effective_q_range_for_run(run)
+    payload["curves"] = [
+        _curve_summary_for_export(curve, effective_q_range) for curve in run.curves
+    ]
     analyses = payload.get("analyses") or []
     if isinstance(analyses, list):
         payload["analyses"] = [
-            _analysis_summary_for_export(item) if isinstance(item, dict) else item for item in analyses
+            _analysis_summary_for_export(item, effective_q_range)
+            if isinstance(item, dict)
+            else item
+            for item in analyses
         ]
     return payload
 
@@ -241,8 +337,8 @@ def export_result_package(
     - ``none``: skip details/analysis_tables
     """
 
-    if detail_level not in {"usable", "all", "none"}:
-        raise ValueError("detail_level must be usable, all, or none")
+    if detail_level not in {"slim", "usable", "all", "none"}:
+        raise ValueError("detail_level must be slim, usable, all, or none")
 
     requested_target = Path(output_dir)
     target = (
@@ -264,6 +360,7 @@ def export_result_package(
     details_dir.mkdir()
 
     payload = _run_summary_payload(run)
+    effective_q_range = _effective_q_range_for_run(run)
     (summary_dir / "run_summary.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8"
     )
@@ -302,11 +399,16 @@ def export_result_package(
             if detail_level == "usable" and not _is_usable_envelope(envelope.status):
                 continue
             for table_name, rows in envelope.tables.items():
+                if detail_level == "slim" and table_name != "invariant_integrand":
+                    continue
+                filtered_rows = _filter_detail_rows(table_name, rows, effective_q_range)
+                if not filtered_rows:
+                    continue
                 filename = (
                     f"{_safe_name(envelope.curve_name)}__{_safe_name(envelope.analysis_id)}__"
                     f"{_safe_name(table_name)}.csv"
                 )
-                _write_csv(tables_dir / filename, rows)
+                _write_csv(tables_dir / filename, filtered_rows)
                 table_index.append(
                     {
                         "curve_id": envelope.curve_id,
@@ -315,7 +417,7 @@ def export_result_package(
                         "analysis_status": envelope.status.value,
                         "table_name": table_name,
                         "file": f"details/analysis_tables/{filename}",
-                        "row_count": len(rows),
+                        "row_count": len(filtered_rows),
                     }
                 )
     _write_csv(audit_dir / "analysis_tables_index.csv", table_index)
@@ -347,7 +449,8 @@ def export_result_package(
     (details_dir / "README.md").write_text(
         "# details — 方法明细（残差、拟合点等）\n\n"
         f"- detail_level: `{detail_level}`\n"
-        "- 默认 `usable`：仅导出 success / assumption_dependent 的明细表。\n"
+        "- `slim`：仅导出非空、有效 q 范围内的不变量积分明细。\n"
+        "- `usable`：导出 success / assumption_dependent 的非空明细表。\n"
         "- 使用 `detail_level='all'` 可导出全部方法明细。\n",
         encoding="utf-8",
     )
@@ -376,6 +479,69 @@ def export_result_package(
     return target
 
 
+def export_details_archive(
+    run: AutoBatchRun,
+    output_zip: str | Path,
+) -> Path:
+    """Write every method detail table to a separate q-filtered ZIP archive.
+
+    Empty tables are retained as zero-row CSVs so the archive preserves the
+    complete per-frame table inventory (including methods that had no usable
+    crossover rows).  Data-bearing rows are filtered against the run-level
+    effective q interval before they are written.
+    """
+
+    target = Path(output_zip)
+    if target.exists():
+        raise FileExistsError(f"Detail archive target already exists: {target}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    effective_q_range = _effective_q_range_for_run(run)
+    table_index: list[dict[str, Any]] = []
+    with zipfile.ZipFile(target, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for envelope in run.analyses:
+            for table_name, rows in envelope.tables.items():
+                filtered_rows = _filter_detail_rows(table_name, rows, effective_q_range)
+                filename = (
+                    f"{_safe_name(envelope.curve_name)}__{_safe_name(envelope.analysis_id)}__"
+                    f"{_safe_name(table_name)}.csv"
+                )
+                columns = None if filtered_rows else _EMPTY_DETAIL_COLUMNS.get(table_name)
+                csv_text = pd.DataFrame(filtered_rows, columns=columns).to_csv(index=False)
+                archive.writestr(
+                    f"analysis_tables/{filename}",
+                    "\ufeff" + csv_text,
+                )
+                table_index.append(
+                    {
+                        "curve_id": envelope.curve_id,
+                        "analysis_id": envelope.analysis_id,
+                        "analysis_type": envelope.analysis_type,
+                        "analysis_status": envelope.status.value,
+                        "table_name": table_name,
+                        "file": f"analysis_tables/{filename}",
+                        "row_count": len(filtered_rows),
+                    }
+                )
+        archive.writestr(
+            "details_index.csv",
+            "\ufeff" + pd.DataFrame(table_index).to_csv(index=False),
+        )
+        q_text = "not configured" if effective_q_range is None else (
+            f"{effective_q_range[0]:.12g}–{effective_q_range[1]:.12g} Å⁻¹"
+        )
+        archive.writestr(
+            "README_details_full.md",
+            "# Full SAXS detail archive\n\n"
+            f"- Effective q range: `{q_text}`\n"
+            f"- Analysis envelopes: `{len(run.analyses)}`\n"
+            f"- Detail CSV tables: `{len(table_index)}`\n"
+            "- Every data-bearing q row is restricted to the effective q range.\n"
+            "- Zero-row tables are retained to preserve the complete per-frame inventory.\n"
+            "- Original source CSV files are not included.\n",
+        )
+    return target
+
+
 def export_result_package_from_checkpoint(
     cache_dir: str | Path,
     output_dir: str | Path,
@@ -388,4 +554,8 @@ def export_result_package_from_checkpoint(
     return export_result_package(run, output_dir, detail_level=detail_level)
 
 
-__all__ = ["export_result_package", "export_result_package_from_checkpoint"]
+__all__ = [
+    "export_result_package",
+    "export_result_package_from_checkpoint",
+    "export_details_archive",
+]

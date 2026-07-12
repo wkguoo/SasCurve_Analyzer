@@ -21,6 +21,7 @@ class BatchInputCollection:
     manifest: list[dict[str, Any]]
     failed_inputs: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    import_summary: dict[str, Any] = field(default_factory=dict)
 
 
 def discover_curve_files(input_dir: str | Path) -> list[Path]:
@@ -118,7 +119,16 @@ def collect_batch_inputs(input_dir: str | Path, config: AutoBatchConfig) -> Batc
     metadata_source_path = None if config.metadata_path is None else Path(config.metadata_path).absolute()
     if metadata_source_path is not None:
         paths = [path for path in paths if path.absolute() != metadata_source_path]
-    imported = import_in_situ_series(paths)
+    # Apply the user-approved effective q range at ingestion time.  The
+    # original files are only read; the returned CurveData objects contain
+    # the selected q/I pairs and retain filter diagnostics in metadata.
+    q_low, q_high = config.effective_q_range
+    imported = import_in_situ_series(
+        paths,
+        limit_q_range=True,
+        q_min=q_low,
+        q_max=q_high,
+    )
 
     metadata = None if config.metadata_path is None else load_metadata_table(config.metadata_path)
     metadata_sha256: str | None = None
@@ -181,4 +191,5 @@ def collect_batch_inputs(input_dir: str | Path, config: AutoBatchConfig) -> Batc
         manifest=manifest,
         failed_inputs=failed_inputs,
         warnings=warnings,
+        import_summary=dict(imported.import_summary),
     )

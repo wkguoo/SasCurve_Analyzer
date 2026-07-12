@@ -67,7 +67,7 @@ class BatchWorker(QObject):
                 cache_dir=cache_dir,
             )
             requested_target = self.output / f"{self.config.batch_id}_{result.run_id[:8]}_results"
-            target = export_result_package(result, requested_target, detail_level="usable")
+            target = export_result_package(result, requested_target, detail_level="slim")
             accepted = {AnalysisStatus.SUCCESS, AnalysisStatus.ASSUMPTION_DEPENDENT}
             failed_or_unfinished = {
                 AnalysisStatus.FIT_FAILED,

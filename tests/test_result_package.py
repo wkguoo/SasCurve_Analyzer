@@ -1,4 +1,5 @@
 import json
+import zipfile
 
 import pandas as pd
 import pytest
@@ -8,9 +9,11 @@ from app.core.batch_cache import load_run_checkpoint, save_run_checkpoint
 from app.core.result_package import (
     _json_default,
     _reliable_parameter_rows,
+    export_details_archive,
     export_result_package,
     export_result_package_from_checkpoint,
 )
+from scripts.analyze_ti15_first10 import build_full_audit_zip
 
 
 def test_json_default_serializes_multi_element_numpy_arrays() -> None:
@@ -140,6 +143,78 @@ def test_result_package_refuses_existing_target(tmp_path) -> None:
     with pytest.raises(FileExistsError):
         export_result_package(_run(), target)
     assert marker.read_text(encoding="utf-8") == "keep"
+
+
+def test_slim_result_package_keeps_only_nonempty_effective_q_invariant_tables(tmp_path) -> None:
+    run = _run()
+    run.config_snapshot = {"effective_q_range": (0.01, 0.05)}
+    run.analyses[0].q_range = (0.01, 0.05)
+    run.analyses[0].tables = {
+        "derived_coordinates": [
+            {"q": 0.01, "q2I": 1.0},
+            {"q": 0.2, "q2I": 2.0},
+        ],
+        "invariant_integrand": [
+            {"q": 0.01, "q_squared_I": 1.0},
+            {"q": 0.05, "q_squared_I": 2.0},
+        ],
+        "crossovers": [],
+    }
+
+    target = export_result_package(run, tmp_path / "slim_results", detail_level="slim")
+
+    index = pd.read_csv(target / "audit" / "analysis_tables_index.csv")
+    assert index["table_name"].tolist() == ["invariant_integrand"]
+    assert index.loc[0, "row_count"] == 2
+    detail_files = list((target / "details" / "analysis_tables").glob("*.csv"))
+    assert len(detail_files) == 1
+    assert not list((target / "details" / "analysis_tables").glob("*derived_coordinates*"))
+
+
+def test_details_archive_keeps_all_tables_but_filters_q_rows(tmp_path) -> None:
+    run = _run()
+    run.config_snapshot = {"effective_q_range": (0.01, 0.05)}
+    run.analyses[0].tables = {
+        "derived_coordinates": [
+            {"q": 0.01, "value": 1.0},
+            {"q": 0.20, "value": 2.0},
+        ],
+        "crossovers": [],
+    }
+
+    archive_path = export_details_archive(run, tmp_path / "details_full.zip")
+
+    with zipfile.ZipFile(archive_path) as archive:
+        names = sorted(archive.namelist())
+        assert "README_details_full.md" in names
+        assert "details_index.csv" in names
+        detail_name = next(name for name in names if name.endswith("derived_coordinates.csv"))
+        assert len(pd.read_csv(archive.open(detail_name))) == 1
+        crossover_name = next(name for name in names if name.endswith("crossovers.csv"))
+        crossover = pd.read_csv(archive.open(crossover_name))
+        assert crossover.empty
+        assert crossover.columns.tolist() == [
+            "crossover_q",
+            "crossover_d",
+            "slope_difference",
+            "confidence",
+        ]
+
+
+def test_audit_archive_does_not_nest_detail_archive(tmp_path) -> None:
+    run = _run()
+    run.config_snapshot = {"effective_q_range": (0.01, 0.05)}
+    run.analyses[0].tables = {
+        "invariant_integrand": [{"q": 0.01, "value": 1.0}],
+    }
+    exported = export_result_package(run, tmp_path / "result", detail_level="slim")
+
+    detail_zip, audit_zip = build_full_audit_zip(run, exported)
+
+    assert detail_zip.exists()
+    with zipfile.ZipFile(audit_zip) as archive:
+        assert "details_full.zip" not in archive.namelist()
+        assert "audit/fit_quality.csv" in archive.namelist()
 
 
 def test_cancelled_result_package_is_explicitly_incomplete(tmp_path) -> None:

@@ -355,7 +355,7 @@ def _run_data_quality(curve: CurveData, q_range: tuple[float, float], config: Au
 
 def _run_derived_coordinates(curve: CurveData, q_range: tuple[float, float], config: AutoBatchConfig) -> AnalysisResult:
     del config
-    derived = build_curve_derived_table(curve)
+    derived = build_curve_derived_table(curve, q_range=q_range)
     rows = [_native(row) for row in derived.table.to_dict(orient="records")]
     values: dict[str, Any] = {}
     for metric in METHOD_REGISTRY["derived_coordinates"].metrics:

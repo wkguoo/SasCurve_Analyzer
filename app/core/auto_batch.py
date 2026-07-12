@@ -451,6 +451,8 @@ def run_auto_batch(
     run.input_manifest = list(collected.manifest)
     run.failed_inputs = list(collected.failed_inputs)
     run.warnings = list(collected.warnings)
+    if collected.import_summary:
+        run.config_snapshot["input_import_summary"] = dict(collected.import_summary)
     effective_low, effective_high = _configured_effective_q_range(run)
     _append_warning_once(
         run,

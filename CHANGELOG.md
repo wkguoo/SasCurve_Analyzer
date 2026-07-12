@@ -5441,3 +5441,240 @@ python -m py_compile app\core\plot_analysis.py tests\test_plot_analysis.py
 
 - The current working tree contains other uncommitted changes from earlier work; they were preserved and not rewritten.
 - No commit or push was performed automatically.
+
+## 2026-07-12 13:47:59 +08:00 - Import-Time q Filtering And Ti15 Archive Outputs
+
+### Task Objective
+
+Enforce the effective q interval while reading batch input, then regenerate and replace the Ti15 first-ten-frame model-free result package with both compact and full audit deliverables.
+
+### Modified Files
+
+- `app/core/batch_inputs.py`
+- `app/core/auto_batch.py`
+- `app/core/result_package.py`
+- `scripts/analyze_ti15_first10.py`
+- `scripts/build_summary_workbook.mjs`
+- `tests/test_batch_inputs.py`
+- `tests/test_result_package.py`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/`
+
+### Specific Changes
+
+- `collect_batch_inputs()` now calls the existing import q-range filter with the validated `AutoBatchConfig.effective_q_range`; the default is `0.01–0.05 Å^-1`.
+- Export filtering uses the run-level interval for all q-bearing detail rows. `details_full.zip` preserves all 30 per-frame tables, including readable empty crossover CSVs; `audit_full.zip` includes the complete audit directory and nested detail archive.
+- Added regression coverage for import-time filtering, archive table counts, empty-table headers, q filtering, and raw-file immutability.
+
+### Generated Output Files
+
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/details_full.zip`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/audit_full.zip`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/summary_tables.xlsx`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/final_report_zh.md`
+
+### How To Check Success
+
+- `python -m pytest -q` returns `563 passed`.
+- The run records `effective_q_range=[0.01,0.05]`, input filter enabled, 2,140 imported points, and 10/10 unchanged source hashes.
+- Independent package validation finds 30 detail tables, 0 q rows outside the effective interval, and 0 workbook formula errors.
+
+### Notes And Risks
+
+- The effective interval is a user-configured analysis range and must be confirmed for other instruments or samples.
+- Original source CSV files remain unchanged and are not included in the archives.
+- No Git commit, push, upload, or automatic packaging was performed.
+
+## 2026-07-12 14:08:57 +08:00 - Keep Audit And Detail Archives Independent
+
+### Task Objective
+
+Modify the Ti15 result-package workflow so `audit_full.zip` does not duplicate the separately delivered `details_full.zip`.
+
+### Modified Files
+
+- `scripts/analyze_ti15_first10.py`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/`
+
+### Specific Changes
+
+- Removed the nested detail archive from audit ZIP assembly.
+- Updated the audit ZIP README to state that the detail archive is separate.
+- Re-ran the analysis with effective q `[0.01,0.05]` and regenerated the workbook and figures.
+
+### Generated Output Files
+
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/audit_full.zip`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/details_full.zip`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/summary_tables.xlsx`
+
+### How To Check Success
+
+- `audit_full.zip` has no nested `details_full.zip` entry.
+- `details_full.zip` contains 30 tables and zero q rows outside the effective interval.
+- The run has 10 curves, 214 points per frame, 10/10 unchanged source hashes, and 0 workbook formula errors.
+- Full regression suite: `564 passed`.
+
+### Notes And Risks
+
+- Both archives must be retained together when a complete audit plus full details is required.
+- Original source files remain unchanged and are not included in either archive.
+- No Git commit, push, upload, or automatic packaging was performed.
+
+## 2026-07-12 14:26:50 +08:00 - Simplify Ti15 Result Package For First-View Use
+
+### Task Objective
+
+Reduce the visible result-package complexity so users first see only the final fitted/calculated result and the Chinese run report, while retaining complete audit and detail materials for optional troubleshooting.
+
+### Modified Files
+
+- `scripts/build_summary_workbook.mjs`
+- `scripts/analyze_ti15_first10.py`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/`
+
+### Specific Changes
+
+- The result-package builder now keeps the root focused on `final_report_zh.md`, `final_results.csv`, `summary_tables.xlsx`, `audit_full.zip`, `details_full.zip`, and `README.md`.
+- Secondary CSV/JSON files, figures, and the `audit/`, `details/`, and `summary/` directories are grouped under `review/`.
+- `audit_full.zip` and `details_full.zip` remain separate; the audit archive no longer nests the detail archive and now includes a copy of the generated figures.
+- Workbook rebuilding supports both the compact package layout and the pre-compaction layout.
+- All analysis data remain constrained to effective `q=0.01–0.05 Å⁻¹`; raw source CSV files remain untouched.
+
+### How To Check Success
+
+- Root contains six primary files and one `review/` directory only.
+- `final_results.csv` matches the reliable-parameter table used by the report.
+- `summary_tables.xlsx` opens with 11 sheets and 0 formula errors.
+- `audit_full.zip` has no `details_full.zip` member; `details_full.zip` contains 30 detail tables.
+- Q-range, 10-frame input, 10/10 source-integrity, and raw-file immutability checks pass.
+
+### Notes And Risks
+
+- The `review/` directory and both ZIP archives are intentionally retained; they are not redundant with the primary result files and should be opened only for data-quality or method-level review.
+- No raw-data overwrite, upload, Git commit, Git push, or automatic project packaging was performed.
+
+## 2026-07-12 14:36:38 +08:00 - Finalize Compact Package Cleanup
+
+### Task Objective
+
+Complete the compact result-package rerun and ensure temporary workbook inspection output does not remain visible in the user-facing result directory.
+
+### Modified Files
+
+- `scripts/build_summary_workbook.mjs`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/`
+- `CHANGELOG.md`
+- `../CHANGELOG.md`
+
+### Specific Changes
+
+- The workbook builder now removes its temporary `summary_tables.xlsx.inspect.ndjson` file after verification.
+- The fixed result directory was regenerated after the final report-path correction and rebuilt once more from the compact layout.
+
+### How To Check Success
+
+- The result root contains exactly six primary files plus `review/`; no inspection sidecar remains.
+- The compact-layout rebuild again reports 11 workbook sheets and zero formula-error matches.
+
+### Notes And Risks
+
+- Review materials remain available under `review/` and in the two independent ZIP archives.
+
+## 2026-07-12 14:51:45 +08:00 - Prepare Horizontal Parameter Layout In Summary Workbook
+
+### Task Objective
+
+Make same-curve parameters easier to compare by arranging the user-facing parameter tables horizontally rather than one parameter per row.
+
+### Modified Files
+
+- `scripts/build_summary_workbook.mjs`
+- `CHANGELOG.md`
+- `../CHANGELOG.md`
+
+### Specific Changes
+
+- `accepted_parameters` and `reliable_parameters` are now transformed to one row per curve with analysis-type-prefixed parameter columns.
+- The horizontal tables retain status/reliability summaries, q-range summaries, accepted/reliable parameter counts, and warning counts.
+- `all_parameters_audit` remains vertical so parameter-level invalid reasons, q intervals, and warnings remain traceable.
+
+### How To Check Success
+
+- The in-memory workbook build produced 10 data rows for each horizontal parameter table.
+- Final Excel overwrite is pending because the existing `summary_tables.xlsx` was locked by another process.
+
+### Notes And Risks
+
+- Close the open Excel workbook before regenerating; no raw experimental data were touched.
+
+## 2026-07-12 14:56:12 +08:00 - Finalize Readable Horizontal Headers
+
+### Task Objective
+
+Complete and visually verify the horizontal parameter-table layout after the Excel file lock was released.
+
+### Modified Files
+
+- `scripts/build_summary_workbook.mjs`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/summary_tables.xlsx`
+- `CHANGELOG.md`
+- `../CHANGELOG.md`
+
+### Specific Changes
+
+- Shortened the displayed q-range summary to distinct effective ranges per curve.
+- Increased horizontal-table header height so analysis-type/parameter/unit labels remain readable.
+- Rebuilt the workbook successfully after the previous Windows file-lock error.
+
+### How To Check Success
+
+- `accepted_parameters`: 10 curve rows and 49 columns.
+- `reliable_parameters`: 10 curve rows and 36 columns.
+- `all_parameters_audit`: remains 1,100 parameter rows in vertical audit format.
+- Workbook formula-error scan: 0 matches; effective q range remains `0.01–0.05 Å⁻¹`.
+
+### Notes And Risks
+
+- Horizontal parameter columns are intentionally wide; use horizontal scrolling for later parameters.
+- Original CSV data were not modified.
+
+## 2026-07-12 15:05:03 +08:00 - Synchronize Horizontal Table Documentation
+
+### Task Objective
+
+Synchronize the implemented horizontal Excel parameter-table rule across project and result-package documentation.
+
+### Modified Files
+
+- `docs/user_manual_zh.md`
+- `README.md`
+- `docs/developer_notes.md`
+- `scripts/build_summary_workbook.mjs`
+- `scripts/analyze_ti15_first10.py`
+- `../README.md`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/README.md`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_122352/final_report_zh.md`
+- `CHANGELOG.md`
+- `../CHANGELOG.md`
+
+### Specific Changes
+
+- Documented that `accepted_parameters` and `reliable_parameters` are one-row-per-curve horizontal tables with `analysis_type__parameter [unit]` headers.
+- Documented that `all_parameters_audit` remains a vertical lossless audit table and `final_results.csv` remains a long machine-readable table.
+- Updated the result-package README generator and the current Chinese report so future generated packages carry the same explanation.
+
+### How To Check Success
+
+- Documentation search finds the same horizontal/vertical layout rule in the user manual, both project README levels, developer notes, result README, and final report.
+- Workbook regeneration succeeds with 11 sheets, horizontal parameter tables, and 0 formula-error matches.
+- The temporary workbook inspection sidecar is removed after generation.
+
+### Notes And Risks
+
+- This documentation synchronization changes no analysis algorithm, parameter values, q range, or raw experimental data.

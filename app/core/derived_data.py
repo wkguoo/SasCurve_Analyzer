@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +96,21 @@ def _validate_curve_arrays(curve: CurveData) -> tuple[np.ndarray, np.ndarray, np
         if error.shape != q.shape:
             raise ValueError(f"error length mismatch: error={error.shape}, q={q.shape}.")
     return q, intensity, error
+
+
+def _normalize_q_range(q_range: tuple[float, float] | list[float] | None) -> tuple[float, float] | None:
+    if q_range is None:
+        return None
+    if not isinstance(q_range, (tuple, list)) or len(q_range) != 2:
+        raise ValueError("q_range must contain two finite ascending bounds")
+    try:
+        q_low = float(q_range[0])
+        q_high = float(q_range[1])
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("q_range must contain two finite ascending bounds") from exc
+    if not isfinite(q_low) or not isfinite(q_high) or q_low >= q_high:
+        raise ValueError("q_range must contain two finite ascending bounds")
+    return q_low, q_high
 
 
 def _safe_where(mask: np.ndarray, values: np.ndarray) -> np.ndarray:
@@ -232,9 +248,20 @@ def build_curve_derived_table(
     options: DerivedDataOptions | None = None,
     reference_curve: CurveData | None = None,
     preserve_input_order: bool = True,
+    q_range: tuple[float, float] | list[float] | None = None,
 ) -> DerivedDataResult:
     options = options or DerivedDataOptions()
+    selected_q_range = _normalize_q_range(q_range)
     q, intensity, error = _validate_curve_arrays(curve)
+    source_row_indices = np.arange(q.size, dtype=int)
+    source_row_count = int(q.size)
+    if selected_q_range is not None:
+        keep = np.isfinite(q) & (q >= selected_q_range[0]) & (q <= selected_q_range[1])
+        q = q[keep]
+        intensity = intensity[keep]
+        source_row_indices = source_row_indices[keep]
+        if error is not None:
+            error = error[keep]
     row_count = q.size
     warnings: list[str] = []
 
@@ -308,7 +335,7 @@ def build_curve_derived_table(
 
     table = pd.DataFrame(
         {
-            "row_index": np.arange(row_count, dtype=int),
+            "row_index": source_row_indices,
             "sort_index_by_q": sort_rank,
             "curve_id": curve.curve_id,
             "curve_name": curve.name,
@@ -372,6 +399,8 @@ def build_curve_derived_table(
         "reference_curve_name": None if reference_curve is None else reference_curve.name,
         "preserve_input_order": preserve_input_order,
         "row_count": row_count,
+        "source_row_count": source_row_count,
+        "q_range": selected_q_range,
         "no_interpolation": True,
         "no_smoothing": True,
         "no_background_subtraction": True,
@@ -384,4 +413,3 @@ def build_curve_derived_table(
         warnings=warnings,
         metadata=metadata,
     )
-

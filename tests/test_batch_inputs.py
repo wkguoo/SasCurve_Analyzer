@@ -58,6 +58,30 @@ def test_metadata_is_merged_without_modifying_source(tmp_path: Path) -> None:
     assert curve_path.read_bytes() == original
 
 
+def test_collect_batch_inputs_filters_q_at_ingestion_and_keeps_source_unchanged(tmp_path: Path) -> None:
+    curve_path = tmp_path / "sample_0001.csv"
+    original = b"q,I\n0.001,20\n0.01,10\n0.02,5\n0.05,2\n0.08,1\n"
+    curve_path.write_bytes(original)
+
+    result = collect_batch_inputs(tmp_path, AutoBatchConfig(batch_id="sample"))
+
+    assert len(result.curves) == 1
+    curve = result.curves[0]
+    assert curve.q.tolist() == [0.01, 0.02, 0.05]
+    assert curve.intensity.tolist() == [10.0, 5.0, 2.0]
+    q_filter = curve.metadata["import_q_range_filter"]
+    assert q_filter["enabled"] is True
+    assert q_filter["q_min"] == 0.01
+    assert q_filter["q_max"] == 0.05
+    assert q_filter["raw_point_count"] == 5
+    assert q_filter["imported_point_count"] == 3
+    assert q_filter["filtered_out_point_count"] == 2
+    assert result.import_summary["q_range_filter_enabled"] is True
+    assert result.import_summary["raw_total_points"] == 5
+    assert result.import_summary["imported_total_points"] == 3
+    assert curve_path.read_bytes() == original
+
+
 def test_manifest_hash_failure_is_isolated_per_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     good_path = tmp_path / "sample_0001.csv"
     failing_path = tmp_path / "sample_0002.csv"

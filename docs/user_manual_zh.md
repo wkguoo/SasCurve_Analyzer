@@ -531,6 +531,20 @@ python scripts\analyze_ti15_first10.py --input-dir ..\results\spectra_csv --resu
 - `all_parameters_audit.csv` 中记录共同 q 区间、状态、warning 和未采用 Guinier/Porod 的原因；
 - 原始 CSV 的大小、时间戳和 SHA-256 完整性检查保持不变。
 
+##### 结果包中的 Excel 汇总表布局
+
+`summary_tables.xlsx` 的用户常用参数表采用横向布局，便于在同一行比较同一条曲线的多个参数：
+
+- `Overview`：显示分析对象、有效 q 范围、单位、导入数量和数据质量概览；
+- `accepted_parameters`：每条曲线一行，横向列出通过基本状态筛选的参数；
+- `reliable_parameters`：每条曲线一行，横向列出通过可靠性筛选、用于结果总结的参数；
+- 参数列名使用 `analysis_type__parameter [unit]` 格式，例如 `compensated__plateau_cv [dimensionless]`；
+- 左侧保留 `status_summary`、`reliability_summary`、`q_ranges`、参数数量和 warning 数量，便于先判断结果质量；
+- `all_parameters_audit` 保留逐参数竖向格式，其中包含每个参数的 q 区间、状态、invalid reason 和完整 warning，供问题复查；
+- 根目录的 `final_results.csv` 仍保持长表格式，便于程序读取和完整追溯，不与 Excel 中的横向展示表混淆。
+
+上述表格中的纳入计算数据均受本次运行确认的有效 q 范围约束；横向展示只改变 Excel 的组织方式，不改变参数数值、拟合规则或原始 CSV 文件。
+
 ### 8.4 Guinier 图 ln I(q) vs q²
 
 用于低 q 区 Guinier 检查。横坐标是 q²，选择区间时不要把 q² 当成 q。

@@ -302,6 +302,18 @@ python main.py
 
 完整中文新手手册见 [`docs/user_manual_zh.md`](docs/user_manual_zh.md)，内容包括数据准备、界面功能、q 范围选择、绘图、无模型分析、批量比较、导出、排错、术语表和方法边界。
 
+### Ti15 自动批处理结果包与 Excel 表格
+
+Ti15 前十帧无模型分析的结果包默认使用有效 `q=0.01–0.05 Å⁻¹`。打开 `summary_tables.xlsx` 时，优先查看 `Overview`、`reliable_parameters` 和 `data_quality`：
+
+- `accepted_parameters` 和 `reliable_parameters` 均按“每条曲线一行、每个参数一列”横向排布；参数列名采用 `analysis_type__parameter [unit]` 格式；
+- `reliable_parameters` 是通过可靠性筛选、用于结果总结的参数表；
+- `all_parameters_audit` 保留逐参数竖向审计格式，用于查看 q 区间、状态、invalid reason 和 warning；
+- `final_results.csv` 保留长表格式，适合程序读取和完整追溯；
+- `review/`、`audit_full.zip` 和 `details_full.zip` 用于数据质量、图件、序列和明细复查，不影响主结果的首次查看。
+
+横向排布只改变 Excel 的展示结构，不改变 q 范围、计算数值、分析规则或原始实验数据。
+
 ### 注意事项
 
 - 软件不做原始二维图像积分、背景扣除、透过率校正、厚度校正或绝对强度校准，也不根据单次拟合自动判定材料结构或唯一形貌。
