@@ -188,9 +188,9 @@ def test_details_archive_keeps_all_tables_but_filters_q_rows(tmp_path) -> None:
         names = sorted(archive.namelist())
         assert "README_details_full.md" in names
         assert "details_index.csv" in names
-        detail_name = next(name for name in names if name.endswith("derived_coordinates.csv"))
+        detail_name = next(name for name in names if "__derived_coordinates__" in name and name.endswith(".csv"))
         assert len(pd.read_csv(archive.open(detail_name))) == 1
-        crossover_name = next(name for name in names if name.endswith("crossovers.csv"))
+        crossover_name = next(name for name in names if "__crossovers__" in name and name.endswith(".csv"))
         crossover = pd.read_csv(archive.open(crossover_name))
         assert crossover.empty
         assert crossover.columns.tolist() == [

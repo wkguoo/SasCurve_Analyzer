@@ -7,6 +7,7 @@ import re
 import zipfile
 from dataclasses import asdict
 from enum import Enum
+from hashlib import sha1
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -45,6 +46,23 @@ def _json_default(value: Any) -> Any:
 def _safe_name(value: object) -> str:
     text = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("._")
     return text[:100] or "unnamed"
+
+
+def _detail_filename(envelope: Any, table_name: str) -> str:
+    """Build a short, collision-resistant detail filename.
+
+    Full UUID-based analysis IDs made Windows staging paths unnecessarily long
+    and could fail near the legacy MAX_PATH boundary. The CSV index retains the
+    complete analysis ID; the filename only needs readable method/table tokens
+    plus a short deterministic suffix.
+    """
+
+    identity = f"{envelope.curve_id}|{envelope.analysis_id}|{table_name}"
+    digest = sha1(identity.encode("utf-8")).hexdigest()[:8]
+    return (
+        f"{_safe_name(envelope.curve_name)}__{_safe_name(envelope.analysis_type)}__"
+        f"{_safe_name(table_name)}__{digest}.csv"
+    )
 
 
 def _finite_minmax(values: Any) -> tuple[float | None, float | None]:
@@ -238,6 +256,20 @@ def _parameter_rows(run: AutoBatchRun) -> list[dict[str, Any]]:
                 "analysis_id": envelope.analysis_id,
                 "analysis_type": envelope.analysis_type,
                 "analysis_status": envelope.status.value,
+                "execution_status": envelope.execution_status,
+                "candidate_status": envelope.candidate_status,
+                "consensus_status": envelope.consensus_status,
+                "detection_status": envelope.detection_status,
+                "reliability_status": envelope.reliability_status,
+                "reporting_status": envelope.reporting_status,
+                "reporting_reason_codes": " | ".join(envelope.reporting_reason_codes),
+                "related_analysis_ids": " | ".join(envelope.related_analysis_ids),
+                "feature_relation": envelope.feature_relation,
+                "range_source": envelope.range_source,
+                "range_reason_codes": " | ".join(envelope.range_reason_codes),
+                "q_selection_basis": envelope.q_selection_basis,
+                "q_selection_evidence": envelope.q_selection_evidence,
+                "detection_reason_codes": " | ".join(envelope.detection_reason_codes),
                 "q_start": None if envelope.q_range is None else envelope.q_range[0],
                 "q_end": None if envelope.q_range is None else envelope.q_range[1],
                 "reliability_label": envelope.reliability_label,
@@ -257,6 +289,20 @@ def _fit_quality_rows(run: AutoBatchRun) -> list[dict[str, Any]]:
             "analysis_id": item.analysis_id,
             "analysis_type": item.analysis_type,
             "status": item.status.value,
+            "execution_status": item.execution_status,
+            "candidate_status": item.candidate_status,
+            "consensus_status": item.consensus_status,
+            "detection_status": item.detection_status,
+            "reliability_status": item.reliability_status,
+            "reporting_status": item.reporting_status,
+            "reporting_reason_codes": " | ".join(item.reporting_reason_codes),
+            "related_analysis_ids": " | ".join(item.related_analysis_ids),
+            "feature_relation": item.feature_relation,
+            "range_source": item.range_source,
+            "range_reason_codes": " | ".join(item.range_reason_codes),
+            "q_selection_basis": item.q_selection_basis,
+            "q_selection_evidence": item.q_selection_evidence,
+            "detection_reason_codes": " | ".join(item.detection_reason_codes),
             "q_start": None if item.q_range is None else item.q_range[0],
             "q_end": None if item.q_range is None else item.q_range[1],
             "reliability_label": item.reliability_label,
@@ -292,6 +338,9 @@ def _reliable_parameter_rows(run: AutoBatchRun) -> list[dict[str, Any]]:
         if row.get("analysis_status") not in {AnalysisStatus.SUCCESS.value, AnalysisStatus.ASSUMPTION_DEPENDENT.value}:
             continue
         if row.get("status") not in {AnalysisStatus.SUCCESS.value, AnalysisStatus.ASSUMPTION_DEPENDENT.value}:
+            continue
+        reporting_status = str(row.get("reporting_status") or "")
+        if reporting_status not in {"", "not_evaluated", "reportable"}:
             continue
         scalar_value = _reliable_scalar(row.get("value"))
         if scalar_value is None:
@@ -378,6 +427,14 @@ def export_result_package(
     _write_csv(audit_dir / "fit_quality.csv", _fit_quality_rows(run))
     _write_csv(audit_dir / "failed_inputs.csv", run.failed_inputs)
     _write_csv(audit_dir / "warnings.csv", [{"warning": warning} for warning in run.warnings])
+    _write_csv(audit_dir / "range_audit.csv", run.range_audit)
+    consensus_rows = []
+    for region_name, detail in (run.consensus_region_details or {}).items():
+        row = {"region_type": region_name}
+        if isinstance(detail, dict):
+            row.update(detail)
+        consensus_rows.append(row)
+    _write_csv(audit_dir / "consensus_regions.csv", consensus_rows)
     if run.transition_flags:
         _write_csv(audit_dir / "model_transition_flags.csv", run.transition_flags)
 
@@ -404,10 +461,7 @@ def export_result_package(
                 filtered_rows = _filter_detail_rows(table_name, rows, effective_q_range)
                 if not filtered_rows:
                     continue
-                filename = (
-                    f"{_safe_name(envelope.curve_name)}__{_safe_name(envelope.analysis_id)}__"
-                    f"{_safe_name(table_name)}.csv"
-                )
+                filename = _detail_filename(envelope, table_name)
                 _write_csv(tables_dir / filename, filtered_rows)
                 table_index.append(
                     {
@@ -441,6 +495,7 @@ def export_result_package(
     (audit_dir / "README.md").write_text(
         "# audit — 质量检查与完整审计\n\n"
         "- `parameters.csv` / `fit_quality.csv`：全部方法与状态\n"
+        "- `range_audit.csv` / `consensus_regions.csv`：逐任务区间来源、候选/共识状态及证据\n"
         "- `warnings.csv` / `failed_inputs.csv`\n"
         "- `analysis_tables_index.csv`：明细表索引\n"
         "- 非空 `sequence_*.csv`：原位序列审计\n",
@@ -501,10 +556,7 @@ def export_details_archive(
         for envelope in run.analyses:
             for table_name, rows in envelope.tables.items():
                 filtered_rows = _filter_detail_rows(table_name, rows, effective_q_range)
-                filename = (
-                    f"{_safe_name(envelope.curve_name)}__{_safe_name(envelope.analysis_id)}__"
-                    f"{_safe_name(table_name)}.csv"
-                )
+                filename = _detail_filename(envelope, table_name)
                 columns = None if filtered_rows else _EMPTY_DETAIL_COLUMNS.get(table_name)
                 csv_text = pd.DataFrame(filtered_rows, columns=columns).to_csv(index=False)
                 archive.writestr(

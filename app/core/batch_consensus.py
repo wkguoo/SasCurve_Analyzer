@@ -37,6 +37,8 @@ class ConsensusRegion:
     median_score: float
     supporting_curve_ids: tuple[str, ...]
     median_n_points: float = 0.0
+    candidate_n_points_min: float = 0.0
+    candidate_n_points_max: float = 0.0
     log_median_q_range: tuple[float, float] | None = None
 
 
@@ -122,6 +124,8 @@ def _region_from_cluster(
         median_score=float(median([row.score for row in unique_rows])),
         supporting_curve_ids=tuple(row.curve_id for row in unique_rows),
         median_n_points=float(median([row.n_points for row in unique_rows])),
+        candidate_n_points_min=float(min(row.n_points for row in unique_rows)),
+        candidate_n_points_max=float(max(row.n_points for row in unique_rows)),
         log_median_q_range=log_median_q_range,
     )
 

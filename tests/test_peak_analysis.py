@@ -6,6 +6,16 @@ from app.core.data_model import CurveData
 from app.core.feature_extraction import detect_peaks
 
 
+def test_automatic_peak_scan_does_not_turn_a_monotonic_power_law_into_many_peaks() -> None:
+    q = np.geomspace(0.01, 0.05, 240)
+    curve = CurveData.create(name="monotonic-power-law", q=q, intensity=12.0 * q ** -3.2)
+
+    result = detect_peaks(curve, (0.01, 0.05))
+
+    assert result.results["candidate_count"] <= 3
+    assert result.results["detection_status"] != "detected"
+
+
 def test_single_peak_detection_and_d_spacing() -> None:
     q = np.linspace(0.1, 1.0, 300)
     peak_q = 0.42

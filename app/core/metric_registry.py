@@ -25,6 +25,11 @@ class MethodSpec:
     metrics: tuple[MetricSpec, ...]
     sample_types: tuple[str, ...] = ()
     config_flag: str | None = None
+    # ``effective`` means that the method receives the already-confirmed input
+    # boundary and performs its own local checks. ``candidate_consensus`` is
+    # reserved for methods whose shared fit needs a method-specific candidate
+    # interval (currently Guinier, power-law, and Porod).
+    range_strategy: str = "effective"
 
 
 def _metrics(*names: str) -> tuple[MetricSpec, ...]:
@@ -95,6 +100,7 @@ METHOD_REGISTRY: dict[str, MethodSpec] = {
             "excluded_points",
             "weighted_fit",
         ),
+        range_strategy="candidate_consensus",
     ),
     "power_law": MethodSpec(
         "power_law",
@@ -112,6 +118,7 @@ METHOD_REGISTRY: dict[str, MethodSpec] = {
             "excluded_points",
             "weighted_fit",
         ),
+        range_strategy="candidate_consensus",
     ),
     "local_slope": MethodSpec(
         "local_slope",
@@ -162,6 +169,7 @@ METHOD_REGISTRY: dict[str, MethodSpec] = {
             "plateau_cv",
             "noise_score",
         ),
+        range_strategy="candidate_consensus",
     ),
     "kratky": MethodSpec(
         "kratky",

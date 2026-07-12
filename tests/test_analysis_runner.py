@@ -69,6 +69,38 @@ def test_missing_applicable_handler_is_a_batch_configuration_error(
         run_registered_analysis(_curve(), "data_quality", (0.01, 0.2), AutoBatchConfig(batch_id="missing-handler"))
 
 
+def test_missing_q_range_is_not_run_and_not_reportable() -> None:
+    envelope = run_registered_analysis(
+        _curve(),
+        "power_law",
+        None,
+        AutoBatchConfig(batch_id="missing-range"),
+    )[0]
+
+    assert envelope.status is AnalysisStatus.MISSING_PREREQUISITE
+    assert envelope.execution_status == "not_run"
+    assert envelope.detection_status == "not_run"
+    assert envelope.reporting_status == "not_reportable"
+
+
+def test_power_law_fit_with_narrow_executed_interval_is_audit_only() -> None:
+    q = np.linspace(0.010, 0.011, 32)
+    curve = CurveData.create(name="narrow-power-law", q=q, intensity=4.0 * q ** -3.0)
+
+    envelope = run_registered_analysis(
+        curve,
+        "power_law",
+        (float(q.min()), float(q.max())),
+        AutoBatchConfig(batch_id="narrow-power-law"),
+    )[0]
+
+    assert envelope.status is AnalysisStatus.SUCCESS
+    assert envelope.fit_quality["execution_fit_points"] == 32
+    assert envelope.fit_quality["execution_log_q_span_decades"] < 0.10
+    assert envelope.reporting_status == "exploratory"
+    assert "execution_log_q_span_below_reporting_threshold" in envelope.reporting_reason_codes
+
+
 def test_every_applicable_registry_method_returns_registry_complete_envelopes() -> None:
     curve = CurveData.create(name="short-runner", q=[0.01, 0.02, 0.03, 0.04], intensity=[4.0, 3.0, 2.0, 1.0])
     config = AutoBatchConfig(batch_id="all-methods")

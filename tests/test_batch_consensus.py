@@ -47,6 +47,8 @@ def test_candidate_consensus_prefers_high_coverage_over_single_high_score() -> N
     assert result.region_type == "guinier"
     assert result.coverage == pytest.approx(2 / 3)
     assert result.median_score == pytest.approx(0.85)
+    assert result.candidate_n_points_min == pytest.approx(0.0)
+    assert result.candidate_n_points_max == pytest.approx(0.0)
     assert result.q_range == pytest.approx((0.011, 0.03))
     assert result.log_median_q_range == pytest.approx((sqrt(0.01 * 0.011), sqrt(0.03 * 0.031)))
     assert result.supporting_curve_ids == ("a", "b")

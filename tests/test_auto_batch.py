@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -8,7 +9,7 @@ import pytest
 import app.core.auto_batch as auto_batch
 import app.core.batch_cache as batch_cache
 from app.core.auto_batch import run_auto_batch
-from app.core.auto_batch_schema import AnalysisEnvelope, AnalysisStatus, AutoBatchConfig, ParameterValue
+from app.core.auto_batch_schema import AnalysisEnvelope, AnalysisStatus, AutoBatchConfig, AutoBatchRun, ParameterValue
 from app.core.batch_consensus import ConsensusRegion
 from app.core.batch_cache import job_cache_key
 from app.core.batch_inputs import BatchInputCollection
@@ -42,6 +43,31 @@ def _success_envelope(
 
 def _success_runner(curve, method_id, q_range, config):
     return [_success_envelope(curve, method_id, q_range)]
+
+
+def test_overlapping_shoulder_and_crossover_are_linked_and_not_reported_independently() -> None:
+    curve = CurveData.create(name="linked-features", q=[0.01, 0.02, 0.03], intensity=[5.0, 4.0, 3.0])
+    shoulder = _success_envelope(curve, "shoulders", (0.01, 0.03))
+    crossover = _success_envelope(curve, "crossover", (0.01, 0.03))
+    shoulder.parameters = [ParameterValue(name="shoulder_q", value=0.02)]
+    crossover.parameters = [ParameterValue(name="crossover_q", value=0.02)]
+    run = AutoBatchRun(
+        batch_id="linked-features",
+        curves=[curve],
+        analyses=[shoulder, crossover],
+        config_snapshot={"effective_q_range": [0.01, 0.03]},
+    )
+
+    auto_batch._link_related_local_features(run)
+
+    assert shoulder.feature_relation == "shoulder_crossover_same_q_grid_transition"
+    assert crossover.feature_relation == "shoulder_crossover_same_q_grid_transition"
+    assert crossover.analysis_id in shoulder.related_analysis_ids
+    assert shoulder.analysis_id in crossover.related_analysis_ids
+    assert shoulder.detection_status == "ambiguous"
+    assert crossover.detection_status == "ambiguous"
+    assert shoulder.reporting_status == "not_reportable"
+    assert crossover.reporting_status == "not_reportable"
 
 
 def test_one_method_failure_does_not_abort_batch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -177,7 +203,7 @@ def test_cancellation_before_second_job_preserves_first_result_and_skips_next_ru
     assert any("Cancellation requested" in warning for warning in run.warnings)
 
 
-def test_missing_consensus_passes_none_without_per_frame_fallback(
+def test_missing_method_consensus_only_blocks_shared_fit_methods(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -194,13 +220,13 @@ def test_missing_consensus_passes_none_without_per_frame_fallback(
     assert run.status == "completed"
     assert q_ranges["guinier"] is None
     assert q_ranges["power_law"] is None
-    assert q_ranges["local_slope"] is None
-    assert q_ranges["crossover"] is None
     assert q_ranges["porod"] is None
-    assert q_ranges["peaks"] is None
-    assert q_ranges["shoulders"] is None
-    assert q_ranges["oscillations"] is None
-    assert any("strict per-frame fallback is disabled" in warning for warning in run.warnings)
+    assert q_ranges["local_slope"] == (0.01, 0.03)
+    assert q_ranges["crossover"] == (0.01, 0.03)
+    assert q_ranges["peaks"] == (0.01, 0.03)
+    assert q_ranges["shoulders"] == (0.01, 0.03)
+    assert q_ranges["oscillations"] == (0.01, 0.03)
+    assert any("no executable method-specific q interval" in warning for warning in run.warnings)
 
 
 def test_multiple_runner_envelopes_are_preserved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -224,7 +250,7 @@ def test_multiple_runner_envelopes_are_preserved(tmp_path: Path, monkeypatch: py
     assert [item.analysis_id.rsplit(":", 1)[-1] for item in shape_envelopes] == ["sphere", "cylinder"]
 
 
-def test_lamellar_and_peak_family_methods_share_peak_consensus_range(
+def test_feature_methods_use_effective_boundary_not_peak_consensus_range(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -252,11 +278,84 @@ def test_lamellar_and_peak_family_methods_share_peak_consensus_range(
     assert run.status == "completed"
     assert run.consensus_regions == {"peak": (0.015, 0.025)}
     assert {method_id: q_ranges[method_id] for method_id in ("peaks", "shoulders", "oscillations", "lamellar")} == {
-        "peaks": (0.015, 0.025),
-        "shoulders": (0.015, 0.025),
-        "oscillations": (0.015, 0.025),
-        "lamellar": (0.015, 0.025),
+        "peaks": (0.01, 0.03),
+        "shoulders": (0.01, 0.03),
+        "oscillations": (0.01, 0.03),
+        "lamellar": (0.01, 0.03),
     }
+    assert all(
+        item.range_source == "effective_q_range"
+        for item in run.analyses
+        if item.analysis_type in {"peaks", "shoulders", "oscillations", "lamellar"}
+    )
+
+
+def test_per_frame_fallback_uses_only_the_method_specific_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_curve(tmp_path / "s_001.csv", 1)
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+
+    def fake_detection(curve, q_range=None):
+        return SimpleNamespace(
+            results={
+                "candidates": [
+                    {
+                        "curve_id": curve.curve_id,
+                        "region_type": "guinier_candidate",
+                        "q_start": 0.010,
+                        "q_end": 0.018,
+                        "score": 0.80,
+                        "n_points": 8,
+                        "fit_ready": True,
+                    },
+                    {
+                        "curve_id": curve.curve_id,
+                        "region_type": "power_law_candidate",
+                        "q_start": 0.019,
+                        "q_end": 0.026,
+                        "score": 0.90,
+                        "n_points": 8,
+                        "fit_ready": True,
+                    },
+                    {
+                        "curve_id": curve.curve_id,
+                        "region_type": "porod_candidate",
+                        "q_start": 0.027,
+                        "q_end": 0.030,
+                        "score": 0.70,
+                        "n_points": 8,
+                        "fit_ready": True,
+                    },
+                ]
+            }
+        )
+
+    monkeypatch.setattr(auto_batch, "detect_auto_regions", fake_detection)
+    q_ranges: dict[str, tuple[float, float] | None] = {}
+
+    def runner(curve, method_id, q_range, config):
+        q_ranges[method_id] = q_range
+        return [_success_envelope(curve, method_id, q_range)]
+
+    run = run_auto_batch(
+        tmp_path,
+        AutoBatchConfig(batch_id="fallback", allow_per_frame_range_fallback=True),
+        analysis_runner=runner,
+    )
+
+    assert q_ranges["guinier"] == (0.01, 0.018)
+    assert q_ranges["power_law"] == (0.019, 0.026)
+    assert q_ranges["porod"] == (0.027, 0.03)
+    fallback_rows = [row for row in run.range_audit if row["method_id"] in {"guinier", "power_law", "porod"}]
+    assert {row["range_source"] for row in fallback_rows} == {"per_frame_candidate_fallback"}
+    assert {row["consensus_status"] for row in fallback_rows} == {"not_available"}
+    assert {
+        row["q_selection_basis"] for row in fallback_rows
+    } == {"method_candidate_scan_log_q_multiscale_best_fit_ready_per_frame"}
+    assert all('"candidate_selection_rule":"highest_score_then_n_points_then_lowest_q"' in row["q_selection_evidence"] for row in fallback_rows)
+    assert all(row["q_selection_score"] is not None for row in fallback_rows)
 
 
 def test_consensus_resolution_failure_isolated_and_marks_partial_success(
@@ -547,7 +646,7 @@ def test_full_range_uses_only_finite_q_and_empty_q_is_passed_as_none(
     assert q_ranges[("empty", "data_quality")] is None
     assert q_ranges[("finite", "guinier")] is None
     assert q_ranges[("empty", "guinier")] is None
-    assert any("Curve 'empty' has no safe finite full q range" in warning for warning in run.warnings)
+    assert any("Curve 'empty' has no safe finite q range" in warning for warning in run.warnings)
 
 
 def test_effective_q_range_limits_full_method_ranges_without_changing_curve_data(

@@ -21,6 +21,8 @@ const csvSources = [
   ["reliable_parameters", ["final_results.csv", "reliable_parameters.csv", "review/reliable_parameters.csv", "review/summary/reliable_parameters.csv"]],
   ["all_parameters_audit", ["all_parameters_audit.csv", "audit/parameters.csv", "review/all_parameters_audit.csv", "review/audit/parameters.csv"]],
   ["fit_quality", ["fit_quality.csv", "audit/fit_quality.csv", "review/audit/fit_quality.csv", "review/summary/fit_quality_usable.csv"]],
+  ["range_audit", ["range_audit.csv", "audit/range_audit.csv", "review/audit/range_audit.csv"]],
+  ["consensus_regions", ["consensus_regions.csv", "audit/consensus_regions.csv", "review/audit/consensus_regions.csv"]],
   ["sequence_frames", ["sequence_frame_table.csv", "summary/sequence_frame_table.csv", "audit/sequence_frame_table.csv", "review/summary/sequence_frame_table.csv", "review/audit/sequence_frame_table.csv"]],
   ["sequence_parameters", ["sequence_parameter_trajectories.csv", "audit/sequence_parameter_trajectories.csv", "review/audit/sequence_parameter_trajectories.csv"]],
   ["warnings", ["warnings.csv", "audit/warnings.csv", "review/audit/warnings.csv"]],

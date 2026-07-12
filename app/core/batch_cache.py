@@ -23,7 +23,9 @@ from app.core.data_model import CurveData
 
 
 CACHE_SCHEMA_VERSION = "2"
-ANALYSIS_ALGORITHM_VERSION = "3"
+# The executable q-range routing and envelope audit contract changed. A new
+# algorithm version prevents old shared-range job results from being restored.
+ANALYSIS_ALGORITHM_VERSION = "4"
 
 
 def _json_default(value: Any) -> Any:
@@ -228,6 +230,8 @@ def save_run_checkpoint(cache_dir: str | Path, run: AutoBatchRun) -> Path:
             str(name): list(bounds) if isinstance(bounds, tuple) else bounds
             for name, bounds in (run.consensus_regions or {}).items()
         },
+        "consensus_region_details": dict(run.consensus_region_details or {}),
+        "range_audit": list(run.range_audit or []),
         "input_manifest": list(run.input_manifest),
         "failed_inputs": list(run.failed_inputs),
         "warnings": list(run.warnings),
@@ -271,6 +275,8 @@ def load_run_checkpoint(cache_dir: str | Path) -> AutoBatchRun:
             if isinstance(bounds, (list, tuple)) and len(bounds) == 2:
                 restored_consensus[str(name)] = (float(bounds[0]), float(bounds[1]))
     run.consensus_regions = restored_consensus
+    run.consensus_region_details = dict(payload.get("consensus_region_details") or {})
+    run.range_audit = list(payload.get("range_audit") or [])
     run.input_manifest = list(payload.get("input_manifest") or [])
     run.failed_inputs = list(payload.get("failed_inputs") or [])
     run.warnings = list(payload.get("warnings") or [])

@@ -107,6 +107,20 @@ def parameter_rows(run) -> list[dict[str, object]]:
                     "curve_name": envelope.curve_name,
                     "analysis_type": envelope.analysis_type,
                     "analysis_status": envelope.status.value,
+                    "execution_status": envelope.execution_status,
+                    "candidate_status": envelope.candidate_status,
+                    "consensus_status": envelope.consensus_status,
+                    "detection_status": envelope.detection_status,
+                    "reliability_status": envelope.reliability_status,
+                    "reporting_status": envelope.reporting_status,
+                    "reporting_reason_codes": " | ".join(envelope.reporting_reason_codes),
+                    "related_analysis_ids": " | ".join(envelope.related_analysis_ids),
+                    "feature_relation": envelope.feature_relation,
+                    "range_source": envelope.range_source,
+                    "range_reason_codes": " | ".join(envelope.range_reason_codes),
+                    "q_selection_basis": envelope.q_selection_basis,
+                    "q_selection_evidence": envelope.q_selection_evidence,
+                    "detection_reason_codes": " | ".join(envelope.detection_reason_codes),
                     "parameter": parameter.name,
                     "value": value,
                     "unit_role": parameter.unit,
@@ -183,6 +197,7 @@ def scalar_parameter_table(rows: list[dict[str, object]]) -> pd.DataFrame:
     )
     table["reliable_for_reporting"] = (
         table["accepted"]
+        & table["reporting_status"].eq("reportable")
         & table["reliability_label"].isin({"high", "medium"})
         & (pd.to_numeric(table["reliability_score"], errors="coerce") >= 0.5)
     )
@@ -310,6 +325,12 @@ def write_report(
     accepted = parameters[parameters["accepted"]]
     effective_q_low, effective_q_high = effective_q_range_from_run(run)
     status_counts = parameters.drop_duplicates(["frame", "analysis_type"])["analysis_status"].value_counts()
+    reporting_counts = parameters.drop_duplicates(["frame", "analysis_type"])["reporting_status"].fillna("not_evaluated").value_counts()
+    reporting_lines = [
+        f"- `{status}`：{int(count)} 个逐帧方法结果"
+        for status, count in reporting_counts.items()
+    ]
+    reporting_span_gate = run.config_snapshot.get("reporting_min_log_q_span_decades", "not_recorded")
     reliable_lines: list[str] = []
     for method, parameter, label in [
         ("guinier", "Rg", "Rg"),
@@ -354,6 +375,27 @@ def write_report(
                 f"R² {r2_text}，q 区间 {q_start.min():.6g}–{q_end.max():.6g} Å⁻¹；"
                 f"reliability_score={score_text}，因此不纳入主定量结论。"
             )
+    range_table = pd.DataFrame(getattr(run, "range_audit", []))
+    selection_basis_lines: list[str] = []
+    if not range_table.empty and "q_selection_basis" in range_table.columns:
+        basis_counts = range_table["q_selection_basis"].fillna("not_recorded").value_counts()
+        selection_basis_lines = [
+            f"- `{basis}`：{int(count)} 个曲线-方法任务"
+            for basis, count in basis_counts.items()
+        ]
+    q_selection_lines = [
+        "",
+        "## q 区间选择依据",
+        "",
+        f"- 硬边界：输入导入阶段已经限制为 `{effective_q_low:.6g}–{effective_q_high:.6g} Å⁻¹`；后续分析不得使用范围外数据。",
+        "- Guinier、power-law、Porod：在硬边界内分别扫描本方法的多尺度 log-q 候选窗口，不共享其他方法的区间。",
+        "- 候选排序：优先比较候选评分，其次比较点数，最后优先较低 q；证据保留拟合质量、log-q 跨度、物理判据、稳定性和噪声指标（若该方法提供）。",
+        f"- 批次共识：仅在同一方法的候选中心满足 log-q 距离规则且覆盖率达到配置阈值 `{run.config_snapshot.get('consensus_min_coverage', '未记录')}` 时形成；最终区间采用候选区间严格交集。",
+        "- local slope、crossover、peaks、shoulders、oscillations 等局部/描述性方法：直接使用每条曲线在硬边界内的有限实际 q 范围，由方法内部独立检测。",
+        "- 若没有可执行候选区间，记录 `not_fit_ready`、`not_detected` 或 `method_candidate_scan_no_executable_interval`，不强行拟合，也不从其他方法借用 q 区间。",
+        "- 逐任务的 `q_selection_basis`、数值证据和未采用原因见 `review/audit/range_audit.csv`；同一证据也写入参数审计表和拟合质量表。",
+        *selection_basis_lines,
+    ]
     lines = [
         "# 17_Ti15_300_2_iso SAXS 前十帧无模型分析报告",
         "",
@@ -363,6 +405,7 @@ def write_report(
         "室温参考 `TI15-rt_00001_abs2d_cm-1.csv` 未进入计算。横轴使用 frame 1–10；未假定采集时间。",
         "本次运行关闭形状模型拟合，只报告无模型分析与数据质量审计结果。",
         f"有效 q 范围（分析前确认值）：{effective_q_low:.6g}–{effective_q_high:.6g} Å⁻¹；所有逐帧方法和序列比较均在该范围内执行。",
+        "有效 q 范围是所有方法的数据边界，不是所有方法共用的拟合区间；Guinier、power-law、Porod使用各自的方法候选/共识窗口，局部特征方法在边界内独立检测。",
         "",
         "## 数据质量",
         "",
@@ -376,7 +419,7 @@ def write_report(
         "",
         *reliable_lines,
         "",
-        "逐帧数值、q 拟合区间、状态和可靠性评分见 `review/accepted_parameters.csv` 与 `review/all_parameters_audit.csv`。",
+        "逐帧数值、实际 q 拟合区间、候选/共识/检测/可靠性状态见 `review/accepted_parameters.csv` 与 `review/all_parameters_audit.csv`；逐任务区间来源见 `review/audit/range_audit.csv`。",
         "",
         "## 审计层候选（不纳入主结论）",
         "",
@@ -386,6 +429,12 @@ def write_report(
         "",
         *[f"- {status}: {count} 个逐帧方法结果" for status, count in status_counts.items()],
         f"- 参数记录中包含 warning 的条目数：{warning_count}。",
+        "",
+        "## 正式报告门控",
+        "",
+        *reporting_lines,
+        f"- power-law 的实际执行 log-q 跨度小于 `{reporting_span_gate}` decades 时仅保留为 exploratory，不进入正式定量结果。",
+        "- 只有 `reporting_status=reportable` 且通过可靠性筛选的参数进入 `final_results.csv` 和正式定量总结；`exploratory`、`not_reportable` 和 `not_evaluated` 仅保留在审计层。",
         f"- 批处理整体状态：`{run.status}`；该状态允许部分方法因不适用或缺少可靠区间而失败。",
         "",
         "## 科研解释边界",
@@ -404,6 +453,7 @@ def write_report(
         "- `details_full.zip`：独立完整逐帧 analysis_tables 明细包（含空表占位），所有 q 数据受有效范围约束。",
         "- `review/`：数据质量、完整参数审计、序列结果、图件、运行配置和其他复查资料。",
     ]
+    lines.extend(q_selection_lines)
     (output_dir / "final_report_zh.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -460,6 +510,11 @@ def main() -> int:
     parser.add_argument("--q-min", type=float, default=DEFAULT_EFFECTIVE_Q_RANGE[0], help="Effective q lower bound in A^-1.")
     parser.add_argument("--q-max", type=float, default=DEFAULT_EFFECTIVE_Q_RANGE[1], help="Effective q upper bound in A^-1.")
     parser.add_argument(
+        "--allow-per-frame-range-fallback",
+        action="store_true",
+        help="Allow Guinier/power-law/Porod to use a method-specific per-frame candidate when batch consensus is absent.",
+    )
+    parser.add_argument(
         "--detail-level",
         choices=("slim", "usable", "all", "none"),
         default="slim",
@@ -480,6 +535,7 @@ def main() -> int:
         sample_type="unknown",
         enable_shape_models=False,
         effective_q_range=(args.q_min, args.q_max),
+        allow_per_frame_range_fallback=args.allow_per_frame_range_fallback,
         q_unit_override="A^-1",
         intensity_unit_override="cm^-1",
         absolute_intensity=False,

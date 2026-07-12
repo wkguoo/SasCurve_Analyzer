@@ -1156,3 +1156,52 @@ The final Ti15 package was regenerated and replaced at `results/17_Ti15_300_2_is
 `scripts/build_summary_workbook.mjs` converts the user-facing `accepted_parameters` and `reliable_parameters` worksheets from one-parameter-per-row tables into one-row-per-curve tables. Parameter columns are prefixed with `analysis_type__parameter` and include the unit role in the header when available. The left-side metadata retains status/reliability summaries, distinct q ranges, accepted/reliable parameter counts, total parameter count, and warning count.
 
 The `all_parameters_audit` worksheet intentionally remains vertical. It is the lossless review view for parameter-level q intervals, statuses, invalid reasons, warnings, accepted flags, and reliable-for-reporting flags. The root `final_results.csv` also remains a long machine-readable table; the horizontal layout is an Excel presentation rule only and does not alter numerical results or source data.
+
+## 2026-07-12 - Method-Specific q-Range Routing And Orthogonal Audit Statuses
+
+The previous batch scheduler treated several physically different analysis families as if they required one executable shared q interval. The redesign keeps the user-confirmed `AutoBatchConfig.effective_q_range` as the hard input boundary, while separating method-specific fitting windows from that boundary.
+
+### Range routing contract
+
+- `guinier`, `power_law`, and `porod` use their own method-specific candidate/consensus windows. A missing method consensus does not borrow a range from another method.
+- `local_slope`, `crossover`, `peaks`, `shoulders`, `oscillations`, and `lamellar` receive the finite curve range inside the effective q boundary and perform local detection internally. They no longer wait for the power-law or peak consensus family.
+- `integrals`, `invariant`, `kratky`, `compensated`, `data_quality`, `derived_coordinates`, and other descriptive methods likewise use the effective boundary.
+- `allow_per_frame_range_fallback` is now executable. When explicitly enabled, only a method with a missing batch consensus may use that same method's best fit-ready per-frame candidate. The default remains `False` for conservative reproducibility.
+- The strict intersection inside `candidate_consensus()` remains a method-internal consensus operation. There is no cross-method global consensus intersection.
+
+### Orthogonal envelope fields
+
+`AnalysisEnvelope` preserves the existing `status` field for compatibility and adds `execution_status`, `candidate_status`, `consensus_status`, `detection_status`, `reliability_status`, `range_source`, `range_reason_codes`, and `detection_reason_codes`. The result package exports these fields in parameter and fit-quality audit tables. `AutoBatchRun.range_audit` records one range decision per curve-method job, while `consensus_region_details` retains coverage, score, supporting IDs, and the clipped interval.
+
+### Export and cache consequences
+
+`audit/range_audit.csv` and `audit/consensus_regions.csv` are now written by `export_result_package()` and included in the independent full audit archive. The summary workbook imports both audit sheets when they are present. `ANALYSIS_ALGORITHM_VERSION` is `4`, invalidating job caches created under the former shared-range routing.
+
+This change does not change the raw-data contract: q filtering still happens at import time, the default effective boundary remains `0.01–0.05 Å^-1`, non-positive intensities are not repaired, and original source files remain read-only. Existing result directories are historical snapshots and must be regenerated before their numerical values are described as outputs of this routing version.
+
+## 2026-07-12 - q-Selection Basis And Evidence Audit
+
+The q-routing contract now records not only the executable interval but also the reason and evidence used to select it.
+
+- `AnalysisEnvelope` adds `q_selection_basis` and `q_selection_evidence`; these fields are copied into `parameters.csv`, `fit_quality.csv`, `all_parameters_audit.csv`, `accepted_parameters.csv`, and the Ti15 report tables.
+- `range_audit.csv` expands each curve-method decision with the basis, selected score, coverage, point count, log-q span, R², stability/physics/noise evidence, Porod plateau CV, `qRg_max`, and compact JSON evidence.
+- Effective-boundary methods record `effective_q_boundary_after_import_filter`; Guinier/power-law/Porod consensus records the method-specific log-q clustering and strict-intersection rule; explicit per-frame fallback records the same-method candidate scan and fallback rule; unavailable intervals retain the scan evidence and no-executable-interval basis.
+- `run_config.json` records the candidate sampling, ranking, consensus clustering, coverage, strict-intersection, fallback, and no-cross-method-intersection rules. The report explains that `0.01–0.05 Å^-1` is the hard imported-data boundary, not a universal fit interval.
+
+This evidence is descriptive and auditable. It does not turn a fit into proof of morphology, phase transition, or mechanism, and it does not alter the raw CSV files or the effective q boundary.
+
+## 2026-07-12 - P0 Orthogonal Analysis States And Feature Confirmation Gates
+
+P0 separates five previously conflated decisions in the batch contract:
+
+- `execution_status`: whether the method actually ran (`success`, `not_run`, `fit_failed`, `not_applicable`, or `cancelled`).
+- `candidate_status`: whether a method-specific candidate window exists and is fit-ready.
+- `consensus_status`: whether same-method candidate windows form a valid batch consensus. A missing consensus is retained as an explicit audit row and never borrows another method's q interval.
+- `detection_status`: whether a local feature passed the method's detection gate (`not_detected`, `tentative`, `detected`, or `ambiguous`).
+- `reporting_status`: whether a scalar may enter the formal result summary. Local features are exploratory unless their independent confirmation gate passes; assumption-dependent values remain exploratory.
+
+Power-law results now retain both `eligible_points`/candidate evidence and the actual executed fit evidence. A fit with an executed log-q span below `reporting_min_log_q_span_decades` (default `0.10`) remains available for audit but is marked `exploratory` and excluded from `reliable_parameters.csv` and `final_results.csv`.
+
+Automatic peak discovery uses a robust log-intensity trend residual and does not accept a large collection of raw local maxima as confirmed peaks. Peak area must be positive and the candidate must pass the configured noise-separation gate. Shoulder and crossover locations that coincide on the same q grid are linked through `related_analysis_ids`, marked `ambiguous`, and not counted as two independent reportable features. Oscillation confirmation requires a minimum number of cycles, period consistency, and amplitude-to-noise evidence; local-slope plateaus require a stability threshold.
+
+These states are exported to `parameters.csv`, `fit_quality.csv`, `all_parameters_audit.csv`, `accepted_parameters.csv`, and the Ti15 report. They are intentionally orthogonal: a numerical fit can succeed while still being non-reportable, and a candidate or detection can exist without being a physical conclusion.

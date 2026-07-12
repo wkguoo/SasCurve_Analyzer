@@ -288,6 +288,7 @@ The GUI code should call `app/core` modules for numerical work. New analysis beh
 - 支持通过 `项目` 菜单新建、打开、保存和另存为项目；未保存更改会在窗口标题中显示 `*`，关闭/新建/打开前可选择保存、不保存或取消。
 - 可选有限形状/经验模型拟合、拟合诊断与模型排序；结果依赖假设，须结合可靠性标签与方法警告再用于正式报告。
 - 支持对已校准曲线目录做自动批处理，导出可审计结果包（原始输入只读，运行可取消）。
+- 批处理确认的有效 q 范围是所有方法的数据边界，不是全局拟合区间：Guinier、power-law、Porod 各自建立候选/共识窗口，局部特征方法在有效边界内独立检测。
 
 ### 快速开始
 
@@ -348,3 +349,7 @@ The main plotting combo box is restricted to eight views: `linear`, `semilog`, `
 All plot analysis outputs use the shared derived-data table. The main `loglog`/power-law view uses base-10 logarithms (`lg`/`log10`); semi-log and Guinier views retain natural logarithms (`ln`). Local slope is reported as `α(q) = -d ln I / d ln q`; the raw derivative column is still exported as `local_slope_dlnI_dlnq`.
 
 The report export page is now intentionally compact: it keeps current-curve CSV, feature table, Origin long table, Origin matrix table, and current-curve transformed-data CSV. The transformed-data CSV is a first-hand wide table generated from the original q/I rows only; it does not fit parameters, smooth data, add constants, delete rows, or restore removed plot types.
+
+### P0 analysis-state contract
+
+Batch analysis now reports execution, candidate, consensus, detection, reliability, and formal-reporting states independently. Method-specific Guinier/power-law/Porod windows are never intersected across methods. Actual executed fit points and log-q span are audited separately from candidate-window evidence; a power-law fit with an executed span below the configured reporting gate is audit-only. Local peak/shoulder/oscillation/crossover findings require method-specific confirmation and are not treated as morphology or mechanism proof.

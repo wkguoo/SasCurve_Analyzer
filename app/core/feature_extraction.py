@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from scipy.signal import find_peaks, peak_widths
+from scipy.signal import find_peaks, peak_prominences, peak_widths
 
 from app.core.data_model import AnalysisResult, CurveData
 from app.core.method_warnings import peak_warnings, warning_to_dict, warning_to_text
@@ -57,8 +57,21 @@ def _safe_positive_ratio(numerator: float, denominator: float) -> float | None:
     return value if value is not None and value > 0.0 else None
 
 
-def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: float | None = None) -> AnalysisResult:
-    """Detect numerical intensity peaks without treating edge-truncated widths as valid."""
+def detect_peaks(
+    curve: CurveData,
+    q_range: tuple[float, float],
+    *,
+    prominence: float | None = None,
+    noise_score_threshold: float = 3.0,
+) -> AnalysisResult:
+    """Detect peaks with a trend-residual candidate gate and raw-data metrics.
+
+    Automatic discovery uses positive ``ln(I)`` residuals after a linear
+    ``ln(I)``-versus-``ln(q)`` trend. Widths, areas, and intensities are still
+    calculated from the unsmoothed raw points. A peak candidate is not a
+    reportable scattering feature unless its geometry, baseline area, and
+    robust noise-separation score pass separate checks.
+    """
 
     if prominence is not None:
         prominence_value = _finite_float(prominence)
@@ -103,9 +116,78 @@ def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: 
                 warnings.append(f"Excluded {rejected_count} duplicate-q groups whose collapsed intensity was non-finite before peak detection.")
             q = unique_q[keep]
 
-    # ``(None, None)`` asks SciPy to calculate prominence properties without
-    # filtering when the caller did not set a detection threshold.
-    peaks, properties = find_peaks(intensity, prominence=(prominence, None))
+    noise_threshold = _finite_float(noise_score_threshold)
+    if noise_threshold is None or noise_threshold <= 0.0:
+        raise ValueError("noise_score_threshold must be finite and positive.")
+
+    detection_mode = "raw_intensity"
+    robust_noise_scale = None
+    residual_by_index = np.full(q.size, np.nan, dtype=float)
+    if q.size >= 7:
+        positive_indices = np.flatnonzero(intensity > 0.0)
+        if positive_indices.size >= 7:
+            with np.errstate(divide="ignore", invalid="ignore"):
+                log_q = np.log(q[positive_indices])
+                log_intensity = np.log(intensity[positive_indices])
+            if np.all(np.isfinite(log_q)) and np.all(np.isfinite(log_intensity)):
+                try:
+                    trend = np.polyval(np.polyfit(log_q, log_intensity, deg=1), log_q)
+                    residual = log_intensity - trend
+                except (np.linalg.LinAlgError, ValueError):
+                    residual = np.full(log_intensity.shape, np.nan, dtype=float)
+                if np.all(np.isfinite(residual)):
+                    robust_noise_scale = _finite_float(
+                        1.4826 * np.median(np.abs(residual - np.median(residual)))
+                    )
+                    if robust_noise_scale is not None:
+                        residual_by_index[positive_indices] = residual
+
+    if prominence is None:
+        if robust_noise_scale is None:
+            raw_peaks, raw_properties = find_peaks(intensity, prominence=(None, None))
+            if raw_peaks.size <= 3:
+                peaks, properties = raw_peaks, raw_properties
+                detection_mode = "raw_intensity_small_candidate_fallback"
+            else:
+                peaks, properties = np.asarray([], dtype=int), {}
+            warnings.append(
+                "Automatic peak discovery could not estimate a robust log-domain noise scale; "
+                f"raw fallback retained only when it produced at most three candidates (found {raw_peaks.size})."
+            )
+        else:
+            detection_mode = "log_intensity_trend_residual"
+            positive_indices = np.flatnonzero(np.isfinite(residual_by_index))
+            residual = residual_by_index[positive_indices]
+            residual_prominence = max(0.05, noise_threshold * robust_noise_scale)
+            min_distance = max(3, int(q.size // 25))
+            residual_peaks, _ = find_peaks(
+                residual,
+                prominence=(residual_prominence, None),
+                distance=min_distance,
+            )
+            peaks = positive_indices[residual_peaks]
+            if peaks.size:
+                raw_prominence, raw_left, raw_right = peak_prominences(intensity, peaks)
+                properties = {
+                    "prominences": raw_prominence,
+                    "left_bases": raw_left,
+                    "right_bases": raw_right,
+                }
+            else:
+                raw_peaks, raw_properties = find_peaks(intensity, prominence=(None, None))
+                if raw_peaks.size <= 3:
+                    peaks, properties = raw_peaks, raw_properties
+                    detection_mode = "raw_intensity_small_candidate_fallback"
+                else:
+                    properties = {}
+            warnings.append(
+                "Automatic peak discovery used log-intensity trend residuals; "
+                f"robust noise scale={robust_noise_scale:.6g}, threshold={residual_prominence:.6g}, "
+                f"minimum distance={min_distance} points."
+            )
+    else:
+        # Explicit prominence is a user/test-controlled raw-intensity request.
+        peaks, properties = find_peaks(intensity, prominence=(prominence, None))
     peak_results: list[dict] = []
     if peaks.size:
         widths = peak_widths(intensity, peaks, rel_height=0.5)
@@ -117,6 +199,9 @@ def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: 
                 warnings.append("Skipped a peak candidate with a non-finite q or intensity scalar.")
                 continue
             peak_prominence = _finite_float(properties.get("prominences", np.full(peaks.size, np.nan))[i])
+            robust_noise_score = None
+            if robust_noise_scale is not None and robust_noise_scale > 0.0 and np.isfinite(residual_by_index[peak_index]):
+                robust_noise_score = _finite_float(abs(residual_by_index[peak_index]) / robust_noise_scale)
             peak_snr = None
             peak_snr_unavailable_reason = None
             if peak_prominence is None:
@@ -221,6 +306,8 @@ def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: 
                 validity_reasons.append("two_sided_fwhm_unavailable")
             if baseline is None or net_height is None or net_height <= 0.0:
                 validity_reasons.append("baseline_or_net_height_unavailable")
+            if peak_area is None or not math.isfinite(float(peak_area)) or peak_area <= 0.0:
+                validity_reasons.append("baseline_corrected_area_nonpositive_or_unavailable")
             if crossings_available and raw_area is None:
                 validity_reasons.append("raw_area_within_fwhm_overflowed_or_unavailable")
             if crossings_available and baseline_corrected_area is None:
@@ -258,6 +345,9 @@ def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: 
                     "asymmetry": asymmetry,
                     "prominence": peak_prominence,
                     "SNR": peak_snr,
+                    "robust_noise_score": robust_noise_score,
+                    "noise_score_method": "median_absolute_deviation_of_log_intensity_trend_residual" if robust_noise_scale is not None else None,
+                    "confirmation_status": "candidate",
                     "correlation_length": correlation_length,
                     "edge_truncation": edge_truncation,
                     "edge_truncated": edge_truncation,
@@ -282,13 +372,66 @@ def detect_peaks(curve: CurveData, q_range: tuple[float, float], *, prominence: 
     else:
         warnings.append("No peak was detected in the selected q range.")
 
+    confirmed_count = 0
+    noise_scores: list[float] = []
+    for row in peak_results:
+        score = _finite_float(row.get("robust_noise_score"))
+        if score is not None:
+            noise_scores.append(score)
+        reasons = []
+        if row.get("valid") is not True:
+            reasons.append("peak_geometry_or_baseline_invalid")
+        if row.get("area") is None or _finite_float(row.get("area")) is None or float(row.get("area")) <= 0.0:
+            reasons.append("baseline_corrected_area_nonpositive_or_unavailable")
+        if score is None:
+            reasons.append("robust_noise_score_unavailable")
+        elif score < noise_threshold:
+            reasons.append("robust_noise_score_below_confirmation_threshold")
+        if row.get("SNR") is not None and _finite_float(row.get("SNR")) is not None and float(row["SNR"]) < noise_threshold:
+            reasons.append("error_column_snr_below_confirmation_threshold")
+        if not reasons:
+            row["confirmation_status"] = "confirmed_candidate"
+            confirmed_count += 1
+        else:
+            row["confirmation_status"] = "unconfirmed_candidate"
+            row["confirmation_reasons"] = reasons
+
     method_warnings = peak_warnings()
+    detection_status = (
+        "not_detected"
+        if not peak_results
+        else "detected"
+        if confirmed_count > 0
+        else "tentative"
+    )
+    detection_reason_codes = []
+    if peak_results:
+        detection_reason_codes.append("peak_candidates_found")
+    if confirmed_count:
+        detection_reason_codes.append("peak_confirmation_passed")
+    else:
+        detection_reason_codes.append("peak_confirmation_not_passed")
+    if any(_finite_float(row.get("area")) is not None and float(row["area"]) <= 0.0 for row in peak_results):
+        detection_reason_codes.append("peak_area_nonpositive")
+    if robust_noise_scale is None:
+        detection_reason_codes.append("robust_noise_score_unavailable")
     return AnalysisResult.create(
         curve=curve,
         analysis_type="peak_detection",
         q_range=q_range,
         parameters={"signal": "I(q)", "prominence": prominence},
-        results={"peaks": peak_results, "peak_count": len(peak_results)},
+        results={
+            "peaks": peak_results,
+            "peak_count": len(peak_results),
+            "candidate_count": len(peak_results),
+            "confirmed_peak_count": confirmed_count,
+            "noise_separation_score": _finite_float(np.median(noise_scores)) if noise_scores else None,
+            "detection_status": detection_status,
+            "detection_reason_codes": detection_reason_codes,
+            "detection_mode": detection_mode,
+            "robust_noise_scale": robust_noise_scale,
+            "noise_score_threshold": noise_threshold,
+        },
         warnings=[*warnings, *(warning_to_text(warning) for warning in method_warnings)],
         structured_warnings=[warning_to_dict(warning) for warning in method_warnings],
     )

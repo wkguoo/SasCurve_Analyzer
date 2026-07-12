@@ -5722,3 +5722,144 @@ python -m pytest -q
 
 - This is a test robustness fix; production fitting behavior and identifiability thresholds were not relaxed.
 - No raw data was modified. No commit or push was performed automatically.
+
+## 2026-07-12 18:09:46 +08:00 — Method-Specific Effective-q Refactor
+
+### Task Objective
+
+Replace the cross-method shared-q scheduling assumption with a method-specific q-range workflow while preserving the confirmed effective input boundary, defaulting to `0.01–0.05 Å^-1`.
+
+### Modified Files
+
+- `app/core/auto_batch.py`
+- `app/core/auto_batch_schema.py`
+- `app/core/metric_registry.py`
+- `app/core/analysis_runner.py`
+- `app/core/batch_cache.py`
+- `app/core/result_package.py`
+- `scripts/analyze_ti15_first10.py`
+- `scripts/build_summary_workbook.mjs`
+- `tests/test_auto_batch.py`
+- `tests/test_result_package.py`
+- `README.md`
+- `docs/user_manual_zh.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+
+### Specific Changes
+
+- Kept import-time effective-q filtering as the hard data boundary; no source CSV is modified.
+- Restricted shared candidate/consensus routing to Guinier, power-law, and Porod.
+- Routed local slope, crossover, peaks, shoulders, oscillations, lamellar, integral, invariant, Kratky, compensated, and quality/coordinate methods to the finite curve range inside the effective boundary.
+- Implemented the previously unused `allow_per_frame_range_fallback` option. It is still conservative by default and only falls back to a candidate from the same method.
+- Added orthogonal execution, candidate, consensus, detection, reliability, range-source, and reason-code fields to analysis envelopes.
+- Added `range_audit.csv` and `consensus_regions.csv` to the audit output and workbook import list.
+- Bumped `ANALYSIS_ALGORITHM_VERSION` to `4` so old shared-range job caches are not restored.
+- Shortened detail CSV filenames with deterministic hashes to avoid Windows staging-path failures near the legacy path-length limit.
+- Updated tests and Chinese/English documentation to distinguish the effective q boundary from method-specific fitting windows and to label historical Ti15 intervals as historical.
+
+### Generated Output Files
+
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_180429/final_report_zh.md`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_180429/summary_tables.xlsx`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_180429/audit_full.zip`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_180429/details_full.zip`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_180429/review/audit/range_audit.csv`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_180429/review/audit/consensus_regions.csv`
+
+### How To Run And Check Success
+
+```powershell
+cd C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\sas_curve_analyzer
+python -B -m pytest -q -p no:cacheprovider
+python scripts\analyze_ti15_first10.py --input-dir "D:\桌面\PostFile\6_sys\SAXS-学习2\17_Ti15_300_2_iso\17_Ti15_300_2_iso\spectra_csv" --results-root "C:\Users\wkguopro\Documents\Codex\Codex_SAScalcu\results" --q-min 0.01 --q-max 0.05
+```
+
+- Full regression suite passed: `565 passed`.
+- Real Ti15 run imported 10 curves and 214 points per curve; run status was `completed_with_limitations`.
+- `range_audit.csv` contains 140 curve-method decisions and no q interval outside `0.01–0.05 Å^-1`.
+- `source_integrity_after_analysis.csv` reports all 10 input files unchanged.
+- The workbook contains 13 sheets and the formula-error scan matched 0 cells.
+- `audit_full.zip` contains the new range/consensus audit files and does not contain `details_full.zip`; `details_full.zip` contains only q-filtered detail tables, the index, and its README.
+
+### Notes And Risks
+
+- A method-specific candidate or consensus interval is a computational suitability decision, not proof of morphology, phase transition, or mechanism.
+- The current Ti15 run still has no accepted Guinier or Porod shared fit; this is preserved as an explicit method-specific limitation rather than filled from another method.
+- The generated result package is a new timestamped snapshot; previous result packages are not overwritten.
+- Original experimental CSV files were read-only and were not copied into either archive. No commit or push was performed automatically.
+
+## 2026-07-12 18:31:08 +08:00 — q 选择依据审计字段
+
+### 任务目标
+
+增加有效 q 边界内的方法区间选择依据，使结果不仅给出 q 起止值，还能追溯候选扫描、排序、方法内共识、稳定性/物理证据和未采用原因。
+
+### 修改文件
+
+- `app/core/auto_batch.py`
+- `app/core/auto_batch_schema.py`
+- `app/core/result_package.py`
+- `scripts/analyze_ti15_first10.py`
+- `tests/test_auto_batch.py`
+- `docs/user_manual_zh.md`
+- `docs/developer_notes.md`
+- `CHANGELOG.md`
+- `../CHANGELOG.md`
+
+### 具体修改与原因
+
+- 新增 `q_selection_basis`、`q_selection_evidence`，并在逐任务审计、参数审计、拟合质量和报告中同步。
+- `range_audit.csv` 新增候选评分、覆盖率、点数、log-q 跨度、R²、稳定性/物理/噪声、Porod 平台 CV、`qRg_max` 等证据列。
+- `run_config.json` 记录有效 q 硬边界、候选排序、log-q 聚类、覆盖率门槛、严格交集、逐帧回退和不做跨方法交集的规则。
+- 保持导入时有效 q 边界约束；本次运行仍使用 `0.01–0.05 Å^-1`，不修改原始 CSV，不用其他方法区间填补缺失拟合。
+
+### 生成输出
+
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_182602/final_report_zh.md`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_182602/summary_tables.xlsx`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_182602/review/audit/range_audit.csv`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_182602/review/audit/consensus_regions.csv`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_182602/audit_full.zip`
+- `../results/17_Ti15_300_2_iso_first10_model_free_20260712_182602/details_full.zip`
+
+### 检查方法
+
+- `python -m pytest -q`：`565 passed`。
+- 真实前十帧：10 条曲线、140 个曲线-方法任务，原始文件完整性 `PASS`。
+- 所有审计 q 区间及明细表中的实际 q 坐标均在 `0.01–0.05 Å^-1` 内。
+- `range_audit.csv` 记录 110 个有效边界任务、10 个幂律方法内共识任务、20 个无可执行方法区间任务。
+- 工作簿生成 13 个子表，公式错误扫描为 0；`audit_full.zip` 不包含 `details_full.zip`。
+
+### 注意事项
+
+- q 选择证据是可追溯的数值筛选依据，不是形貌、相变或机理证明。
+- 本次结果仍明确保留 Guinier/Porod 不可执行限制；没有强行降低门槛或跨方法借用区间。
+
+## 2026-07-12 20:52:14 +08:00 — P0 状态语义、特征检测门控与实际执行证据
+
+### 任务目标
+
+启动并完成 SAS 自动分析区间、局部特征检测和正式报告状态的 P0 改造；保持用户确认的有效 q 边界 `0.01–0.05 Å^-1` 为输入硬边界，禁止跨方法共用拟合区间，避免把候选、拟合、检测或假设依赖结果直接当成正式科研结论。
+
+### 修改内容
+
+- `app/core/auto_batch_schema.py`、`app/core/analysis_runner.py`：增加 execution/candidate/consensus/detection/reliability/reporting 的正交状态；记录 power-law 实际执行点数与 log-q 跨度，低于报告阈值时标记 `exploratory`。
+- `app/core/auto_batch.py`、`app/core/batch_consensus.py`：保留无共识审计行，分离候选点数与共识执行点数，关联重叠的 shoulder/crossover q 位置并标记 `ambiguous`。
+- `app/core/feature_extraction.py`：自动峰扫描使用稳健趋势残差和噪声分离门控，避免单调幂律被误报为大量峰；不修改负强度。
+- `app/core/result_package.py`、`scripts/analyze_ti15_first10.py`：审计表和中文报告增加 reporting 状态/原因码；仅 `reportable` 且通过可靠性筛选的参数进入最终结果。
+- `tests/`：增加缺少 q 区间、窄执行区间、峰过检出、候选证据和 shoulder/crossover 关联回归测试。
+- `docs/developer_notes.md`、`docs/user_manual_zh.md`、`README.md`：同步状态契约与解释边界。
+
+### 输出与验收
+
+- 结果包：`../results/17_Ti15_300_2_iso_first10_model_free_20260712_205003/`。
+- 10 条指定曲线、140 个方法任务、`enable_shape_models=False`、有效 q 范围 `0.01–0.05 Å^-1`、原始完整性 `PASS`。
+- `python -m pytest -q`：`569 passed`；工作簿 13 个子表、公式错误 0；明细 q 值越界 0。
+- `audit_full.zip` 与 `details_full.zip` 独立，审计包不嵌套明细包。
+
+### 注意事项
+
+- power-law 实际执行 log-q 跨度约 `0.0775` decades，小于默认 `0.10` 正式报告门槛，只保留在探索/审计层。
+- shoulder/crossover 在 10 帧中均出现 q 重叠，已关联，不能作为两个独立正式特征。
+- 原始 CSV 未修改；未提交 Git、未推送 GitHub、未自动打包项目。

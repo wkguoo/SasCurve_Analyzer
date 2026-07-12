@@ -54,6 +54,30 @@ class AnalysisEnvelope:
     warnings: list[str] = field(default_factory=list)
     invalid_reason: str | None = None
     artifact_paths: dict[str, str] = field(default_factory=dict)
+    # Orthogonal audit dimensions. ``status`` remains the backwards-compatible
+    # execution/result status used by existing callers; these fields explain
+    # why a range was or was not used without conflating detection, consensus,
+    # execution, and reliability.
+    execution_status: str | None = None
+    candidate_status: str = "not_evaluated"
+    consensus_status: str = "not_required"
+    detection_status: str = "not_evaluated"
+    reliability_status: str = "not_evaluated"
+    range_source: str = "unspecified"
+    range_reason_codes: list[str] = field(default_factory=list)
+    detection_reason_codes: list[str] = field(default_factory=list)
+    reporting_status: str = "not_evaluated"
+    reporting_reason_codes: list[str] = field(default_factory=list)
+    related_analysis_ids: list[str] = field(default_factory=list)
+    feature_relation: str | None = None
+    q_selection_basis: str = "not_recorded"
+    q_selection_evidence: str = ""
+
+    def __post_init__(self) -> None:
+        if self.execution_status is None:
+            self.execution_status = (
+                self.status.value if isinstance(self.status, AnalysisStatus) else str(self.status)
+            )
 
 
 @dataclass
@@ -79,6 +103,11 @@ class AutoBatchConfig:
     intensity_unit_override: str | None = None
     consensus_min_coverage: float = 0.70
     allow_per_frame_range_fallback: bool = False
+    reporting_min_log_q_span_decades: float = 0.10
+    feature_confirmed_noise_score: float = 3.0
+    oscillation_candidate_min_cycles: int = 2
+    oscillation_min_cycles: int = 3
+    oscillation_period_cv_max: float = 0.25
     metadata_path: Path | None = None
     metadata_match_column: str = "source_file"
     absolute_intensity: bool = False
@@ -120,6 +149,16 @@ class AutoBatchConfig:
         self.effective_q_range = (q_low, q_high)
         if not 0.0 < self.consensus_min_coverage <= 1.0:
             raise ValueError("consensus_min_coverage must be in (0, 1]")
+        if not isfinite(self.reporting_min_log_q_span_decades) or self.reporting_min_log_q_span_decades <= 0.0:
+            raise ValueError("reporting_min_log_q_span_decades must be positive and finite")
+        if not isfinite(self.feature_confirmed_noise_score) or self.feature_confirmed_noise_score <= 0.0:
+            raise ValueError("feature_confirmed_noise_score must be positive and finite")
+        if self.oscillation_candidate_min_cycles < 2:
+            raise ValueError("oscillation_candidate_min_cycles must be at least 2")
+        if self.oscillation_min_cycles < self.oscillation_candidate_min_cycles:
+            raise ValueError("oscillation_min_cycles must be >= oscillation_candidate_min_cycles")
+        if not isfinite(self.oscillation_period_cv_max) or self.oscillation_period_cv_max <= 0.0:
+            raise ValueError("oscillation_period_cv_max must be positive and finite")
         if self.bootstrap_samples < 1:
             raise ValueError("bootstrap_samples must be positive")
         if not 0.0 < self.sensitivity_boundary_fraction < 0.5:
@@ -148,6 +187,12 @@ class AutoBatchRun:
     main_model: str | None = None
     transition_flags: list[dict[str, Any]] = field(default_factory=list)
     sequence_results: dict[str, Any] = field(default_factory=dict)
+    # Validated method-family consensus details retained for review. The
+    # executable q tuples remain in ``consensus_regions`` for compatibility.
+    consensus_region_details: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # One row per scheduled curve-method job, including jobs that used the
+    # effective boundary or were unable to obtain a method-specific window.
+    range_audit: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def model_rankings(self) -> list[dict[str, Any]]:
