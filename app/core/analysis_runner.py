@@ -17,19 +17,28 @@ import numpy as np
 
 from app.core.analysis_schema import RELIABILITY_ASSUMPTION_DEPENDENT, RELIABILITY_INVALID
 from app.core.auto_batch_schema import AnalysisEnvelope, AnalysisStatus, AutoBatchConfig, ParameterValue
+from app.core.cancellation import cancellation_requested
 from app.core.correlation import compute_correlation_function
 from app.core.data_model import AnalysisResult, CurveData
 from app.core.derived_data import build_curve_derived_table
 from app.core.extended_features import analyze_oscillations, detect_crossovers, detect_shoulders, extended_integrals
 from app.core.feature_extraction import detect_peaks
-from app.core.invariant_analysis import invariant_with_extrapolation
+from app.core.fitting import linear_fit
 from app.core.lamellar_analysis import lamellar_analysis
 from app.core.metric_registry import METHOD_REGISTRY, applicable_method_ids
 from app.core.model_fitting import fit_all_allowed_models
-from app.core.model_free import guinier_analysis, kratky_metrics, local_slope, porod_metrics, power_law_analysis
+from app.core.model_free import (
+    guinier_analysis,
+    invariant_measured,
+    kratky_metrics,
+    local_slope,
+    porod_metrics,
+    power_law_analysis,
+)
 from app.core.porod_analysis import porod_deep_analysis
 from app.core.pr_analysis import compute_pr
 from app.core.region_scanners import curve_quality_metrics
+from app.core.uncertainty_analysis import moving_block_residual_bootstrap_fit, range_sensitivity
 
 
 Handler = Callable[[CurveData, tuple[float, float], AutoBatchConfig], AnalysisResult | list[AnalysisResult]]
@@ -138,6 +147,10 @@ def _metric_value(result: AnalysisResult, method_id: str, metric_name: str) -> A
         return result.results[metric_name]
     if metric_name in result.parameters:
         return result.parameters[metric_name]
+    # Fit diagnostics such as chi_square / rmse live under fit_quality for model-free methods.
+    fit_quality = result.results.get("fit_quality")
+    if isinstance(fit_quality, Mapping) and metric_name in fit_quality:
+        return fit_quality[metric_name]
     return None
 
 
@@ -194,6 +207,16 @@ def _result_status(result: AnalysisResult) -> AnalysisStatus:
         return AnalysisStatus.ASSUMPTION_DEPENDENT
     if label == RELIABILITY_INVALID or label == "invalid":
         return AnalysisStatus.INVALID
+    # Model-free methods store scientific validity separately from handler execution.
+    validity = results.get("validity")
+    if isinstance(validity, Mapping):
+        validity_status = str(validity.get("status") or "").strip().lower()
+        if validity_status in {"invalid", "failed"}:
+            return AnalysisStatus.INVALID
+        if validity_status in {"assumption_dependent", "assumption-dependent"}:
+            return AnalysisStatus.ASSUMPTION_DEPENDENT
+        if validity.get("fit_valid") is False and validity.get("Rg_valid") is False:
+            return AnalysisStatus.INVALID
     return AnalysisStatus.SUCCESS
 
 
@@ -371,6 +394,12 @@ def _fit_quality_for_envelope(result: AnalysisResult) -> dict[str, Any]:
         "consensus_execution_n_points",
         "consensus_execution_n_points_min",
         "consensus_execution_n_points_max",
+        "residual_lag1_correlation",
+        "residual_quadratic_score",
+        "residual_randomness_passed",
+        "local_alpha_std",
+        "local_alpha_stability_passed",
+        "high_q_position_fraction",
     ):
         if name in result.results:
             quality[name] = _native(result.results.get(name))
@@ -441,6 +470,8 @@ def _envelope_from_result(curve: CurveData, method_id: str, result: AnalysisResu
         reporting_reason_codes=reporting_codes,
         range_source="runner_q_range",
         detection_reason_codes=detection_codes,
+        robustness_status=str(result.results.get("robustness_status", "not_evaluated")),
+        uncertainty_interpretation=str(result.results.get("uncertainty_interpretation", "not_evaluated")),
     )
 
 
@@ -552,8 +583,422 @@ def _run_derived_coordinates(curve: CurveData, q_range: tuple[float, float], con
 
 
 def _run_guinier(curve: CurveData, q_range: tuple[float, float], config: AutoBatchConfig) -> AnalysisResult:
-    del config
-    return guinier_analysis(curve, q_range)
+    source = guinier_analysis(curve, q_range)
+    values = dict(source.results)
+    qmin_rg = _finite_float(values.get("qminRg"))
+    qmax_rg = _finite_float(values.get("qmaxRg"))
+    slope = _finite_float(values.get("slope"))
+    r_squared = _finite_float(values.get("R2"))
+    actual_fit_points = int(values.get("actual_fit_points", 0) or 0)
+    validity = values.get("validity", {})
+    fit_valid = isinstance(validity, Mapping) and bool(validity.get("fit_valid"))
+    residual_audit = _linear_residual_audit(values.get("residual_rows"))
+
+    values.update(residual_audit)
+    values["measurement_sigma_available"] = curve.error is not None
+    values["uncertainty_interpretation"] = (
+        "measurement_error_supported"
+        if curve.error is not None
+        else "ols_covariance_and_robustness_only_not_instrument_measurement_ci"
+    )
+
+    reason_codes: list[str] = []
+    if not fit_valid or slope is None or slope >= 0.0 or qmax_rg is None:
+        values["reporting_status"] = "not_reportable"
+        if not fit_valid:
+            reason_codes.append("guinier_fit_invalid")
+        if slope is None or slope >= 0.0:
+            reason_codes.append("guinier_slope_not_negative")
+        if qmax_rg is None:
+            reason_codes.append("guinier_qrg_unavailable")
+    else:
+        if qmin_rg is None or qmin_rg > config.guinier_formal_qmin_rg_max:
+            reason_codes.append("guinier_low_q_coverage_not_formal")
+        if qmax_rg > config.guinier_formal_qmax_rg_max:
+            reason_codes.append("guinier_qmaxrg_above_formal_limit")
+        if qmax_rg > config.guinier_exploratory_qmax_rg_max:
+            reason_codes.append("guinier_qmaxrg_above_exploratory_limit")
+        if actual_fit_points < 12:
+            reason_codes.append("guinier_fit_points_below_formal_minimum")
+        if r_squared is None or r_squared < 0.98:
+            reason_codes.append("guinier_linearity_below_formal_threshold")
+        if not bool(residual_audit.get("residual_randomness_passed")):
+            reason_codes.append("guinier_systematic_residuals")
+
+        formal_codes = {
+            "guinier_low_q_coverage_not_formal",
+            "guinier_qmaxrg_above_formal_limit",
+            "guinier_fit_points_below_formal_minimum",
+            "guinier_linearity_below_formal_threshold",
+            "guinier_systematic_residuals",
+        }
+        if not reason_codes:
+            values["reporting_status"] = "reportable"
+            reason_codes.append("guinier_formal_gate_passed")
+        elif qmax_rg <= config.guinier_exploratory_qmax_rg_max and set(reason_codes) <= formal_codes:
+            values["reporting_status"] = "exploratory"
+        else:
+            values["reporting_status"] = "not_reportable"
+
+    values["reporting_reason_codes"] = reason_codes or ["guinier_gate_not_evaluated"]
+    if values["reporting_status"] != "reportable":
+        source.warnings.append(
+            "Guinier fit is retained for audit but did not pass every formal qRg, residual, point-count, and linearity gate."
+        )
+    export_tables = source.results.get("export_tables")
+    export_tables = dict(export_tables) if isinstance(export_tables, Mapping) else {}
+    export_tables["residual_rows"] = list(values.get("residual_rows", []))
+    values["export_tables"] = export_tables
+    source.results.update(values)
+    return _attach_model_free_robustness(source, curve, q_range, "guinier", config)
+
+
+def _linear_residual_audit(rows: object) -> dict[str, Any]:
+    """Small deterministic check for obvious systematic residual structure.
+
+    This is a reporting gate, not an instrument-noise test.  The thresholds are
+    intentionally permissive enough to avoid treating tiny numerical patterns
+    as proof that a physically useful interval exists.
+    """
+
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+        return {
+            "residual_lag1_correlation": None,
+            "residual_quadratic_score": None,
+            "residual_randomness_passed": False,
+        }
+    pairs: list[tuple[float, float]] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        x = _finite_float(row.get("transformed_x"))
+        residual = _finite_float(row.get("residual"))
+        if x is not None and residual is not None:
+            pairs.append((x, residual))
+    if len(pairs) < 5:
+        return {
+            "residual_lag1_correlation": None,
+            "residual_quadratic_score": None,
+            "residual_randomness_passed": False,
+        }
+    x = np.asarray([item[0] for item in pairs], dtype=float)
+    residual = np.asarray([item[1] for item in pairs], dtype=float)
+    residual_std = float(np.std(residual, ddof=1))
+    if not np.isfinite(residual_std) or residual_std <= np.finfo(float).eps:
+        return {
+            "residual_lag1_correlation": 0.0,
+            "residual_quadratic_score": 0.0,
+            "residual_randomness_passed": True,
+        }
+    lag1 = float(np.corrcoef(residual[:-1], residual[1:])[0, 1])
+    x_span = float(np.ptp(x))
+    if x_span <= np.finfo(float).eps:
+        quadratic_score = None
+    else:
+        x_scaled = 2.0 * (x - float(np.min(x))) / x_span - 1.0
+        quadratic_score = float(abs(np.polyfit(x_scaled, residual, 2)[0]) / residual_std)
+    passed = (
+        np.isfinite(lag1)
+        and abs(lag1) <= 0.80
+        and quadratic_score is not None
+        and np.isfinite(quadratic_score)
+        and quadratic_score <= 0.75
+    )
+    return {
+        "residual_lag1_correlation": lag1 if np.isfinite(lag1) else None,
+        "residual_quadratic_score": quadratic_score,
+        "residual_randomness_passed": bool(passed),
+    }
+
+
+def _local_power_law_stability(curve: CurveData, q_range: tuple[float, float]) -> dict[str, Any]:
+    mask = (
+        np.isfinite(curve.q)
+        & np.isfinite(curve.intensity)
+        & (curve.q >= q_range[0])
+        & (curve.q <= q_range[1])
+        & (curve.q > 0.0)
+        & (curve.intensity > 0.0)
+    )
+    q = np.asarray(curve.q[mask], dtype=float)
+    intensity = np.asarray(curve.intensity[mask], dtype=float)
+    if q.size < 12:
+        return {"local_alpha_std": None, "local_alpha_count": 0, "local_alpha_stability_passed": False}
+    chunk_count = min(6, max(3, int(q.size // 8)))
+    alphas: list[float] = []
+    for indices in np.array_split(np.arange(q.size), chunk_count):
+        if indices.size < 4:
+            continue
+        slope = float(np.polyfit(np.log10(q[indices]), np.log10(intensity[indices]), 1)[0])
+        if np.isfinite(slope):
+            alphas.append(-slope)
+    alpha_std = float(np.std(alphas, ddof=1)) if len(alphas) >= 2 else None
+    return {
+        "local_alpha_std": alpha_std,
+        "local_alpha_count": len(alphas),
+        "local_alpha_stability_passed": bool(alpha_std is not None and alpha_std <= 0.15),
+    }
+
+
+def _robustness_parameters(method_id: str, result: AnalysisResult) -> dict[str, float] | None:
+    values = result.results
+    names = {
+        "guinier": ("Rg", "I0"),
+        "power_law": ("alpha", "prefactor"),
+        "porod": ("power_law_alpha", "q4I_plateau_mean", "q4I_plateau_cv"),
+    }[method_id]
+    parameters = {
+        name: numeric
+        for name in names
+        if (numeric := _finite_float(values.get(name))) is not None
+    }
+    required = "Rg" if method_id == "guinier" else "alpha" if method_id == "power_law" else "power_law_alpha"
+    return parameters if required in parameters else None
+
+
+def _raw_model_free_fit(
+    curve: CurveData,
+    q_range: tuple[float, float],
+    method_id: str,
+    config: AutoBatchConfig,
+) -> AnalysisResult:
+    if method_id == "guinier":
+        return guinier_analysis(curve, q_range)
+    if method_id == "power_law":
+        return power_law_analysis(curve, q_range)
+    return porod_deep_analysis(
+        curve,
+        q_range,
+        contrast=config.contrast,
+        volume_fraction=config.volume_fraction,
+        absolute_intensity=config.absolute_intensity,
+        two_phase_confirmed=False,
+    )
+
+
+def _transform_domain_sigma(
+    method_id: str,
+    intensity: np.ndarray,
+    error: np.ndarray | None,
+) -> np.ndarray | None:
+    """Return primary-fit sigma in the same transform domain, or None for OLS."""
+
+    if error is None:
+        return None
+    error_array = np.asarray(error, dtype=float)
+    if error_array.shape != intensity.shape:
+        return None
+    if method_id == "guinier":
+        # ln I; d(ln I)/dI = 1/I
+        sigma = error_array / intensity
+    else:
+        # lg I; d(lg I)/dI = 1/(I ln 10)
+        sigma = error_array / (intensity * math.log(10.0))
+    if not np.all(np.isfinite(sigma) & (sigma > 0.0)):
+        return None
+    return np.asarray(sigma, dtype=float)
+
+
+def _residual_bootstrap_callback(
+    curve: CurveData,
+    q_range: tuple[float, float],
+    method_id: str,
+) -> tuple[Callable[[np.ndarray], Mapping[str, Any]] | None, int, bool]:
+    """Build a residual bootstrap callback that mirrors primary weighting policy.
+
+    When every selected point has a positive finite error, the residual line and
+    each bootstrap refit use the same transformed-domain weights as the primary
+    Guinier / power-law / Porod linear fit.  Otherwise both stay unweighted OLS.
+    """
+
+    mask = (
+        np.isfinite(curve.q)
+        & np.isfinite(curve.intensity)
+        & (curve.q >= q_range[0])
+        & (curve.q <= q_range[1])
+        & (curve.q > 0.0)
+        & (curve.intensity > 0.0)
+    )
+    q = np.asarray(curve.q[mask], dtype=float)
+    intensity = np.asarray(curve.intensity[mask], dtype=float)
+    error = None if curve.error is None else np.asarray(curve.error[mask], dtype=float)
+    if q.size < 5:
+        return None, int(q.size), False
+    order = np.argsort(q, kind="stable")
+    q = q[order]
+    intensity = intensity[order]
+    if error is not None:
+        error = error[order]
+    if method_id == "guinier":
+        x = q**2
+        y = np.log(intensity)
+    else:
+        x = np.log10(q)
+        y = np.log10(intensity)
+    sigma = _transform_domain_sigma(method_id, intensity, error)
+    weighted = sigma is not None
+    try:
+        primary = linear_fit(x, y, sigma=sigma)
+    except (ValueError, np.linalg.LinAlgError):
+        return None, int(q.size), weighted
+    fitted = np.asarray(primary["fitted"], dtype=float)
+    residual = y - fitted
+    residual = residual - float(np.mean(residual))
+
+    def callback(donor_indices: np.ndarray) -> Mapping[str, Any]:
+        donor = np.asarray(donor_indices, dtype=int)
+        if donor.size != x.size or np.any(donor < 0) or np.any(donor >= residual.size):
+            return {"converged": False}
+        boot_y = fitted + residual[donor]
+        try:
+            boot = linear_fit(x, boot_y, sigma=sigma)
+        except (ValueError, np.linalg.LinAlgError):
+            return {"converged": False}
+        boot_slope = float(boot["slope"])
+        boot_intercept = float(boot["intercept"])
+        if not np.isfinite(boot_slope) or not np.isfinite(boot_intercept):
+            return {"converged": False}
+        if method_id == "guinier":
+            if boot_slope >= 0.0:
+                return {"converged": False}
+            parameters = {
+                "Rg": float(math.sqrt(-3.0 * boot_slope)),
+                "I0": float(math.exp(boot_intercept)),
+            }
+        elif method_id == "power_law":
+            parameters = {
+                "alpha": float(-boot_slope),
+                "prefactor": float(10.0**boot_intercept),
+            }
+        else:
+            boot_intensity = np.power(10.0, boot_y)
+            q4i = q**4 * boot_intensity
+            mean = float(np.mean(q4i))
+            std = float(np.std(q4i, ddof=1)) if q4i.size > 1 else 0.0
+            parameters = {
+                "power_law_alpha": float(-boot_slope),
+                "q4I_plateau_mean": mean,
+                "q4I_plateau_cv": float(std / abs(mean)) if mean != 0.0 else float("nan"),
+            }
+        return {"converged": True, "parameters": parameters, "weighted_fit": weighted}
+
+    return callback, int(q.size), weighted
+
+
+def _attach_model_free_robustness(
+    source: AnalysisResult,
+    curve: CurveData,
+    q_range: tuple[float, float],
+    method_id: str,
+    config: AutoBatchConfig,
+) -> AnalysisResult:
+    """Attach reproducible robustness intervals without inventing sigma values."""
+
+    primary_parameters = _robustness_parameters(method_id, source)
+    if primary_parameters is None:
+        source.results["robustness_status"] = "not_evaluated_primary_fit_unavailable"
+        source.results["uncertainty_interpretation"] = "no_measurement_error_and_no_valid_primary_fit"
+        return source
+
+    def range_callback(variant: tuple[float, float]) -> Mapping[str, Any]:
+        if cancellation_requested():
+            return {"converged": False, "reason": "cancel_requested"}
+        candidate = _raw_model_free_fit(curve, variant, method_id, config)
+        parameters = _robustness_parameters(method_id, candidate)
+        return {"converged": parameters is not None, "parameters": parameters or {}}
+
+    sensitivity = range_sensitivity(
+        range_callback,
+        q_range,
+        config=config,
+        hard_q_range=config.effective_q_range,
+    )
+    if cancellation_requested():
+        source.results["robustness_status"] = "cancelled"
+        source.results["uncertainty_interpretation"] = "robustness_cancelled_before_completion"
+        source.results["robustness"] = {
+            "status": "cancelled",
+            "interpretation": "robustness_cancelled_before_completion",
+            "range_sensitivity": sensitivity.to_dict(),
+            "moving_block_residual_bootstrap": {"status": "cancelled", "reason": "cancel_requested"},
+        }
+        return source
+
+    bootstrap_callback, residual_count, bootstrap_weighted = _residual_bootstrap_callback(
+        curve, q_range, method_id
+    )
+    if bootstrap_callback is None:
+        bootstrap = moving_block_residual_bootstrap_fit(
+            lambda _indices: {"converged": False},
+            residual_count=max(1, residual_count),
+            enabled=False,
+            config=config,
+        )
+    else:
+        bootstrap = moving_block_residual_bootstrap_fit(
+            bootstrap_callback,
+            residual_count=residual_count,
+            config=config,
+        )
+    completed = [sensitivity.status == "completed", bootstrap.status == "completed"]
+    cancelled = sensitivity.status == "cancelled" or bootstrap.status == "cancelled"
+    if cancelled:
+        robustness_status = "cancelled"
+    elif all(completed):
+        robustness_status = "completed"
+    elif any(completed) or sensitivity.status not in {"not_enabled", "not_available"}:
+        robustness_status = "partial"
+    else:
+        robustness_status = "not_available"
+    sensitivity_payload = sensitivity.to_dict()
+    bootstrap_payload = bootstrap.to_dict()
+    bootstrap_payload["weighted_primary_match"] = bool(bootstrap_weighted)
+    source.results["robustness"] = {
+        "status": robustness_status,
+        "interpretation": "robustness_interval_not_instrument_measurement_confidence_interval",
+        "range_sensitivity": sensitivity_payload,
+        "moving_block_residual_bootstrap": bootstrap_payload,
+        "bootstrap_matches_primary_weighting": bool(bootstrap_weighted),
+    }
+    source.results["robustness_status"] = robustness_status
+    if cancelled:
+        source.results["uncertainty_interpretation"] = "robustness_cancelled_before_completion"
+    elif curve.error is None:
+        source.results["uncertainty_interpretation"] = (
+            "robustness_interval_not_instrument_measurement_confidence_interval"
+        )
+    elif bootstrap_weighted:
+        source.results["uncertainty_interpretation"] = (
+            "measurement_error_supported_plus_weighted_residual_bootstrap_robustness"
+        )
+    else:
+        source.results["uncertainty_interpretation"] = (
+            "measurement_error_supported_plus_unweighted_residual_bootstrap_fallback"
+        )
+    export_tables = source.results.get("export_tables")
+    export_tables = dict(export_tables) if isinstance(export_tables, Mapping) else {}
+    export_tables["robustness_summary"] = [
+        {
+            "method_id": method_id,
+            "robustness_status": robustness_status,
+            "measurement_sigma_available": curve.error is not None,
+            "interpretation": source.results["uncertainty_interpretation"],
+            "range_sensitivity_status": sensitivity.status,
+            "range_sensitivity_score": sensitivity.sensitivity_score,
+            "range_sensitivity_parameter_quantiles": sensitivity_payload["parameter_quantiles"],
+            "range_sensitivity_parameter_cv": sensitivity_payload["parameter_cv"],
+            "bootstrap_status": bootstrap.status,
+            "bootstrap_sample_count": bootstrap.sample_count,
+            "bootstrap_success_count": bootstrap.success_count,
+            "bootstrap_seed": bootstrap.seed,
+            "bootstrap_parameter_quantiles": bootstrap_payload["parameter_quantiles"],
+            "bootstrap_parameter_cv": bootstrap_payload["parameter_cv"],
+        }
+    ]
+    export_tables["range_sensitivity_attempts"] = sensitivity_payload["attempts"]
+    export_tables["moving_block_bootstrap_attempts"] = bootstrap_payload["attempts"]
+    source.results["export_tables"] = export_tables
+    return source
 
 
 def _run_power_law(curve: CurveData, q_range: tuple[float, float], config: AutoBatchConfig) -> AnalysisResult:
@@ -567,25 +1012,56 @@ def _run_power_law(curve: CurveData, q_range: tuple[float, float], config: AutoB
         execution_span = float(math.log10(q_end / q_start))
     values["execution_fit_points"] = actual_fit_points
     values["execution_log_q_span_decades"] = execution_span
+    values.update(_linear_residual_audit(values.get("residual_rows")))
+    values.update(_local_power_law_stability(curve, q_range))
+    values["measurement_sigma_available"] = curve.error is not None
+    values["uncertainty_interpretation"] = (
+        "measurement_error_supported"
+        if curve.error is not None
+        else "ols_covariance_and_robustness_only_not_instrument_measurement_ci"
+    )
 
     validity = values.get("validity", {})
     fit_valid = isinstance(validity, Mapping) and bool(validity.get("fit_valid"))
-    if fit_valid:
-        reporting_codes: list[str] = []
+    alpha = _finite_float(values.get("alpha"))
+    r_squared = _finite_float(values.get("R2"))
+    reporting_codes: list[str] = []
+    if not fit_valid or alpha is None:
+        values["reporting_status"] = "not_reportable"
+        reporting_codes.append("power_law_fit_invalid")
+    else:
         if execution_span is None:
             reporting_codes.append("execution_log_q_span_unavailable")
-        elif execution_span < config.reporting_min_log_q_span_decades:
-            reporting_codes.append("execution_log_q_span_below_reporting_threshold")
-        if actual_fit_points < 5:
-            reporting_codes.append("execution_fit_points_below_reporting_minimum")
+        elif execution_span < config.power_law_formal_min_log_q_span_decades:
+            reporting_codes.append("power_law_span_below_formal_threshold")
+            if execution_span < config.reporting_min_log_q_span_decades:
+                reporting_codes.append("execution_log_q_span_below_reporting_threshold")
+        if actual_fit_points < 20:
+            reporting_codes.append("power_law_fit_points_below_formal_minimum")
+        if not 1.0 <= alpha <= 4.0:
+            reporting_codes.append("power_law_alpha_outside_interpretable_range")
+        if r_squared is None or r_squared < 0.98:
+            reporting_codes.append("power_law_linearity_below_formal_threshold")
+        if not bool(values.get("local_alpha_stability_passed")):
+            reporting_codes.append("power_law_local_slope_not_stable")
+        if not bool(values.get("residual_randomness_passed")):
+            reporting_codes.append("power_law_systematic_residuals")
         if reporting_codes:
             values["reporting_status"] = "exploratory"
-            values["reporting_reason_codes"] = reporting_codes
-            source.warnings.append(
-                "Power-law fit is retained for audit, but its executed q interval does not meet the reporting gate."
-            )
+        else:
+            values["reporting_status"] = "reportable"
+            reporting_codes.append("power_law_formal_gate_passed")
+    values["reporting_reason_codes"] = reporting_codes
+    if values["reporting_status"] != "reportable":
+        source.warnings.append(
+            "Power-law fit is retained for audit but did not pass every formal span, exponent, local-slope, residual, and linearity gate."
+        )
+    export_tables = source.results.get("export_tables")
+    export_tables = dict(export_tables) if isinstance(export_tables, Mapping) else {}
+    export_tables["residual_rows"] = list(values.get("residual_rows", []))
+    values["export_tables"] = export_tables
     source.results.update(values)
-    return source
+    return _attach_model_free_robustness(source, curve, q_range, "power_law", config)
 
 
 def _run_local_slope(curve: CurveData, q_range: tuple[float, float], config: AutoBatchConfig) -> AnalysisResult:
@@ -817,7 +1293,49 @@ def _run_porod(curve: CurveData, q_range: tuple[float, float], config: AutoBatch
             "noise_score": source.results.get("noise_score"),
         }
     )
-    return _result_with_values(
+    alpha = _finite_float(values.get("alpha"))
+    plateau_cv = _finite_float(values.get("plateau_cv"))
+    noise_score = _finite_float(values.get("noise_score"))
+    span = float(math.log10(q_range[1] / q_range[0])) if q_range[0] > 0.0 else None
+    effective_low, effective_high = config.effective_q_range
+    position_fraction = None
+    if effective_low > 0.0 and effective_high > effective_low:
+        center = math.sqrt(q_range[0] * q_range[1])
+        position_fraction = float(
+            math.log10(center / effective_low) / math.log10(effective_high / effective_low)
+        )
+    reason_codes: list[str] = []
+    if alpha is None:
+        reason_codes.append("porod_alpha_unavailable")
+    elif not 3.6 <= alpha <= 4.4:
+        reason_codes.append("porod_alpha_outside_4_plus_or_minus_0_4")
+    if plateau_cv is None or plateau_cv > 0.20:
+        reason_codes.append("porod_q4i_plateau_not_stable")
+    if span is None or span < config.porod_formal_min_log_q_span_decades:
+        reason_codes.append("porod_span_below_formal_threshold")
+    if position_fraction is None or position_fraction < config.porod_min_log_q_position_fraction:
+        reason_codes.append("porod_interval_not_in_high_q_portion")
+    if noise_score is None or noise_score > 0.20:
+        reason_codes.append("porod_high_q_noise_overlap_or_unstable")
+    values.update(
+        {
+            "execution_log_q_span_decades": span,
+            "high_q_position_fraction": position_fraction,
+            "measurement_sigma_available": curve.error is not None,
+            "uncertainty_interpretation": (
+                "measurement_error_supported"
+                if curve.error is not None
+                else "ols_and_robustness_only_not_instrument_measurement_ci"
+            ),
+            "reporting_status": "reportable" if not reason_codes else "exploratory",
+            "reporting_reason_codes": reason_codes or ["porod_formal_gate_passed"],
+        }
+    )
+    if reason_codes:
+        source.warnings.append(
+            "Porod metrics are retained for audit but did not pass every exponent, q4I plateau, span, and high-q-position gate."
+        )
+    result = _result_with_values(
         curve,
         "porod",
         q_range,
@@ -826,6 +1344,7 @@ def _run_porod(curve: CurveData, q_range: tuple[float, float], config: AutoBatch
         tables=source.results.get("export_tables", {}),
         assumptions=source.results.get("assumptions", []),
     )
+    return _attach_model_free_robustness(result, curve, q_range, "porod", config)
 
 
 def _run_kratky(curve: CurveData, q_range: tuple[float, float], config: AutoBatchConfig) -> AnalysisResult:
@@ -837,6 +1356,10 @@ def _run_kratky(curve: CurveData, q_range: tuple[float, float], config: AutoBatc
             "q_peak": source.results.get("q_K"),
             "d_peak": source.results.get("d_K"),
             "q2I_peak": source.results.get("q2I_max"),
+            "reporting_status": "exploratory",
+            "reporting_reason_codes": [
+                "kratky_maximum_is_descriptive_and_not_an_independently_confirmed_scattering_peak"
+            ],
         }
     )
     return _result_with_values(curve, "kratky", q_range, values, warnings=source.warnings)
@@ -852,17 +1375,64 @@ def _run_compensated(curve: CurveData, q_range: tuple[float, float], config: Aut
         "plateau_mean": source.results.get("q4I_plateau_mean"),
         "plateau_std": source.results.get("q4I_plateau_std"),
         "plateau_cv": source.results.get("q4I_plateau_cv"),
+        "reporting_status": "exploratory",
+        "reporting_reason_codes": [
+            "compensated_q4i_statistics_require_the_independent_porod_gate"
+        ],
     }
     return _result_with_values(curve, "compensated", q_range, values, warnings=source.warnings)
 
 
 def _run_invariant(curve: CurveData, q_range: tuple[float, float], config: AutoBatchConfig) -> AnalysisResult:
-    return invariant_with_extrapolation(
-        curve,
-        q_range,
-        contrast=config.contrast,
-        absolute_intensity=config.absolute_intensity,
+    del config
+    source = invariant_measured(curve, q_range)
+    values = dict(source.results)
+    negative_points = int(values.get("negative_intensity_points") or 0)
+    try:
+        negative_fraction = float(values.get("negative_contribution_fraction") or 0.0)
+    except (TypeError, ValueError):
+        negative_fraction = 0.0
+    if not np.isfinite(negative_fraction):
+        negative_fraction = 0.0
+    # Negative intensity contaminates a formal finite-range invariant. Mild
+    # contamination stays exploratory; larger negative area contribution is not reportable.
+    if negative_points <= 0 and negative_fraction <= 0.0:
+        reporting_status = "reportable"
+        reason_codes = ["finite_q_interval_integral_only"]
+    elif negative_fraction > 0.05:
+        reporting_status = "not_reportable"
+        reason_codes = [
+            "finite_q_interval_integral_only",
+            "invariant_negative_intensity_contribution_above_threshold",
+        ]
+    else:
+        reporting_status = "exploratory"
+        reason_codes = [
+            "finite_q_interval_integral_only",
+            "invariant_negative_intensity_present",
+        ]
+    values.update(
+        {
+            "Q_mid": values.get("Q_measured"),
+            "Q_low": None,
+            "Q_low_status": "not_applicable",
+            "Q_low_invalid_reason": "Low-q extrapolation is disabled for this finite-range workflow.",
+            "Q_high": None,
+            "Q_high_status": "not_applicable",
+            "Q_high_invalid_reason": "High-q extrapolation is disabled for this finite-range workflow.",
+            "Q_total": None,
+            "Q_total_status": "not_applicable",
+            "Q_total_invalid_reason": "Only the configured finite q interval is integrated; no 0-to-infinity invariant is reported.",
+            "volume_fraction": None,
+            "volume_fraction_status": "missing_prerequisite",
+            "volume_fraction_invalid_reason": "Scattering contrast and phase fraction are not supplied for an absolute two-phase interpretation.",
+            "reporting_status": reporting_status,
+            "reporting_reason_codes": reason_codes,
+            "uncertainty_interpretation": "finite_interval_integral_without_measurement_sigma",
+        }
     )
+    source.results.update(values)
+    return source
 
 
 def _run_integrals(curve: CurveData, q_range: tuple[float, float], config: AutoBatchConfig) -> AnalysisResult:

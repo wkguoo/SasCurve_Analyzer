@@ -56,7 +56,7 @@ class ImportTab(QWidget):
         self.limit_q_range.setChecked(True)
         self.import_q_min = QDoubleSpinBox()
         self.import_q_max = QDoubleSpinBox()
-        for spinbox, value in ((self.import_q_min, 0.01), (self.import_q_max, 0.05)):
+        for spinbox, value in ((self.import_q_min, 0.01), (self.import_q_max, 0.5)):
             spinbox.setDecimals(6)
             spinbox.setRange(0.0, 1_000_000.0)
             spinbox.setSingleStep(0.001)
@@ -101,7 +101,7 @@ class ImportTab(QWidget):
         )
         apply_help(
             self.import_q_max,
-            tooltip="导入过滤上限，默认 0.05。",
+            tooltip="导入过滤上限，默认 0.5。",
             status_tip="启用 q 范围限制时，保留 q <= q_max 的点。",
         )
 

@@ -2,10 +2,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { SpreadsheetFile, Workbook } from "@oai/artifact-tool";
 
-const outputDir = path.resolve(process.argv[2] || "");
-if (!outputDir) {
-  throw new Error("Usage: node build_summary_workbook.mjs <result-directory>");
+const cliArgs = process.argv.slice(2);
+const compactAfterExport = cliArgs.includes("--compact");
+const positionalArgs = cliArgs.filter((value) => !value.startsWith("--"));
+if (!positionalArgs[0]) {
+  throw new Error("Usage: node build_summary_workbook.mjs <result-directory> [--compact]");
 }
+const outputDir = path.resolve(positionalArgs[0] || "");
 
 const previewDir = path.join(
   path.dirname(outputDir),
@@ -14,17 +17,23 @@ const previewDir = path.join(
 );
 
 const csvSources = [
-  ["input_manifest", ["input_manifest_original.csv", "summary/input_manifest.csv", "review/input_manifest_original.csv", "review/summary/input_manifest.csv", "review/audit/input_manifest.csv"]],
-  ["source_integrity", ["source_integrity_after_analysis.csv", "review/source_integrity_after_analysis.csv"]],
-  ["data_quality", ["data_quality.csv", "review/data_quality.csv"]],
-  ["accepted_parameters", ["accepted_parameters.csv", "review/accepted_parameters.csv"]],
+  ["input_manifest", ["audit/input_manifest_original.csv", "summary/input_manifest.csv", "input_manifest_original.csv", "review/input_manifest_original.csv", "review/summary/input_manifest.csv", "review/audit/input_manifest.csv"]],
+  ["source_integrity", ["audit/source_integrity_after_analysis.csv", "source_integrity_after_analysis.csv", "review/source_integrity_after_analysis.csv"]],
+  ["data_quality", ["summary/data_quality.csv", "data_quality.csv", "review/data_quality.csv"]],
+  ["accepted_parameters", ["summary/accepted_parameters.csv", "accepted_parameters.csv", "review/accepted_parameters.csv"]],
   ["reliable_parameters", ["final_results.csv", "reliable_parameters.csv", "review/reliable_parameters.csv", "review/summary/reliable_parameters.csv"]],
-  ["all_parameters_audit", ["all_parameters_audit.csv", "audit/parameters.csv", "review/all_parameters_audit.csv", "review/audit/parameters.csv"]],
-  ["fit_quality", ["fit_quality.csv", "audit/fit_quality.csv", "review/audit/fit_quality.csv", "review/summary/fit_quality_usable.csv"]],
-  ["range_audit", ["range_audit.csv", "audit/range_audit.csv", "review/audit/range_audit.csv"]],
-  ["consensus_regions", ["consensus_regions.csv", "audit/consensus_regions.csv", "review/audit/consensus_regions.csv"]],
+  ["adaptive_parameters", ["audit/workbook_sources/adaptive_parameters_workbook.csv", "adaptive_parameters_workbook.csv"]],
+  ["common_parameters", ["audit/workbook_sources/common_parameters_workbook.csv", "common_parameters_workbook.csv"]],
+  ["fit_quality", ["audit/workbook_sources/analysis_inventory_workbook.csv", "analysis_inventory_workbook.csv", "audit/fit_quality.csv", "fit_quality.csv", "review/audit/fit_quality.csv"]],
+  ["candidate_windows", ["audit/workbook_sources/candidate_windows_workbook.csv", "candidate_windows_workbook.csv", "audit/candidate_windows.csv", "candidate_windows.csv", "review/audit/candidate_windows.csv"]],
+  ["range_audit", ["audit/range_audit.csv", "range_audit.csv", "review/audit/range_audit.csv"]],
+  ["consensus_regions", ["audit/consensus_regions.csv", "consensus_regions.csv", "review/audit/consensus_regions.csv"]],
   ["sequence_frames", ["sequence_frame_table.csv", "summary/sequence_frame_table.csv", "audit/sequence_frame_table.csv", "review/summary/sequence_frame_table.csv", "review/audit/sequence_frame_table.csv"]],
   ["sequence_parameters", ["sequence_parameter_trajectories.csv", "audit/sequence_parameter_trajectories.csv", "review/audit/sequence_parameter_trajectories.csv"]],
+  ["missing_frames", ["summary/missing_frames.csv", "missing_frames.csv", "review/missing_frames.csv"]],
+  ["rt_reference", ["summary/room_temperature_reference.csv", "room_temperature_reference.csv", "review/room_temperature_reference.csv"]],
+  ["dual_track_differences", ["summary/dual_track_differences.csv", "dual_track_differences.csv", "audit/dual_track_differences.csv"]],
+  ["robustness", ["summary/robustness.csv", "robustness.csv", "audit/robustness.csv"]],
   ["warnings", ["warnings.csv", "audit/warnings.csv", "review/audit/warnings.csv"]],
 ];
 
@@ -103,7 +112,7 @@ async function compactResultPackage() {
 - \`review/\`：未放在主目录的质量、审计、序列、图件和运行配置文件。
 
 本结果包只分析指定的前 10 帧，所有纳入计算的数据均限制在有效 q 范围
-\`0.01–0.05 Å⁻¹\` 内。原始 CSV 未修改、未复制进压缩包，也未进行平滑、平移、强度截断或背景扣除。
+\`0.01–0.5 Å⁻¹\` 内。原始 CSV 未修改、未复制进压缩包，也未进行平滑、平移、强度截断或背景扣除。
 `;
   await fs.writeFile(path.join(outputDir, "README.md"), readme, "utf8");
 }
@@ -308,6 +317,7 @@ for (const [sheetName, candidates] of csvSources) {
   const sourcePath = await firstExisting(candidates);
   if (!sourcePath) continue;
   const csvText = (await fs.readFile(sourcePath, "utf8")).replace(/^\uFEFF/, "");
+  if (!csvText.trim()) continue;
   await workbook.fromCSV(csvText, { sheetName });
   const sheet = workbook.worksheets.getItem(sheetName);
   const rowCount = csvText.trim().split(/\r?\n/).length;
@@ -315,7 +325,7 @@ for (const [sheetName, candidates] of csvSources) {
     coerceNumericColumns(sheet, ["F", "G", "H", "I", "J", "K", "M", "N", "O", "P", "Q", "R", "S", "U", "V"], 2, rowCount);
   }
   styleImportedSheet(sheet);
-  imported.push({ sheetName, sourcePath });
+  imported.push({ sheetName, sourcePath, rowCount });
 }
 
 for (const sheetName of ["accepted_parameters", "reliable_parameters"]) {
@@ -326,7 +336,7 @@ for (const sheetName of ["accepted_parameters", "reliable_parameters"]) {
 
 overview.showGridLines = false;
 overview.getRange("A1:H1").merge();
-overview.getRange("A1").values = [["17_Ti15_300_2_iso SAXS 前十帧无模型分析汇总"]];
+overview.getRange("A1").values = [["17_Ti15_300_2_iso SAXS 模型免费双轨分析汇总"]];
 overview.getRange("A1:H1").format = {
   fill: "#17365D",
   font: { bold: true, color: "#FFFFFF" },
@@ -337,7 +347,9 @@ overview.getRange("A3:B3").format = {
   fill: "#5B9BD5",
   font: { bold: true, color: "#FFFFFF" },
 };
-let effectiveQText = "0.01–0.05 Å⁻¹";
+let effectiveQText = "0.01–0.5 Å⁻¹";
+let analysisObjectText = "Ti15 原位序列（真实帧号）";
+let referenceText = "室温曲线独立对比，不参与公共区间共识";
 try {
   const configPath = await firstExisting(["run_config.json", "review/run_config.json"]);
   if (!configPath) throw new Error("run_config.json not found");
@@ -345,6 +357,18 @@ try {
   const range = config.effective_q_range;
   if (Array.isArray(range) && range.length === 2) {
     effectiveQText = `${Number(range[0]).toPrecision(6)}–${Number(range[1]).toPrecision(6)} Å⁻¹`;
+  }
+  const selection = config.input_selection || {};
+  const selectedCount = Number(selection.selected_series_count);
+  const limit = Number(selection.limit);
+  if (Number.isFinite(selectedCount)) {
+    analysisObjectText = limit === 0
+      ? `完整原位序列（${selectedCount} 帧，保留真实帧号缺口）`
+      : `试运行：前 ${selectedCount} 个原位帧（真实帧号）`;
+  }
+  const referenceCount = Number(selection.reference_count);
+  if (Number.isFinite(referenceCount)) {
+    referenceText = `${referenceCount} 条室温曲线独立对比，不参与公共区间共识`;
   }
 } catch {
   // Keep the documented default when a legacy package has no run_config.json.
@@ -360,8 +384,8 @@ overview.getRange("A4:A11").values = [
   ["原始数据处理"],
 ];
 overview.getRange("B4:B11").values = [
-  ["ti15_00001–ti15_00010"],
-  ["TI15-rt_00001 已排除"],
+  [analysisObjectText],
+  [referenceText],
   ["已关闭，仅无模型分析"],
   [effectiveQText],
   ["Å⁻¹"],
@@ -384,15 +408,24 @@ overview.getRange("A14:A20").values = [
   ["负强度点总数"],
   ["零强度点总数"],
 ];
-overview.getRange("B14:B20").formulas = [
-  ["=COUNTA('data_quality'!A2:A11)"],
-  ["=MIN('data_quality'!F2:F11)"],
-  ["=MAX('data_quality'!F2:F11)"],
-  ["=MIN('data_quality'!N2:N11)"],
-  ["=MAX('data_quality'!O2:O11)"],
-  ["=SUM('data_quality'!I2:I11)"],
-  ["=SUM('data_quality'!J2:J11)"],
-];
+const dataQualityImport = imported.find((item) => item.sheetName === "data_quality");
+if (dataQualityImport && dataQualityImport.rowCount > 1) {
+  const lastDataQualityRow = dataQualityImport.rowCount;
+  overview.getRange("B14:B20").formulas = [
+    [`=COUNTA('data_quality'!A2:A${lastDataQualityRow})`],
+    [`=MIN('data_quality'!F2:F${lastDataQualityRow})`],
+    [`=MAX('data_quality'!F2:F${lastDataQualityRow})`],
+    [`=MIN('data_quality'!N2:N${lastDataQualityRow})`],
+    [`=MAX('data_quality'!O2:O${lastDataQualityRow})`],
+    [`=SUM('data_quality'!I2:I${lastDataQualityRow})`],
+    [`=SUM('data_quality'!J2:J${lastDataQualityRow})`],
+  ];
+} else {
+  overview.getRange("B14:B20").values = Array.from(
+    { length: 7 },
+    () => ["未提供 data_quality.csv"],
+  );
+}
 
 overview.getRange("A22:H22").merge();
 overview.getRange("A22").values = [[
@@ -457,8 +490,27 @@ console.log(`FORMULA_ERRORS=${formulaErrors.ndjson.replace(/\s+/g, " ").slice(0,
 const xlsx = await SpreadsheetFile.exportXlsx(workbook);
 const outputPath = path.join(outputDir, "summary_tables.xlsx");
 await xlsx.save(outputPath);
-await compactResultPackage();
+await fs.mkdir(path.join(outputDir, "audit"), { recursive: true });
+await fs.writeFile(
+  path.join(outputDir, "audit", "workbook_validation.json"),
+  JSON.stringify(
+    {
+      workbook: outputPath,
+      rendered_sheet_count: sheetNames.length,
+      rendered_sheets: sheetNames,
+      preview_directory: previewDir,
+      overview_inspection: overviewCheck.ndjson,
+      formula_error_scan: formulaErrors.ndjson,
+    },
+    null,
+    2,
+  ),
+  "utf8",
+);
+if (compactAfterExport) {
+  await compactResultPackage();
+}
 await fs.rm(`${outputPath}.inspect.ndjson`, { force: true });
 console.log(`XLSX=${outputPath}`);
 console.log(`PREVIEWS=${previewDir}`);
-console.log(`COMPACT_PACKAGE=${outputDir}`);
+console.log(`COMPACT_PACKAGE=${compactAfterExport ? outputDir : "disabled"}`);

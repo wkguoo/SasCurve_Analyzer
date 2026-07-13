@@ -14,6 +14,8 @@ from typing import Any
 
 import numpy as np
 
+from app.core.cancellation import cancellation_requested
+
 
 FitCallback = Callable[[np.ndarray], Any]
 RangeCallback = Callable[[tuple[float, float]], Any]
@@ -374,9 +376,30 @@ def _completed_summary(
     minimum_valid_fits: int,
     successes: Sequence[Mapping[str, float]],
     attempts: list[dict[str, Any]],
+    cancelled: bool = False,
 ) -> UncertaintySummary:
     success_count = len(successes)
     failure_count = sum(not bool(row["success"]) for row in attempts)
+    if cancelled:
+        quantiles, cv, cv_reasons, sensitivity_score, sensitivity_reason = _statistics(successes)
+        return UncertaintySummary(
+            method=method,
+            enabled=True,
+            status="cancelled",
+            reason="cancel_requested",
+            seed=seed,
+            sample_count=sample_count,
+            variant_count=variant_count,
+            success_count=success_count,
+            failure_count=failure_count,
+            minimum_valid_fits=minimum_valid_fits,
+            parameter_quantiles=quantiles,
+            coefficient_of_variation=cv,
+            coefficient_of_variation_reasons=cv_reasons,
+            sensitivity_score=sensitivity_score,
+            sensitivity_reason=sensitivity_reason or "cancel_requested",
+            attempts=attempts,
+        )
     if success_count < minimum_valid_fits:
         return UncertaintySummary(
             method=method,
@@ -496,7 +519,11 @@ def bootstrap_fit(
         )
     successes: list[dict[str, float]] = []
     attempts: list[dict[str, Any]] = []
+    cancelled = False
     for attempt_index in range(count):
+        if cancellation_requested():
+            cancelled = True
+            break
         sampled_indices = generator.choice(base_indices, size=base_indices.size, replace=True)
         try:
             parameters, reason = _parameter_mapping(fit_callback(sampled_indices.copy()))
@@ -523,6 +550,122 @@ def bootstrap_fit(
         minimum_valid_fits=minimum,
         successes=successes,
         attempts=attempts,
+        cancelled=cancelled,
+    )
+
+
+def moving_block_residual_bootstrap_fit(
+    fit_callback: FitCallback,
+    *,
+    residual_count: int,
+    sample_count: int = 200,
+    seed: int = 12345,
+    block_length: int = 0,
+    enabled: bool = True,
+    minimum_valid_fits: int = 3,
+    config: Any | None = None,
+) -> UncertaintySummary:
+    """Bootstrap residual donor indices in contiguous moving blocks.
+
+    The fitted q grid remains fixed and ordered.  Only residual donors are
+    resampled; consecutive residuals inside each block retain their original
+    order.  This is a robustness calculation, not a substitute for instrument
+    measurement errors.
+    """
+
+    sample_count = _config_option(config, "bootstrap_samples", sample_count)
+    seed = _config_option(config, "bootstrap_seed", seed)
+    block_length = _config_option(config, "bootstrap_block_length", block_length)
+    enabled = _config_option(config, "enable_bootstrap", enabled)
+    count = _positive_int(sample_count, "sample_count")
+    minimum = _positive_int(minimum_valid_fits, "minimum_valid_fits")
+    n_residuals = _positive_int(residual_count, "residual_count")
+    if not isinstance(enabled, (bool, np.bool_)):
+        raise ValueError("enabled must be a boolean")
+    computation_seed, seed_reason = _seed_value(seed)
+    if not enabled:
+        return _disabled_summary(
+            method="moving_block_residual_bootstrap",
+            seed=computation_seed,
+            sample_count=count,
+            variant_count=0,
+            minimum_valid_fits=minimum,
+            reason="bootstrap_not_enabled",
+        )
+    if seed_reason is not None:
+        return _invalid_summary(
+            method="moving_block_residual_bootstrap",
+            reason=seed_reason,
+            seed=None,
+            sample_count=count,
+            variant_count=0,
+            minimum_valid_fits=minimum,
+        )
+    if isinstance(block_length, (bool, np.bool_)):
+        return _invalid_summary(
+            method="moving_block_residual_bootstrap",
+            reason="block_length_must_be_zero_or_positive_integer",
+            seed=computation_seed,
+            sample_count=count,
+            variant_count=0,
+            minimum_valid_fits=minimum,
+        )
+    try:
+        configured_block = int(block_length)
+    except (TypeError, ValueError, OverflowError):
+        configured_block = -1
+    if configured_block < 0 or configured_block != block_length:
+        return _invalid_summary(
+            method="moving_block_residual_bootstrap",
+            reason="block_length_must_be_zero_or_positive_integer",
+            seed=computation_seed,
+            sample_count=count,
+            variant_count=0,
+            minimum_valid_fits=minimum,
+        )
+    actual_block = configured_block or max(2, int(round(n_residuals ** (1.0 / 3.0))))
+    actual_block = min(actual_block, n_residuals)
+    generator = np.random.default_rng(computation_seed)
+    successes: list[dict[str, float]] = []
+    attempts: list[dict[str, Any]] = []
+    base = np.arange(n_residuals, dtype=int)
+    block_count = int(np.ceil(n_residuals / actual_block))
+    cancelled = False
+    for attempt_index in range(count):
+        if cancellation_requested():
+            cancelled = True
+            break
+        starts = generator.integers(0, n_residuals, size=block_count)
+        donor_indices = np.concatenate(
+            [base[(start + np.arange(actual_block)) % n_residuals] for start in starts]
+        )[:n_residuals]
+        try:
+            parameters, reason = _parameter_mapping(fit_callback(donor_indices.copy()))
+        except Exception as exc:
+            parameters = None
+            reason = f"callback_exception:{type(exc).__name__}"
+        success = parameters is not None
+        if success:
+            successes.append(parameters)
+        row = _attempt_row(
+            attempt_index=attempt_index,
+            success=success,
+            reason=reason,
+            parameters=parameters,
+            resampled_indices=donor_indices,
+        )
+        row["block_length"] = actual_block
+        row["q_order_preserved"] = True
+        attempts.append(row)
+    return _completed_summary(
+        method="moving_block_residual_bootstrap",
+        seed=computation_seed,
+        sample_count=count,
+        variant_count=0,
+        minimum_valid_fits=minimum,
+        successes=successes,
+        attempts=attempts,
+        cancelled=cancelled,
     )
 
 
@@ -533,6 +676,7 @@ def range_sensitivity(
     boundary_fraction: float = 0.05,
     enabled: bool = True,
     minimum_valid_fits: int = 3,
+    hard_q_range: tuple[float, float] | None = None,
     config: Any | None = None,
 ) -> UncertaintySummary:
     """Refit all nine lower/upper boundary combinations around a q range."""
@@ -573,14 +717,35 @@ def range_sensitivity(
             minimum_valid_fits=minimum,
         )
 
+    hard_low, hard_high = (None, None)
+    if hard_q_range is not None:
+        hard_low, hard_high = _q_range_bounds(hard_q_range)
+        if hard_low is None or hard_high is None:
+            return _invalid_summary(
+                method="range_sensitivity",
+                reason="hard_q_range_must_contain_two_finite_ascending_bounds",
+                seed=None,
+                sample_count=None,
+                variant_count=0,
+                minimum_valid_fits=minimum,
+            )
+
     width = q_high - q_low
     shifts = (-fraction, 0.0, fraction)
     successes: list[dict[str, float]] = []
     attempts: list[dict[str, Any]] = []
+    cancelled = False
     for lower_shift in shifts:
         for upper_shift in shifts:
+            if cancellation_requested():
+                cancelled = True
+                break
             variant_low = _finite_float(q_low + lower_shift * width)
             variant_high = _finite_float(q_high + upper_shift * width)
+            if variant_low is not None and hard_low is not None:
+                variant_low = max(variant_low, hard_low)
+            if variant_high is not None and hard_high is not None:
+                variant_high = min(variant_high, hard_high)
             attempt_index = len(attempts)
             if variant_low is None or variant_high is None or variant_low >= variant_high:
                 attempts.append(
@@ -614,15 +779,23 @@ def range_sensitivity(
                     upper_shift_fraction=upper_shift,
                 )
             )
+        if cancelled:
+            break
     return _completed_summary(
         method="range_sensitivity",
         seed=None,
         sample_count=None,
-        variant_count=9,
+        variant_count=len(attempts),
         minimum_valid_fits=minimum,
         successes=successes,
         attempts=attempts,
+        cancelled=cancelled,
     )
 
 
-__all__ = ["UncertaintySummary", "bootstrap_fit", "range_sensitivity"]
+__all__ = [
+    "UncertaintySummary",
+    "bootstrap_fit",
+    "moving_block_residual_bootstrap_fit",
+    "range_sensitivity",
+]

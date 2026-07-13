@@ -1130,12 +1130,12 @@ This documentation task changed no analysis algorithm, schema, cache version, ra
 
 ## 2026-07-12 - Require Effective q-Range Confirmation Before Analysis
 
-The analysis workflow now exposes and records a user-confirmed effective q interval. The default is `0.01–0.05 Å^-1`; it is an initial assumption, not a universal instrument limit.
+The analysis workflow now exposes and records a user-confirmed effective q interval. The current Ti15 boundary is `0.01–0.5 Å^-1`; it is a project-specific constraint, not a universal instrument limit.
 
 - `app/core/auto_batch_schema.py` adds `DEFAULT_EFFECTIVE_Q_RANGE` and validates `AutoBatchConfig.effective_q_range` as finite, nonnegative, and strictly ascending.
 - `app/core/auto_batch.py` applies the configured interval to full finite q ranges, clips consensus ranges to it, and records the applied interval in run warnings/configuration without modifying curve arrays.
 - `app/core/batch_consensus.py` passes the interval into automatic region detection. `app/core/sequence_analysis.py` applies it to reference comparisons and optional exploratory statistics.
-- `app/ui/analysis_tab.py`, `app/ui/deep_analysis_tab.py`, and `app/ui/auto_batch_tab.py` present the interval before analysis; the first two analysis pages and the batch page default to `0.01–0.05 Å^-1`.
+- `app/ui/analysis_tab.py`, `app/ui/deep_analysis_tab.py`, and `app/ui/auto_batch_tab.py` present the interval before analysis; their current default is `0.01–0.5 Å^-1`, and the Ti15 batch page locks it for reproducibility.
 - `scripts/analyze_ti15_first10.py` accepts `--q-min` and `--q-max`, writes the selected range to the report/config/quality outputs, and plots only positive points inside that range. The raw input remains unchanged.
 - `app/core/batch_cache.py` increments `ANALYSIS_ALGORITHM_VERSION` to `3` so cache entries created under the previous unrestricted range behavior are not reused.
 
@@ -1143,7 +1143,7 @@ Focused regression tests cover schema validation, batch range enforcement, conse
 
 ## 2026-07-12 - Import-Time Effective q Filter And Tiered Archives
 
-The batch input boundary now applies `AutoBatchConfig.effective_q_range` while importing each curve, rather than retaining out-of-range points and relying only on downstream method clipping. The default remains `0.01–0.05 Å^-1`; the source CSV is read-only, while each `CurveData` stores the filter diagnostics and the run configuration stores aggregate raw/imported counts.
+The batch input boundary applies `AutoBatchConfig.effective_q_range` while importing each curve, rather than retaining out-of-range points and relying only on downstream clipping. The current default is `0.01–0.5 Å^-1`; source CSV files are read-only, each `CurveData` stores filter diagnostics, and the run configuration stores aggregate raw/imported counts.
 
 `app/core/result_package.py` filters all q-bearing detail rows against the run-level effective interval. The normal Ti15 package uses `detail_level='slim'`, keeping only non-empty invariant tables in `details/analysis_tables/`. `export_details_archive()` creates `details_full.zip` with the complete 30-table per-frame inventory, including column-headed zero-row crossover tables. The Ti15 script creates two independent archives: `audit_full.zip` contains the full audit directory, accepted/reliable/data-quality tables, input/integrity records, and report/config files; `details_full.zip` remains separate and is not nested inside the audit archive. Neither archive contains the original experiment CSVs.
 
@@ -1177,7 +1177,7 @@ The previous batch scheduler treated several physically different analysis famil
 
 `audit/range_audit.csv` and `audit/consensus_regions.csv` are now written by `export_result_package()` and included in the independent full audit archive. The summary workbook imports both audit sheets when they are present. `ANALYSIS_ALGORITHM_VERSION` is `4`, invalidating job caches created under the former shared-range routing.
 
-This change does not change the raw-data contract: q filtering still happens at import time, the default effective boundary remains `0.01–0.05 Å^-1`, non-positive intensities are not repaired, and original source files remain read-only. Existing result directories are historical snapshots and must be regenerated before their numerical values are described as outputs of this routing version.
+This change does not change the raw-data contract: q filtering happens at import time, the effective boundary is now `0.01–0.5 Å^-1`, non-positive intensities are not repaired, and original source files remain read-only. Earlier `0.01–0.05 Å^-1` result directories are historical snapshots and must not be described as outputs of this routing version.
 
 ## 2026-07-12 - q-Selection Basis And Evidence Audit
 
@@ -1186,7 +1186,7 @@ The q-routing contract now records not only the executable interval but also the
 - `AnalysisEnvelope` adds `q_selection_basis` and `q_selection_evidence`; these fields are copied into `parameters.csv`, `fit_quality.csv`, `all_parameters_audit.csv`, `accepted_parameters.csv`, and the Ti15 report tables.
 - `range_audit.csv` expands each curve-method decision with the basis, selected score, coverage, point count, log-q span, R², stability/physics/noise evidence, Porod plateau CV, `qRg_max`, and compact JSON evidence.
 - Effective-boundary methods record `effective_q_boundary_after_import_filter`; Guinier/power-law/Porod consensus records the method-specific log-q clustering and strict-intersection rule; explicit per-frame fallback records the same-method candidate scan and fallback rule; unavailable intervals retain the scan evidence and no-executable-interval basis.
-- `run_config.json` records the candidate sampling, ranking, consensus clustering, coverage, strict-intersection, fallback, and no-cross-method-intersection rules. The report explains that `0.01–0.05 Å^-1` is the hard imported-data boundary, not a universal fit interval.
+- `run_config.json` records candidate sampling, ranking, log-q clustering, coverage, the longest coverage-supported common interval, dual tracks, and no-cross-method-intersection. The report explains that `0.01–0.5 Å^-1` is the hard imported-data boundary, not a universal fit interval.
 
 This evidence is descriptive and auditable. It does not turn a fit into proof of morphology, phase transition, or mechanism, and it does not alter the raw CSV files or the effective q boundary.
 
@@ -1205,3 +1205,14 @@ Power-law results now retain both `eligible_points`/candidate evidence and the a
 Automatic peak discovery uses a robust log-intensity trend residual and does not accept a large collection of raw local maxima as confirmed peaks. Peak area must be positive and the candidate must pass the configured noise-separation gate. Shoulder and crossover locations that coincide on the same q grid are linked through `related_analysis_ids`, marked `ambiguous`, and not counted as two independent reportable features. Oscillation confirmation requires a minimum number of cycles, period consistency, and amplitude-to-noise evidence; local-slope plateaus require a stability threshold.
 
 These states are exported to `parameters.csv`, `fit_quality.csv`, `all_parameters_audit.csv`, `accepted_parameters.csv`, and the Ti15 report. They are intentionally orthogonal: a numerical fit can succeed while still being non-reportable, and a candidate or detection can exist without being a physical conclusion.
+
+## 2026-07-13 - Ti15 Result-Root Entry Contract
+
+The Ti15 full-sequence package now keeps only six user entry files at the result root: `README.md`, `final_report_zh.md`, `final_results.csv`, `summary_tables.xlsx`, `run_config.json`, and `validation_summary.json`. The only standard root directories are `summary/`, `audit/`, `details/`, and `figures/`.
+
+- User-facing auxiliary tables (`accepted_parameters`, adaptive/common parameters, data quality, dual-track differences, robustness, missing frames, and the RT reference) are written below `summary/`.
+- Lossless and reproducibility tables (`all_parameters_audit`, the source manifest, source-integrity checks, candidate/range/consensus tables, and workbook validation) are written below `audit/`.
+- Memory-bounded CSV inputs used only by the artifact-tool workbook builder are written below `audit/workbook_sources/`.
+- `scripts/validate_ti15_results.py` enforces the root-entry whitelist in addition to the scientific and integrity checks. Legacy path fallbacks remain readable so historical packages can still be inspected.
+
+This is an output-organization change only. It does not alter q selection, numerical results, model gates, bootstrap behavior, source hashes, or the no-ZIP policy.

@@ -54,6 +54,46 @@ def test_candidate_consensus_prefers_high_coverage_over_single_high_score() -> N
     assert result.supporting_curve_ids == ("a", "b")
 
 
+def test_candidate_consensus_uses_widest_coverage_supported_interval_despite_narrow_outliers() -> None:
+    candidates = [
+        *[_candidate(f"regular_{index}", 0.01, 0.04, 0.8) for index in range(7)],
+        *[_candidate(f"narrow_{index}", 0.02, 0.025, 0.95) for index in range(3)],
+    ]
+
+    result = candidate_consensus(
+        "guinier",
+        candidates,
+        curve_count=10,
+        min_coverage=0.70,
+        min_log_span_decades=0.30,
+    )
+
+    assert result is not None
+    assert result.q_range == pytest.approx((0.01, 0.04))
+    assert result.coverage == pytest.approx(0.70)
+    assert result.range_rule == "coverage_supported_widest_interval"
+    assert result.minimum_log_span_decades == pytest.approx(0.30)
+    assert result.supporting_curve_ids == tuple(f"regular_{index}" for index in range(7))
+
+
+def test_candidate_consensus_returns_none_when_only_supported_interval_is_too_short() -> None:
+    candidates = [
+        _candidate("a", 0.020, 0.025, 0.9),
+        _candidate("b", 0.021, 0.026, 0.8),
+        _candidate("c", 0.019, 0.024, 0.85),
+    ]
+
+    result = candidate_consensus(
+        "power_law",
+        candidates,
+        curve_count=3,
+        min_coverage=0.70,
+        min_log_span_decades=0.30,
+    )
+
+    assert result is None
+
+
 def test_candidate_consensus_returns_none_below_coverage() -> None:
     result = candidate_consensus(
         "porod",
@@ -167,7 +207,7 @@ def test_candidate_consensus_accepts_exact_minimum_coverage_and_rejects_just_bel
 def test_candidate_consensus_prefers_higher_median_score_when_coverage_matches() -> None:
     candidates = [
         _candidate("low_score", 0.01, 0.02, 0.7),
-        _candidate("high_score", 0.20, 0.30, 0.9),
+        _candidate("high_score", 0.20, 0.40, 0.9),
     ]
 
     result = candidate_consensus("guinier", candidates, curve_count=2, min_coverage=0.5)
@@ -194,7 +234,7 @@ def test_candidate_consensus_prefers_more_points_for_equal_score_candidates_from
 def test_candidate_consensus_prefers_higher_median_points_after_coverage_and_score_ties() -> None:
     candidates = [
         _candidate("low_points", 0.01, 0.02, 0.8, n_points=5),
-        _candidate("high_points", 0.20, 0.30, 0.8, n_points=25),
+        _candidate("high_points", 0.20, 0.40, 0.8, n_points=25),
     ]
 
     result = candidate_consensus("guinier", candidates, curve_count=2, min_coverage=0.5)
@@ -253,7 +293,7 @@ def test_resolve_consensus_regions_maps_real_auto_region_types_without_mutating_
             _candidate(curve.curve_id, 0.01, 0.03, 0.8, region_type="guinier_candidate"),
             _candidate(curve.curve_id, 0.04, 0.08, 0.7, region_type="power_law_candidate"),
             _candidate(curve.curve_id, 0.10, 0.20, 0.9, region_type="porod_candidate"),
-            _candidate(curve.curve_id, 0.21, 0.24, 0.6, region_type="peak_candidate"),
+            _candidate(curve.curve_id, 0.21, 0.28, 0.6, region_type="peak_candidate"),
             _candidate(curve.curve_id, 0.001, 0.005, 0.99, region_type="low_q_upturn"),
         ]
         for curve in curves
@@ -280,6 +320,51 @@ def test_resolve_consensus_regions_maps_real_auto_region_types_without_mutating_
         assert np.array_equal(curve.q, expected_q)
         assert np.array_equal(curve.intensity, expected_intensity)
         assert curve.metadata == expected_metadata
+
+
+def test_resolve_consensus_regions_excludes_reference_curves_from_detection_and_denominator(monkeypatch) -> None:
+    series_curves = [
+        CurveData.create(
+            name=f"frame_{index:03d}",
+            q=[0.01, 0.02, 0.03],
+            intensity=[10.0, 5.0, 2.0],
+            metadata={"sequence_role": "series", "is_reference": False},
+        )
+        for index in range(3)
+    ]
+    reference_curves = [
+        CurveData.create(
+            name=f"reference_{index}",
+            q=[0.01, 0.02, 0.03],
+            intensity=[8.0, 4.0, 1.6],
+            metadata={"sequence_role": "reference", "is_reference": True},
+        )
+        for index in range(2)
+    ]
+    detected_ids: list[str] = []
+
+    def fake_detect_auto_regions(curve: CurveData, q_range=None) -> SimpleNamespace:
+        detected_ids.append(curve.curve_id)
+        if curve is series_curves[-1]:
+            return SimpleNamespace(results={"candidates": []})
+        return SimpleNamespace(
+            results={
+                "candidates": [
+                    _candidate(curve.curve_id, 0.01, 0.03, 0.8, region_type="guinier_candidate")
+                ]
+            }
+        )
+
+    monkeypatch.setattr(batch_consensus, "detect_auto_regions", fake_detect_auto_regions)
+
+    result = resolve_consensus_regions(
+        [*series_curves, *reference_curves],
+        AutoBatchConfig(batch_id="reference-exclusion", consensus_min_coverage=0.70),
+    )
+
+    assert result == {}
+    assert set(detected_ids) == {curve.curve_id for curve in series_curves}
+    assert not set(detected_ids).intersection(curve.curve_id for curve in reference_curves)
 
 
 def test_resolve_consensus_regions_ignores_foreign_and_none_candidate_ids(monkeypatch) -> None:

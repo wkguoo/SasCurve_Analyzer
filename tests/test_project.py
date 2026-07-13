@@ -288,3 +288,18 @@ def test_dirty_project_cancel_blocks_visible_close(monkeypatch) -> None:
         assert event.accepted is False
     finally:
         window.close()
+
+def test_project_writes_schema_version_and_loads_legacy_without_it(tmp_path) -> None:
+    from app.core.project import PROJECT_SCHEMA_VERSION, load_project, save_project
+
+    project = ProjectState()
+    project.add_curve(CurveData.create(name="curve", q=[0.1, 0.2], intensity=[10, 20]))
+    save_project(project, tmp_path)
+    payload = json.loads((tmp_path / "project.json").read_text(encoding="utf-8"))
+    assert payload["schema_version"] == PROJECT_SCHEMA_VERSION
+
+    # Legacy projects without schema_version still load.
+    del payload["schema_version"]
+    (tmp_path / "project.json").write_text(json.dumps(payload), encoding="utf-8")
+    restored = load_project(tmp_path)
+    assert len(restored.curves) == 1

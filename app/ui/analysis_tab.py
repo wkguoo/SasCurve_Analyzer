@@ -74,7 +74,7 @@ class AnalysisTab(QWidget):
         )
         apply_help(
             self.q_max,
-            tooltip="分析前请确认有效 q 上限；默认值为 0.05 Å⁻¹。",
+            tooltip="分析前请确认有效 q 上限；默认值为 0.5 Å⁻¹。",
             status_tip="输入本次分析使用的 raw q 最大值。",
         )
 

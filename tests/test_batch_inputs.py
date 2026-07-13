@@ -58,6 +58,34 @@ def test_metadata_is_merged_without_modifying_source(tmp_path: Path) -> None:
     assert curve_path.read_bytes() == original
 
 
+def test_metadata_sidecar_cannot_clobber_reference_role_flags(tmp_path: Path) -> None:
+    curve_path = tmp_path / "TI15-rt_00001_scan.csv"
+    curve_path.write_text("q,I\n0.01,10\n0.02,5\n", encoding="utf-8")
+    metadata_path = tmp_path / "metadata.csv"
+    pd.DataFrame(
+        [
+            {
+                "source_file": curve_path.name,
+                "is_reference": False,
+                "sequence_role": "series",
+                "frame_index": 999,
+                "temperature_c": 25.0,
+            }
+        ]
+    ).to_csv(metadata_path, index=False)
+
+    result = collect_batch_inputs(
+        tmp_path,
+        AutoBatchConfig(batch_id="sample", metadata_path=metadata_path),
+    )
+
+    curve = result.curves[0]
+    assert curve.metadata["is_reference"] is True
+    assert curve.metadata["sequence_role"] == "reference"
+    assert curve.metadata["frame_index"] != 999 or curve.metadata.get("temperature_c") == 25.0
+    assert curve.metadata["temperature_c"] == 25.0
+
+
 def test_collect_batch_inputs_filters_q_at_ingestion_and_keeps_source_unchanged(tmp_path: Path) -> None:
     curve_path = tmp_path / "sample_0001.csv"
     original = b"q,I\n0.001,20\n0.01,10\n0.02,5\n0.05,2\n0.08,1\n"
@@ -67,18 +95,18 @@ def test_collect_batch_inputs_filters_q_at_ingestion_and_keeps_source_unchanged(
 
     assert len(result.curves) == 1
     curve = result.curves[0]
-    assert curve.q.tolist() == [0.01, 0.02, 0.05]
-    assert curve.intensity.tolist() == [10.0, 5.0, 2.0]
+    assert curve.q.tolist() == [0.01, 0.02, 0.05, 0.08]
+    assert curve.intensity.tolist() == [10.0, 5.0, 2.0, 1.0]
     q_filter = curve.metadata["import_q_range_filter"]
     assert q_filter["enabled"] is True
     assert q_filter["q_min"] == 0.01
-    assert q_filter["q_max"] == 0.05
+    assert q_filter["q_max"] == 0.5
     assert q_filter["raw_point_count"] == 5
-    assert q_filter["imported_point_count"] == 3
-    assert q_filter["filtered_out_point_count"] == 2
+    assert q_filter["imported_point_count"] == 4
+    assert q_filter["filtered_out_point_count"] == 1
     assert result.import_summary["q_range_filter_enabled"] is True
     assert result.import_summary["raw_total_points"] == 5
-    assert result.import_summary["imported_total_points"] == 3
+    assert result.import_summary["imported_total_points"] == 4
     assert curve_path.read_bytes() == original
 
 

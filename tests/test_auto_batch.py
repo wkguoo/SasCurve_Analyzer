@@ -9,12 +9,26 @@ import pytest
 import app.core.auto_batch as auto_batch
 import app.core.batch_cache as batch_cache
 from app.core.auto_batch import run_auto_batch
-from app.core.auto_batch_schema import AnalysisEnvelope, AnalysisStatus, AutoBatchConfig, AutoBatchRun, ParameterValue
+from app.core.auto_batch_schema import (
+    AnalysisEnvelope,
+    AnalysisStatus,
+    AutoBatchConfig as ProductionAutoBatchConfig,
+    AutoBatchRun,
+    ParameterValue,
+)
 from app.core.batch_consensus import ConsensusRegion
 from app.core.batch_cache import job_cache_key
 from app.core.batch_inputs import BatchInputCollection
 from app.core.data_model import CurveData
 from app.core.metric_registry import applicable_method_ids
+
+
+def AutoBatchConfig(*args, **kwargs) -> ProductionAutoBatchConfig:
+    """Keep legacy orchestration assertions explicit while production defaults are dual/model-free."""
+
+    kwargs.setdefault("range_mode", "legacy")
+    kwargs.setdefault("enable_shape_models", True)
+    return ProductionAutoBatchConfig(*args, **kwargs)
 
 
 def _write_curve(path: Path, scale: float) -> None:

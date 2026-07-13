@@ -192,6 +192,7 @@ class PlottingTab(QWidget):
             return
 
         plot_type = self.plot_type.currentData()
+        previous_figure = self.figure
         self.figure, warnings = create_curve_figure(
             curve,
             plot_type=plot_type,
@@ -203,6 +204,14 @@ class PlottingTab(QWidget):
         if limit_warning:
             warnings.append(limit_warning)
         self.canvas.figure = self.figure
+        # Close the previous Matplotlib figure so repeated refreshes do not leak.
+        if previous_figure is not None and previous_figure is not self.figure:
+            try:
+                import matplotlib.pyplot as plt
+
+                plt.close(previous_figure)
+            except Exception:
+                pass
         self._has_drawn_curve = True
         self._connect_cursor()
         self.canvas.draw()

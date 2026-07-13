@@ -1,5 +1,86 @@
 # CHANGELOG
 
+## 2026-07-13 - Goal-mode audit follow-up (remaining open items)
+
+### Task Objective
+
+Close the remaining open audit items: weighted residual bootstrap matching primary fit, mid-job cancel during bootstrap/sensitivity, invariant negative-intensity reporting gates, honest auto-batch start banner, Matplotlib figure close on refresh, and project.json schema_version.
+
+### Modified / Added Files
+
+- `app/core/cancellation.py` (new)
+- `app/core/uncertainty_analysis.py`
+- `app/core/analysis_runner.py`
+- `app/core/auto_batch.py`
+- `app/core/project.py`
+- `app/ui/auto_batch_tab.py`
+- `app/ui/plotting_tab.py`
+- `tests/test_uncertainty_analysis.py`
+- `tests/test_model_free_reporting_gates.py`
+- `tests/test_analysis_runner.py`
+- `tests/test_project.py`
+- `CHANGELOG.md`
+
+### Specific Changes
+
+- Residual bootstrap now uses the same transformed-domain weights as the primary Guinier/power-law/Porod line when all selected errors are finite and positive.
+- `cancel_scope` + per-sample cancel checks in bootstrap / range-sensitivity; cancelled batch jobs no longer re-detect regions.
+- Finite-range invariant demotes to exploratory/not_reportable when negative intensity contaminates the integral.
+- Auto-batch start text reflects live `build_config()` flags.
+- Plotting tab closes the previous Matplotlib figure on refresh.
+- `project.json` writes `schema_version`; older files without it still load.
+
+### Tests Run
+
+- Targeted suites + full `python -m pytest -q` (clean TEMP).
+
+---
+
+## 2026-07-13 - Goal-mode audit fixes for dual-track batch integrity
+
+### Task Objective
+
+Close confirmed P0/P1 defects found during full project audit of the dual-track model-free auto-batch worktree: sequence double-counting, silent GUI sequence enablement, invalid Guinier still marked SUCCESS, checkpoint audit loss, metadata role clobber, and missing fit-quality metrics on envelopes.
+
+### Modified Files
+
+- `app/ui/auto_batch_tab.py`
+- `app/core/sequence_analysis.py`
+- `app/core/analysis_runner.py`
+- `app/core/batch_cache.py`
+- `app/core/batch_inputs.py`
+- `tests/test_auto_batch_ui.py`
+- `tests/test_sequence_analysis.py`
+- `tests/test_batch_cache_serialization.py`
+- `tests/test_batch_inputs.py`
+- `tests/test_model_free_reporting_gates.py`
+- `CHANGELOG.md`
+- `audit-report.md` (audit deliverable)
+- `.audit-work/*` (local audit state; not product code)
+
+### Specific Changes
+
+- GUI `build_config()` now sets `enable_sequence_analysis=False` so dual-track model-free runs do not silently build sequence trajectories.
+- Sequence trajectories, change flags, and linear trends group by `range_track` (and de-duplicate frames) so adaptive/common envelopes are not mixed.
+- Envelope status maps model-free `validity.status` / invalid Rg to `INVALID` / `ASSUMPTION_DEPENDENT` instead of defaulting to SUCCESS.
+- Checkpoint save/load persists `candidate_windows` for re-export audit completeness.
+- Metadata sidecar merge re-applies batch `is_reference` / `sequence_role` / existing `frame_index` after row update.
+- Registered metrics such as `rmse` / `chi_square` are read from `fit_quality` when not top-level.
+
+### Tests Run
+
+- Full suite: `python -m pytest -q` with clean temp dir → **604 passed**, 3 warnings.
+- Synthetic Guinier Rg≈15 and power-law α≈3.5 checks.
+- Offscreen UI smoke: MainWindow + `enable_sequence_analysis is False`.
+
+### Follow-up Risk
+
+- Residual bootstrap still uses unweighted `np.polyfit` (not primary weighted OLS).
+- Cancel remains job-granularity only during 200-sample bootstrap.
+- Invariant may stay `reportable` with negative-I contribution; common track may still force consensus ranges on non-supporting curves.
+
+---
+
 ## 2026-07-12 13:15:18 +08:00 - Change Log-Log View To Base-10 Coordinates
 
 ### Task Objective
@@ -5863,3 +5944,112 @@ python scripts\analyze_ti15_first10.py --input-dir "D:\桌面\PostFile\6_sys\SAX
 - power-law 实际执行 log-q 跨度约 `0.0775` decades，小于默认 `0.10` 正式报告门槛，只保留在探索/审计层。
 - shoulder/crossover 在 10 帧中均出现 q 重叠，已关联，不能作为两个独立正式特征。
 - 原始 CSV 未修改；未提交 Git、未推送 GitHub、未自动打包项目。
+
+## 2026-07-13 11:36:00 +08:00 - Ti15 模型免费双轨 q 选区与全序列结果
+
+### 任务目标
+
+按用户确认并随后更正的要求，把 Ti15 SAXS 有效硬边界统一为 `0.01–0.5 Å^-1`；关闭形状/经验模型，建立 Guinier、power-law、Porod 的 adaptive/common 双轨区间、正式/探索门控、区间敏感性与移动区块残差 bootstrap，并完成 117 帧原位序列和独立室温参考的可复现分析。
+
+### 新增文件
+
+- `scripts/analyze_ti15_sequence.py`：前 10 帧试运行和完整 117 帧序列入口；只读源文件，保留真实帧号和 RT 参考。
+- `scripts/validate_ti15_results.py`：结果目录 q 边界、双轨清单、正式表、源完整性、工作簿、图形和 ZIP 状态验收。
+- `tests/test_batch_cache_serialization.py`、`tests/test_dual_range_tracks.py`、`tests/test_model_free_reporting_gates.py`、`tests/test_ti15_sequence_script.py`：缓存兼容、双轨隔离、合成门控和序列脚本回归测试。
+
+### 修改文件与具体内容
+
+- `app/core/auto_batch_schema.py`：形状模型默认关闭；默认 q 边界改为 `0.01–0.5 Å^-1`；增加 dual range、方法正式跨度、bootstrap、参考分类、候选窗口和审计字段。
+- `app/core/batch_inputs.py`：识别主序列/独立 RT 参考、真实帧号和缺失帧；保留输入 SHA-256、大小和时间戳。
+- `app/core/auto_regions.py`、`app/core/batch_consensus.py`：增加 Guinier/Porod 前置物理门控；公共区间改为 log-q 聚类后满足覆盖率和最小跨度的最长连续区间；RT 不进入共识分母。
+- `app/core/auto_batch.py`：真正拆分 adaptive/common 任务和缓存键；公共轨缺失时保留空值原因；关联重叠 peak/shoulder/crossover；记录候选窗口、公共支持和完整 range audit。
+- `app/core/analysis_runner.py`：Guinier qRg、幂律 `0.30 decade`/局部斜率/残差、Porod `alpha=4±0.4`/q4I CV/跨度/高 q 位置门控；Kratky/compensated 降为探索；不变量仅计算有限区间，不外推到 0–∞。
+- `app/core/uncertainty_analysis.py`：增加固定 q 顺序的移动区块残差 bootstrap；±5% 边界扰动受硬边界裁剪；明确输出为稳健性区间而非仪器测量置信区间。
+- `app/core/result_package.py`、`app/core/batch_cache.py`：导出 range track、公共支持、稳健性、候选窗口；缓存算法版本升级并兼容旧字段安全默认。
+- `app/ui/auto_batch_tab.py`、`app/ui/import_tab.py`、`app/ui/analysis_tab.py`、`app/ui/deep_analysis_tab.py`：显示/传递 `0.01–0.5 Å^-1`、模型免费、双轨、bootstrap、参考/缺帧预览；ZIP 默认关闭。
+- `scripts/build_summary_workbook.mjs`：artifact-tool 工作簿增加 adaptive/common、fit quality、candidate、consensus、robustness 等表；全序列采用紧凑源表避免 Node 堆内存溢出；逐表渲染并持久化公式错误扫描。
+- `README.md`、`docs/user_manual_zh.md`、`docs/developer_notes.md`：同步新边界、双轨定义、正式跨度、运行与验证命令。
+- 相关 `tests/`：更新模型免费默认、`0.01–0.5 Å^-1` 边界、GUI、共识、结果包和不确定度断言。
+- 删除文件：无。
+
+### 修改原因
+
+- 原严格交集可能被异常帧压成不可解释窄区；双轨能同时保留逐帧适配性和跨帧可比性。
+- 高 R2 或拟合收敛不能单独证明 Guinier/Porod/power-law 物理区间有效，必须增加跨度、残差和方法物理门控。
+- 原始 CSV 无误差列，不能伪造 sigma 或把 OLS 协方差称为仪器测量置信区间。
+- 用户把有效上限从 `0.05` 更正为 `0.5 Å^-1`，此前结果仅作历史记录，最终结果全部按新边界重算。
+
+### 运行方式
+
+```powershell
+python scripts\analyze_ti15_sequence.py --limit 10
+python scripts\analyze_ti15_sequence.py --limit 0
+python scripts\validate_ti15_results.py "..\results\17_Ti15_300_2_iso_model_free_20260713_111211"
+python -m pytest -q
+```
+
+### 生成输出
+
+- 试运行：`../results/17_Ti15_300_2_iso_model_free_20260713_110443/`。
+- 正式全序列：`../results/17_Ti15_300_2_iso_model_free_20260713_111211/`。
+- 正式目录包含 `final_report_zh.md`、`final_results.csv`、`summary_tables.xlsx`、`validation_summary.json`、adaptive/common 表、候选/共识/稳健性/源完整性表，以及 5 组 PNG/SVG/PDF 科研图。
+
+### 检查结果
+
+- 全测试：`599 passed, 3 warnings`；3 个 warning 为既有 SciPy `PeakPropertyWarning`，无失败。
+- 全序列：117 原位帧 + 1 RT 参考，缺失帧 105/109/115；118 条曲线均有 2622 个有效点；2006 个分析信封；形状模型任务 0。
+- q 边界：所有导出数值 q 和明细 q 均位于 `0.01–0.5 Å^-1`；`validation_summary.json` 为 `PASS`。
+- 公共 power-law 区间 `0.0122435–0.0245804 Å^-1`，跨度 `0.303 decade`，主序列支持率 `86.3%`；正式 power-law 结果为 0，全部保留为探索值。
+- 正式 Guinier 0；adaptive 探索 11；正式 Porod 0；118/118 曲线在选定区间内未检出经确认峰。不得外推为样品无峰；约 `q=0.00925 Å^-1` 的主峰低于边界并只作审计记录。
+- 有限不变量末帧相对首帧 `+4.70%`；该数值只随真实帧号描述，不解释为动力学、温度效应或相变机制。
+- 工作簿 17 个工作表，公式错误 0；源文件大小、时间戳、SHA-256 全部不变；ZIP 数量 0。
+
+### 注意事项与潜在风险
+
+- 无测量误差列；报告中的 bootstrap/边界扰动仅为稳健性区间。
+- 未提供散射对比度和相分数；绝对比表面积、体积分数保持空值。
+- 未提供时间/温度映射；禁止把帧号趋势表述为速率或温度响应。
+- 原始 CSV 未修改、删除、移动、重命名或覆盖；未 Git commit/push；未打包项目。
+
+## 2026-07-13 12:19:16 +08:00 - 精简 Ti15 结果包根目录
+
+### 任务目标
+
+将 Ti15 正式结果包改为“根目录入口文件 + 分类子目录”结构，根目录只保留重要入口，完整审计内容继续保留且不修改任何原始实验数据。
+
+### 新增、修改或删除的文件
+
+- 修改 `scripts/analyze_ti15_sequence.py`：汇总表写入 `summary/`，审计表写入 `audit/`，Excel 中间源表写入 `audit/workbook_sources/`；根目录不再生成辅助 CSV 镜像。
+- 修改 `scripts/build_summary_workbook.mjs`：优先读取新分类路径，保留旧路径回退；工作簿校验记录改写入 `audit/workbook_validation.json`。
+- 修改 `scripts/validate_ti15_results.py`：按新路径读取完整性、缺帧、参考和共识表；新增根目录白名单验收。
+- 修改 `tests/test_ti15_sequence_script.py`：覆盖新分类路径、根目录白名单和工作簿校验位置。
+- 修改 `README.md`、`docs/user_manual_zh.md`、`docs/developer_notes.md`：说明结果包入口文件和分类规则。
+- 整理 `../results/17_Ti15_300_2_iso_model_free_20260713_111211/`：移动20个辅助文件到 `summary/`、`audit/`、`audit/workbook_sources/` 或 `audit/legacy_root_exports/`；更新该结果包的 `README.md`、`final_report_zh.md` 和 `validation_summary.json`。
+- 删除文件：无。4个已有规范副本的旧根目录镜像被移动到 `audit/legacy_root_exports/`，没有覆盖或丢弃。
+
+### 修改原因
+
+- 原根目录同时混放正式入口、汇总表、审计表和Excel中间表，用户难以判断应先打开哪些文件。
+- 目录整理只改变文件位置，不应改变 q 范围、拟合门控、参数数值、bootstrap 或源文件完整性。
+
+### 运行方式
+
+```powershell
+python scripts\analyze_ti15_sequence.py --limit 10
+python scripts\analyze_ti15_sequence.py --limit 0
+python scripts\validate_ti15_results.py "..\results\17_Ti15_300_2_iso_model_free_20260713_111211"
+python -m pytest -q
+```
+
+### 生成输出与检查结果
+
+- 新结果包根目录白名单：`README.md`、`final_report_zh.md`、`final_results.csv`、`summary_tables.xlsx`、`run_config.json`、`validation_summary.json`，以及 `summary/`、`audit/`、`details/`、`figures/`。
+- 当前正式结果根目录由26个文件精简为6个文件；连同4个标准目录，共10个入口项，辅助数据全部保留在子目录。
+- 专项测试：`8 passed`；完整测试：`599 passed, 3 warnings`，warning仍为既有 SciPy `PeakPropertyWarning`。
+- 正式结果验证：`PASS`；新增 `root_contains_only_entry_files_and_standard_directories=true`，`unexpected_root_entries=[]`。
+
+### 注意事项或潜在风险
+
+- 历史试运行目录未批量移动，避免未经确认改动旧快照；新脚本后续生成的目录自动采用新结构。
+- `audit/legacy_root_exports/` 仅保存本次迁移前的4个根目录镜像，供路径变更追溯；正常阅读无需打开。
+- 原始 CSV 未修改、删除、移动、重命名或覆盖；未 Git commit/push；未生成 ZIP、未重新打包项目。

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
+import re
 from typing import Any
 
 import pandas as pd
@@ -144,9 +145,27 @@ def collect_batch_inputs(input_dir: str | Path, config: AutoBatchConfig) -> Batc
 
     warnings = list(imported.warnings)
     matched_metadata_keys: set[str] = set()
+    reference_pattern = config.reference_filename_pattern.strip().lower()
+    series_frame_indices: list[int] = []
+    reference_names: list[str] = []
     for curve in imported.imported_curves:
         curve_file = Path(curve.source_file or "").name
         key = _metadata_key(curve_file)
+        is_reference = bool(reference_pattern and reference_pattern in curve_file.lower())
+        curve.metadata["sequence_role"] = "reference" if is_reference else "series"
+        curve.metadata["is_reference"] = is_reference
+        if is_reference:
+            reference_names.append(curve_file)
+        else:
+            raw_frame = curve.metadata.get("frame_index")
+            try:
+                frame_index = int(raw_frame)
+            except (TypeError, ValueError, OverflowError):
+                match = re.search(r"_(\d{5})_", curve_file)
+                frame_index = int(match.group(1)) if match else 0
+            if frame_index > 0:
+                curve.metadata["frame_index"] = frame_index
+                series_frame_indices.append(frame_index)
         if config.q_unit_override:
             curve.q_unit = config.q_unit_override
             curve.metadata["q_unit_source"] = "batch_config_override"
@@ -157,7 +176,17 @@ def collect_batch_inputs(input_dir: str | Path, config: AutoBatchConfig) -> Batc
             curve.metadata["metadata_match_status"] = "no_matching_row"
             if key in metadata_rows:
                 row_index, row_values = metadata_rows[key]
+                # Preserve batch role / frame fields after sidecar merge so a
+                # metadata column cannot silently reclassify references.
+                protected_role = {
+                    "sequence_role": curve.metadata.get("sequence_role"),
+                    "is_reference": curve.metadata.get("is_reference"),
+                    "frame_index": curve.metadata.get("frame_index"),
+                }
                 curve.metadata.update(row_values)
+                for field_name, field_value in protected_role.items():
+                    if field_value is not None:
+                        curve.metadata[field_name] = field_value
                 curve.metadata["metadata_source"] = str(metadata_source_path)
                 curve.metadata["metadata_sha256"] = metadata_sha256
                 curve.metadata["metadata_match_column"] = config.metadata_match_column
@@ -186,10 +215,28 @@ def collect_batch_inputs(input_dir: str | Path, config: AutoBatchConfig) -> Batc
         if manifest_failure is not None:
             failed_inputs.append(manifest_failure)
 
+    import_summary = dict(imported.import_summary)
+    unique_frames = sorted(set(series_frame_indices))
+    missing_frames = (
+        sorted(set(range(unique_frames[0], unique_frames[-1] + 1)) - set(unique_frames))
+        if unique_frames
+        else []
+    )
+    import_summary.update(
+        {
+            "series_curve_count": len(series_frame_indices),
+            "reference_curve_count": len(reference_names),
+            "reference_curve_names": reference_names,
+            "series_frame_min": unique_frames[0] if unique_frames else None,
+            "series_frame_max": unique_frames[-1] if unique_frames else None,
+            "missing_series_frames": missing_frames,
+        }
+    )
+
     return BatchInputCollection(
         curves=imported.imported_curves,
         manifest=manifest,
         failed_inputs=failed_inputs,
         warnings=warnings,
-        import_summary=dict(imported.import_summary),
+        import_summary=import_summary,
     )

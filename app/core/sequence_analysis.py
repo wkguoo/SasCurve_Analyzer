@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -46,6 +46,7 @@ def _parameter_rows(
             continue
         frame, axis, curve_name = locations[envelope.curve_id]
         model_name = next((str(p.value) for p in envelope.parameters if p.name == "model_name" and p.value), None)
+        range_track = str(getattr(envelope, "range_track", None) or "effective")
         for parameter in envelope.parameters:
             value = _finite_number(parameter.value)
             if value is None:
@@ -58,6 +59,7 @@ def _parameter_rows(
                     "curve_name": curve_name,
                     "analysis_type": envelope.analysis_type,
                     "analysis_id": envelope.analysis_id,
+                    "range_track": range_track,
                     "model_name": model_name,
                     "parameter": parameter.name,
                     "value": value,
@@ -68,13 +70,38 @@ def _parameter_rows(
     return rows
 
 
+def _trajectory_group_key(row: Mapping[str, Any]) -> tuple[str, str, str | None, str]:
+    """Group trajectories by method, track, model, and parameter.
+
+    Dual-track batches emit separate adaptive/common envelopes for the same
+    method. Mixing tracks would double-count each frame and create false jumps.
+    """
+
+    return (
+        str(row.get("analysis_type") or ""),
+        str(row.get("range_track") or "effective"),
+        row.get("model_name"),
+        str(row.get("parameter") or ""),
+    )
+
+
 def _change_flags(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    grouped: dict[tuple[str, str | None, str], list[dict[str, Any]]] = defaultdict(list)
+    grouped: dict[tuple[str, str, str | None, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        grouped[(row["analysis_type"], row["model_name"], row["parameter"])].append(row)
+        grouped[_trajectory_group_key(row)].append(row)
     flags: list[dict[str, Any]] = []
     for key, series in grouped.items():
-        series.sort(key=lambda row: row["frame"])
+        series.sort(key=lambda row: (row["frame"], str(row.get("analysis_id") or "")))
+        # One value per frame within a track (keep first stable analysis_id).
+        unique_frames: list[dict[str, Any]] = []
+        seen_frames: set[object] = set()
+        for row in series:
+            frame = row["frame"]
+            if frame in seen_frames:
+                continue
+            seen_frames.add(frame)
+            unique_frames.append(row)
+        series = unique_frames
         if len(series) < 4:
             continue
         differences = np.diff([row["value"] for row in series])
@@ -93,8 +120,9 @@ def _change_flags(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
                     "axis_value": row["axis_value"],
                     "curve_id": row["curve_id"],
                     "analysis_type": key[0],
-                    "model_name": key[1],
-                    "parameter": key[2],
+                    "range_track": key[1],
+                    "model_name": key[2],
+                    "parameter": key[3],
                     "delta": float(differences[index]),
                     "robust_z": float(robust_z[index]),
                     "interpretation": "review_candidate_not_phase_transition_proof",
@@ -160,11 +188,21 @@ def _reference_rows(curves: Sequence[CurveData], axes: Sequence[float], config: 
 
 
 def _linear_trends(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    grouped: dict[tuple[str, str | None, str], list[dict[str, Any]]] = defaultdict(list)
+    grouped: dict[tuple[str, str, str | None, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        grouped[(row["analysis_type"], row["model_name"], row["parameter"])].append(row)
+        grouped[_trajectory_group_key(row)].append(row)
     output = []
     for key, series in grouped.items():
+        series = sorted(series, key=lambda row: (row["frame"], str(row.get("analysis_id") or "")))
+        unique_frames: list[dict[str, Any]] = []
+        seen_frames: set[object] = set()
+        for row in series:
+            frame = row["frame"]
+            if frame in seen_frames:
+                continue
+            seen_frames.add(frame)
+            unique_frames.append(row)
+        series = unique_frames
         if len(series) < 3:
             continue
         x = np.asarray([row["axis_value"] for row in series], dtype=float)
@@ -175,7 +213,19 @@ def _linear_trends(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
         fitted = slope * x + intercept
         ss_total = float(np.sum((y - np.mean(y)) ** 2))
         r2 = None if ss_total <= 0 else float(1.0 - np.sum((y - fitted) ** 2) / ss_total)
-        output.append({"analysis_type": key[0], "model_name": key[1], "parameter": key[2], "slope": float(slope), "intercept": float(intercept), "R2": r2, "point_count": len(series), "interpretation": "descriptive_linear_trend_not_kinetic_mechanism"})
+        output.append(
+            {
+                "analysis_type": key[0],
+                "range_track": key[1],
+                "model_name": key[2],
+                "parameter": key[3],
+                "slope": float(slope),
+                "intercept": float(intercept),
+                "R2": r2,
+                "point_count": len(series),
+                "interpretation": "descriptive_linear_trend_not_kinetic_mechanism",
+            }
+        )
     return output
 
 

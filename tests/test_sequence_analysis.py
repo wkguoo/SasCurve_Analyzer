@@ -52,6 +52,54 @@ def test_sequence_analysis_flags_robust_parameter_jump() -> None:
     assert result["change_flags"][0]["interpretation"] == "review_candidate_not_phase_transition_proof"
 
 
+def test_sequence_analysis_keeps_dual_tracks_as_separate_trajectories() -> None:
+    curves = [_curve(i) for i in range(4)]
+    analyses: list[AnalysisEnvelope] = []
+    for curve in curves:
+        frame = float(curve.metadata["frame_index"])
+        analyses.append(
+            AnalysisEnvelope(
+                curve.curve_id,
+                curve.name,
+                f"{curve.curve_id}:guinier:adaptive",
+                "guinier",
+                AnalysisStatus.SUCCESS,
+                (0.01, 0.03),
+                parameters=[ParameterValue("Rg", 10.0 + frame, "nm")],
+                range_track="adaptive",
+            )
+        )
+        analyses.append(
+            AnalysisEnvelope(
+                curve.curve_id,
+                curve.name,
+                f"{curve.curve_id}:guinier:common",
+                "guinier",
+                AnalysisStatus.SUCCESS,
+                (0.01, 0.025),
+                parameters=[ParameterValue("Rg", 20.0 + frame, "nm")],
+                range_track="common",
+            )
+        )
+
+    result = analyze_sequence(curves, analyses, AutoBatchConfig(batch_id="b", enable_kinetics=True))
+    trajectories = result["parameter_trajectories"]
+    adaptive_rows = [row for row in trajectories if row["range_track"] == "adaptive" and row["parameter"] == "Rg"]
+    common_rows = [row for row in trajectories if row["range_track"] == "common" and row["parameter"] == "Rg"]
+
+    assert len(trajectories) == 8  # 4 frames × 2 tracks
+    assert len(adaptive_rows) == 4
+    assert len(common_rows) == 4
+    assert sorted(row["value"] for row in adaptive_rows) == pytest.approx([10.0, 11.0, 12.0, 13.0])
+    assert sorted(row["value"] for row in common_rows) == pytest.approx([20.0, 21.0, 22.0, 23.0])
+    # Trends must fit one value per frame per track, not 2N mixed points.
+    trends = {(row["range_track"], row["parameter"]): row for row in result["linear_trends"]}
+    assert trends[("adaptive", "Rg")]["point_count"] == 4
+    assert trends[("common", "Rg")]["point_count"] == 4
+    assert trends[("adaptive", "Rg")]["slope"] == pytest.approx(1.0)
+    assert not result["change_flags"]
+
+
 def test_optional_trends_and_exploratory_statistics_are_reproducible() -> None:
     curves = [_curve(i, 1 + i * 0.1) for i in range(4)]
     analyses = [_analysis(curve, 2.0 * i + 1.0) for i, curve in enumerate(curves)]

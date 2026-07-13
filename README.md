@@ -305,13 +305,23 @@ python main.py
 
 ### Ti15 自动批处理结果包与 Excel 表格
 
-Ti15 前十帧无模型分析的结果包默认使用有效 `q=0.01–0.05 Å⁻¹`。打开 `summary_tables.xlsx` 时，优先查看 `Overview`、`reliable_parameters` 和 `data_quality`：
+Ti15 模型免费双轨分析使用不可越过的有效边界 `q=0.01–0.5 Å⁻¹`。建议先试运行，再处理全序列：
+
+```powershell
+python scripts\analyze_ti15_sequence.py --limit 10
+python scripts\analyze_ti15_sequence.py --limit 0
+python scripts\validate_ti15_results.py "<结果目录>"
+```
+
+输入是 `spectra_csv` 中的只读 CSV；输出写入新的 `results/17_Ti15_300_2_iso_model_free_<时间戳>/` 目录。结果包根目录只保留 `README.md`、`final_report_zh.md`、`final_results.csv`、`summary_tables.xlsx`、`run_config.json`、`validation_summary.json` 六个入口文件，以及 `summary/`、`audit/`、`details/`、`figures/` 四个分类目录。打开 `summary_tables.xlsx` 时，优先查看 `Overview`、`adaptive_parameters`、`common_parameters`、`fit_quality`、`reliable_parameters` 和 `data_quality`：
 
 - `accepted_parameters` 和 `reliable_parameters` 均按“每条曲线一行、每个参数一列”横向排布；参数列名采用 `analysis_type__parameter [unit]` 格式；
 - `reliable_parameters` 是通过可靠性筛选、用于结果总结的参数表；
-- `all_parameters_audit` 保留逐参数竖向审计格式，用于查看 q 区间、状态、invalid reason 和 warning；
-- `final_results.csv` 保留长表格式，适合程序读取和完整追溯；
-- `review/`、`audit_full.zip` 和 `details_full.zip` 用于数据质量、图件、序列和明细复查，不影响主结果的首次查看。
+- `adaptive_parameters` / `common_parameters` 分别展示逐帧自适应区间和公共区间结果；
+- `fit_quality`、`candidate_windows`、`range_audit` 和 `consensus_regions` 保存门控、候选和区间审计；
+- `final_results.csv` 只保留通过正式报告门控与可靠性筛选的长表参数；完整逐参数审计位于 `audit/all_parameters_audit.csv`；
+- adaptive/common 参数、稳健性、数据质量、缺失帧和室温参考表位于 `summary/`；Excel 内存受控中间表位于 `audit/workbook_sources/`，不会散落在根目录；
+- 默认不生成 ZIP，也不会自动重新打包项目；`figures/` 同时导出 PNG、SVG 和 PDF。
 
 横向排布只改变 Excel 的展示结构，不改变 q 范围、计算数值、分析规则或原始实验数据。
 

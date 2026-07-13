@@ -72,6 +72,13 @@ class AnalysisEnvelope:
     feature_relation: str | None = None
     q_selection_basis: str = "not_recorded"
     q_selection_evidence: str = ""
+    # q-range track used by the registered fit.  ``adaptive`` is selected per
+    # curve, ``common`` is the batch-comparable interval, and ``effective`` is
+    # the configured hard boundary used by descriptive methods.
+    range_track: str = "effective"
+    common_range_supported: bool | None = None
+    robustness_status: str = "not_evaluated"
+    uncertainty_interpretation: str = "not_evaluated"
 
     def __post_init__(self) -> None:
         if self.execution_status is None:
@@ -89,7 +96,7 @@ class ProgressEvent:
     message: str = ""
 
 
-DEFAULT_EFFECTIVE_Q_RANGE: tuple[float, float] = (0.01, 0.05)
+DEFAULT_EFFECTIVE_Q_RANGE: tuple[float, float] = (0.01, 0.5)
 
 
 @dataclass
@@ -97,13 +104,21 @@ class AutoBatchConfig:
     batch_id: str
     sample_type: str = "unknown"
     allowed_models: list[str] = field(default_factory=list)
-    enable_shape_models: bool = True
+    enable_shape_models: bool = False
     effective_q_range: tuple[float, float] = DEFAULT_EFFECTIVE_Q_RANGE
     q_unit_override: str | None = None
     intensity_unit_override: str | None = None
     consensus_min_coverage: float = 0.70
     allow_per_frame_range_fallback: bool = False
     reporting_min_log_q_span_decades: float = 0.10
+    range_mode: str = "dual"
+    common_min_log_q_span_decades: float = 0.10
+    power_law_formal_min_log_q_span_decades: float = 0.30
+    porod_formal_min_log_q_span_decades: float = 0.20
+    guinier_formal_qmin_rg_max: float = 0.65
+    guinier_formal_qmax_rg_max: float = 1.00
+    guinier_exploratory_qmax_rg_max: float = 1.30
+    porod_min_log_q_position_fraction: float = 0.65
     feature_confirmed_noise_score: float = 3.0
     oscillation_candidate_min_cycles: int = 2
     oscillation_min_cycles: int = 3
@@ -118,6 +133,8 @@ class AutoBatchConfig:
     enable_bootstrap: bool = False
     bootstrap_samples: int = 200
     bootstrap_seed: int = 12345
+    bootstrap_mode: str = "moving_block_residual"
+    bootstrap_block_length: int = 0
     enable_range_sensitivity: bool = True
     sensitivity_boundary_fraction: float = 0.05
     enable_sequence_analysis: bool = True
@@ -130,6 +147,8 @@ class AutoBatchConfig:
     pca_components: int = 3
     cluster_count: int = 3
     random_seed: int = 12345
+    reference_filename_pattern: str = "-rt_"
+    create_archives: bool = False
 
     def __post_init__(self) -> None:
         if not self.batch_id.strip():
@@ -149,8 +168,25 @@ class AutoBatchConfig:
         self.effective_q_range = (q_low, q_high)
         if not 0.0 < self.consensus_min_coverage <= 1.0:
             raise ValueError("consensus_min_coverage must be in (0, 1]")
+        if self.range_mode not in {"dual", "adaptive", "common", "legacy"}:
+            raise ValueError("range_mode must be dual, adaptive, common, or legacy")
         if not isfinite(self.reporting_min_log_q_span_decades) or self.reporting_min_log_q_span_decades <= 0.0:
             raise ValueError("reporting_min_log_q_span_decades must be positive and finite")
+        for name in (
+            "common_min_log_q_span_decades",
+            "power_law_formal_min_log_q_span_decades",
+            "porod_formal_min_log_q_span_decades",
+            "guinier_formal_qmin_rg_max",
+            "guinier_formal_qmax_rg_max",
+            "guinier_exploratory_qmax_rg_max",
+        ):
+            value = float(getattr(self, name))
+            if not isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be positive and finite")
+        if self.guinier_formal_qmax_rg_max > self.guinier_exploratory_qmax_rg_max:
+            raise ValueError("guinier formal qmaxRg must not exceed exploratory qmaxRg")
+        if not 0.0 <= self.porod_min_log_q_position_fraction <= 1.0:
+            raise ValueError("porod_min_log_q_position_fraction must be in [0, 1]")
         if not isfinite(self.feature_confirmed_noise_score) or self.feature_confirmed_noise_score <= 0.0:
             raise ValueError("feature_confirmed_noise_score must be positive and finite")
         if self.oscillation_candidate_min_cycles < 2:
@@ -161,12 +197,18 @@ class AutoBatchConfig:
             raise ValueError("oscillation_period_cv_max must be positive and finite")
         if self.bootstrap_samples < 1:
             raise ValueError("bootstrap_samples must be positive")
+        if self.bootstrap_mode not in {"moving_block_residual", "point"}:
+            raise ValueError("bootstrap_mode must be moving_block_residual or point")
+        if self.bootstrap_block_length < 0:
+            raise ValueError("bootstrap_block_length must be zero (automatic) or positive")
         if not 0.0 < self.sensitivity_boundary_fraction < 0.5:
             raise ValueError("sensitivity_boundary_fraction must be in (0, 0.5)")
         if self.reference_mode not in {"first", "previous", "selected"}:
             raise ValueError("reference_mode must be first, previous, or selected")
         if self.pca_components < 1 or self.cluster_count < 2:
             raise ValueError("pca_components and cluster_count are invalid")
+        if not isinstance(self.reference_filename_pattern, str):
+            raise ValueError("reference_filename_pattern must be a string")
 
 
 @dataclass
@@ -193,6 +235,7 @@ class AutoBatchRun:
     # One row per scheduled curve-method job, including jobs that used the
     # effective boundary or were unable to obtain a method-specific window.
     range_audit: list[dict[str, Any]] = field(default_factory=list)
+    candidate_windows: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def model_rankings(self) -> list[dict[str, Any]]:
