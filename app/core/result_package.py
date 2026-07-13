@@ -126,9 +126,6 @@ def _curve_summary_for_export(
             "q_min": None if selected_q.size == 0 else float(np.min(selected_q)),
             "q_max": None if selected_q.size == 0 else float(np.max(selected_q)),
             "has_error": curve.error is not None,
-            "frame_index": curve.metadata.get("frame_index"),
-            "sequence_role": curve.metadata.get("sequence_role"),
-            "is_reference": curve.metadata.get("is_reference"),
         }
         if effective_q_range is not None:
             summary["effective_q_range"] = list(effective_q_range)
@@ -148,9 +145,6 @@ def _curve_summary_for_export(
                 "q_min",
                 "q_max",
                 "has_error",
-                "frame_index",
-                "sequence_role",
-                "is_reference",
             )
             if key in curve
         }
@@ -261,8 +255,6 @@ def _parameter_rows(run: AutoBatchRun) -> list[dict[str, Any]]:
                 "curve_name": envelope.curve_name,
                 "analysis_id": envelope.analysis_id,
                 "analysis_type": envelope.analysis_type,
-                "range_track": envelope.range_track,
-                "common_range_supported": envelope.common_range_supported,
                 "analysis_status": envelope.status.value,
                 "execution_status": envelope.execution_status,
                 "candidate_status": envelope.candidate_status,
@@ -282,8 +274,6 @@ def _parameter_rows(run: AutoBatchRun) -> list[dict[str, Any]]:
                 "q_end": None if envelope.q_range is None else envelope.q_range[1],
                 "reliability_label": envelope.reliability_label,
                 "reliability_score": envelope.reliability_score,
-                "robustness_status": envelope.robustness_status,
-                "uncertainty_interpretation": envelope.uncertainty_interpretation,
             }
             row.update(asdict(parameter))
             row["status"] = parameter.status.value
@@ -298,8 +288,6 @@ def _fit_quality_rows(run: AutoBatchRun) -> list[dict[str, Any]]:
             "curve_name": item.curve_name,
             "analysis_id": item.analysis_id,
             "analysis_type": item.analysis_type,
-            "range_track": item.range_track,
-            "common_range_supported": item.common_range_supported,
             "status": item.status.value,
             "execution_status": item.execution_status,
             "candidate_status": item.candidate_status,
@@ -319,8 +307,6 @@ def _fit_quality_rows(run: AutoBatchRun) -> list[dict[str, Any]]:
             "q_end": None if item.q_range is None else item.q_range[1],
             "reliability_label": item.reliability_label,
             "reliability_score": item.reliability_score,
-            "robustness_status": item.robustness_status,
-            "uncertainty_interpretation": item.uncertainty_interpretation,
             "invalid_reason": item.invalid_reason,
             "warnings": " | ".join(item.warnings),
             **item.fit_quality,
@@ -442,21 +428,6 @@ def export_result_package(
     _write_csv(audit_dir / "failed_inputs.csv", run.failed_inputs)
     _write_csv(audit_dir / "warnings.csv", [{"warning": warning} for warning in run.warnings])
     _write_csv(audit_dir / "range_audit.csv", run.range_audit)
-    _write_csv(
-        audit_dir / "candidate_windows.csv",
-        [
-            {
-                **row,
-                "metrics": json.dumps(row.get("metrics"), ensure_ascii=False, default=_json_default)
-                if isinstance(row.get("metrics"), dict)
-                else row.get("metrics"),
-                "warnings": " | ".join(str(item) for item in row.get("warnings", []))
-                if isinstance(row.get("warnings"), list)
-                else row.get("warnings"),
-            }
-            for row in run.candidate_windows
-        ],
-    )
     consensus_rows = []
     for region_name, detail in (run.consensus_region_details or {}).items():
         row = {"region_type": region_name}
@@ -497,8 +468,6 @@ def export_result_package(
                         "curve_id": envelope.curve_id,
                         "analysis_id": envelope.analysis_id,
                         "analysis_type": envelope.analysis_type,
-                        "range_track": envelope.range_track,
-                        "common_range_supported": envelope.common_range_supported,
                         "analysis_status": envelope.status.value,
                         "table_name": table_name,
                         "file": f"details/analysis_tables/{filename}",
@@ -526,7 +495,7 @@ def export_result_package(
     (audit_dir / "README.md").write_text(
         "# audit — 质量检查与完整审计\n\n"
         "- `parameters.csv` / `fit_quality.csv`：全部方法与状态\n"
-        "- `candidate_windows.csv` / `range_audit.csv` / `consensus_regions.csv`：候选窗口、逐任务区间来源、共识状态及证据\n"
+        "- `range_audit.csv` / `consensus_regions.csv`：逐任务区间来源、候选/共识状态及证据\n"
         "- `warnings.csv` / `failed_inputs.csv`\n"
         "- `analysis_tables_index.csv`：明细表索引\n"
         "- 非空 `sequence_*.csv`：原位序列审计\n",

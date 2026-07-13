@@ -7,12 +7,7 @@ import warnings
 import numpy as np
 import pytest
 
-from app.core.cancellation import cancel_scope
-from app.core.uncertainty_analysis import (
-    bootstrap_fit,
-    moving_block_residual_bootstrap_fit,
-    range_sensitivity,
-)
+from app.core.uncertainty_analysis import bootstrap_fit, range_sensitivity
 
 
 @pytest.fixture
@@ -353,86 +348,3 @@ def test_bootstrap_ndarray_or_non_integer_scalar_seed_is_invalid_before_rng(simp
 
     allowed = bootstrap_fit(callback, sample_count=3, seed=np.int64(7), minimum_valid_fits=3)
     assert allowed.status == "completed"
-
-
-def test_moving_block_residual_bootstrap_is_reproducible_and_keeps_block_order() -> None:
-    def callback(donor_indices: np.ndarray) -> dict[str, dict[str, float]]:
-        return {"parameters": {"donor_mean": float(np.mean(donor_indices))}}
-
-    first = moving_block_residual_bootstrap_fit(
-        callback,
-        residual_count=12,
-        sample_count=8,
-        seed=41,
-        block_length=3,
-    )
-    second = moving_block_residual_bootstrap_fit(
-        callback,
-        residual_count=12,
-        sample_count=8,
-        seed=41,
-        block_length=3,
-    )
-
-    assert first.to_dict() == second.to_dict()
-    assert first.status == "completed"
-    for attempt in first.attempts:
-        indices = attempt["resampled_indices"]
-        assert attempt["q_order_preserved"] is True
-        assert attempt["block_length"] == 3
-        for start in range(0, len(indices), 3):
-            block = indices[start : start + 3]
-            assert all((right - left) % 12 == 1 for left, right in zip(block, block[1:]))
-
-
-def test_range_sensitivity_clips_every_attempt_to_hard_q_boundary(simple_range_callback) -> None:
-    result = range_sensitivity(
-        simple_range_callback,
-        (0.01, 0.05),
-        hard_q_range=(0.01, 0.05),
-    )
-
-    assert result.status == "completed"
-    assert all(0.01 <= row["q_range"][0] < row["q_range"][1] <= 0.05 for row in result.attempts)
-
-def test_moving_block_bootstrap_stops_when_cancel_requested() -> None:
-    state = {"n": 0}
-
-    def callback(_indices: np.ndarray) -> dict[str, float]:
-        state["n"] += 1
-        return {"value": float(state["n"])}
-
-    def cancel_after_five() -> bool:
-        return state["n"] >= 5
-
-    with cancel_scope(cancel_after_five):
-        result = moving_block_residual_bootstrap_fit(
-            callback,
-            residual_count=24,
-            sample_count=200,
-            seed=3,
-            minimum_valid_fits=1,
-        )
-
-    assert result.status == "cancelled"
-    assert result.reason == "cancel_requested"
-    assert len(result.attempts) == 5
-    assert result.success_count == 5
-
-
-def test_range_sensitivity_stops_when_cancel_requested(simple_range_callback) -> None:
-    state = {"n": 0}
-
-    def callback(q_range: tuple[float, float]) -> dict[str, float]:
-        state["n"] += 1
-        return simple_range_callback(q_range)
-
-    def cancel_after_three() -> bool:
-        return state["n"] >= 3
-
-    with cancel_scope(cancel_after_three):
-        result = range_sensitivity(callback, (0.01, 0.1), boundary_fraction=0.05, minimum_valid_fits=1)
-
-    assert result.status == "cancelled"
-    assert result.variant_count == 3
-    assert len(result.attempts) == 3

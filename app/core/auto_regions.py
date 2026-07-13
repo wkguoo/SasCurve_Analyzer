@@ -62,13 +62,11 @@ class AutoRegionOptions:
     local_slope_window: int = 5
     local_slope_std_threshold: float = 0.15
     qrg_limit: float = 1.3
-    guinier_fit_ready_qmin_rg_max: float = 1.0
     porod_alpha_target: float = 4.0
     porod_alpha_tolerance: float = 0.4
     porod_plateau_cv_recommended: float = 0.20
     porod_plateau_cv_usable: float = 0.35
     porod_plateau_cv_caution: float = 0.50
-    porod_min_log_q_position_fraction: float = 0.65
     high_confidence_threshold: float = 0.85
     usable_confidence_threshold: float = 0.70
     caution_confidence_threshold: float = 0.50
@@ -357,16 +355,7 @@ def detect_auto_regions(
                 n_points=int(row.get("fit_points") or 0),
                 detection_method="sliding_window_guinier",
                 score=score,
-                fit_ready=bool(
-                    score >= opts.caution_confidence_threshold
-                    and row.get("Rg") is not None
-                    and row.get("slope") is not None
-                    and float(row["slope"]) < 0.0
-                    and row.get("qRg_min") is not None
-                    and float(row["qRg_min"]) <= opts.guinier_fit_ready_qmin_rg_max
-                    and row.get("qRg_max") is not None
-                    and float(row["qRg_max"]) <= opts.qrg_limit
-                ),
+                fit_ready=bool(score >= opts.caution_confidence_threshold and row.get("Rg") is not None),
                 recommended_analysis="guinier_analysis",
                 metrics=row,
                 warnings=warnings,
@@ -427,10 +416,6 @@ def detect_auto_regions(
         plateau_cv = _optional_float(row.get("q4I_plateau_cv"))
         plateau_ready = plateau_cv is not None and plateau_cv <= opts.porod_plateau_cv_caution
         noise_ready = float(row.get("high_q_noise_score") or 0.0) < 0.70
-        position_ready = (
-            row.get("q_position_fraction") is not None
-            and float(row["q_position_fraction"]) >= opts.porod_min_log_q_position_fraction
-        )
         candidates.append(
             _candidate(
                 curve=curve,
@@ -446,7 +431,6 @@ def detect_auto_regions(
                     and alpha_ready
                     and plateau_ready
                     and noise_ready
-                    and position_ready
                 ),
                 recommended_analysis="porod_deep_analysis",
                 metrics=row,

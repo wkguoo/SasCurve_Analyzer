@@ -9,9 +9,6 @@ import numpy as np
 
 from app.core.data_model import AnalysisResult, ComparisonResult, CurveData, CurveGroup, FormalRecord, HistoryRecord
 
-# Bump only when on-disk project.json layout requires a migration path.
-PROJECT_SCHEMA_VERSION = 1
-
 
 @dataclass
 class ProjectState:
@@ -117,7 +114,6 @@ def save_project(project: ProjectState, folder: str | Path) -> Path:
         curve_payloads.append(payload)
 
     payload = {
-        "schema_version": PROJECT_SCHEMA_VERSION,
         "curves": curve_payloads,
         "groups": [asdict(group) for group in project.groups],
         "analysis_results": [asdict(result) for result in project.analysis_results],
@@ -133,17 +129,6 @@ def save_project(project: ProjectState, folder: str | Path) -> Path:
 def load_project(folder: str | Path) -> ProjectState:
     target_folder = Path(folder)
     payload = json.loads((target_folder / "project.json").read_text(encoding="utf-8"))
-    # Missing schema_version means legacy projects created before versioning.
-    raw_version = payload.get("schema_version", 1)
-    try:
-        schema_version = int(raw_version)
-    except (TypeError, ValueError):
-        raise ValueError(f"Unsupported project schema_version: {raw_version!r}") from None
-    if schema_version > PROJECT_SCHEMA_VERSION:
-        raise ValueError(
-            f"Project schema_version {schema_version} is newer than this software "
-            f"({PROJECT_SCHEMA_VERSION}). Upgrade the application to open it."
-        )
     project = ProjectState()
 
     for curve_payload in payload.get("curves", []):

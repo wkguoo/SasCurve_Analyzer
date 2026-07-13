@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil, exp, isfinite, log, log10
+from math import exp, isfinite, log
 from statistics import median
 from typing import Any, Mapping
 
@@ -26,10 +26,9 @@ _AUTO_REGION_TYPE_TO_CONSENSUS_TYPE = {
 class ConsensusRegion:
     """One batch-level q range supported by a group of individual curves.
 
-    ``q_range`` is the longest continuous interval contained by enough
-    per-curve candidates to meet the configured support fraction.  It is not a
-    strict intersection across every frame. ``log_median_q_range`` is retained
-    only as an audit statistic for the supporting candidates' endpoints.
+    ``q_range`` is the strict common interval for every supporting candidate and
+    is therefore safe to pass to later shared-range fits. ``log_median_q_range``
+    is retained only as an audit statistic for the cluster's typical endpoints.
     """
 
     region_type: str
@@ -41,8 +40,6 @@ class ConsensusRegion:
     candidate_n_points_min: float = 0.0
     candidate_n_points_max: float = 0.0
     log_median_q_range: tuple[float, float] | None = None
-    range_rule: str = "coverage_supported_widest_interval"
-    minimum_log_span_decades: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -56,19 +53,6 @@ class _ReadyCandidate:
     @property
     def log_q_center(self) -> float:
         return (log(self.q_start) + log(self.q_end)) / 2.0
-
-
-class ConsensusResolution(dict[str, ConsensusRegion]):
-    """Consensus mapping with the exact scanned candidate rows attached for audit."""
-
-    def __init__(
-        self,
-        *args: Any,
-        candidate_rows: list[dict[str, Any]] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(*args, **kwargs)
-        self.candidate_rows = list(candidate_rows or [])
 
 
 def _ready_candidate(row: Mapping[str, Any]) -> _ReadyCandidate | None:
@@ -116,58 +100,33 @@ def _region_from_cluster(
     *,
     curve_count: int,
     min_coverage: float,
-    min_log_span_decades: float,
 ) -> ConsensusRegion | None:
     if curve_count <= 0:
         return None
     unique_rows = _best_candidate_per_curve(rows)
     if not unique_rows or len(unique_rows) > curve_count:
         return None
-    minimum_support = max(1, int(ceil(curve_count * min_coverage - 1e-12)))
-    boundaries = sorted({value for row in unique_rows for value in (row.q_start, row.q_end)})
-    supported: list[tuple[float, float, list[_ReadyCandidate]]] = []
-    for start_index, q_start in enumerate(boundaries[:-1]):
-        for q_end in boundaries[start_index + 1 :]:
-            if q_start <= 0.0 or q_end <= q_start:
-                continue
-            log_span = log10(q_end / q_start)
-            if log_span + 1e-12 < min_log_span_decades:
-                continue
-            supporting = [
-                row
-                for row in unique_rows
-                if row.q_start <= q_start + 1e-12 and row.q_end >= q_end - 1e-12
-            ]
-            if len(supporting) >= minimum_support:
-                supported.append((q_start, q_end, supporting))
-    if not supported:
+    coverage = len(unique_rows) / curve_count
+    if coverage < min_coverage:
         return None
-    q_start, q_end, supporting_rows = min(
-        supported,
-        key=lambda item: (
-            -log10(item[1] / item[0]),
-            -len(item[2]),
-            -median([row.score for row in item[2]]),
-            item[0],
-            item[1],
-        ),
-    )
-    coverage = len(supporting_rows) / curve_count
+    q_start = max(row.q_start for row in unique_rows)
+    q_end = min(row.q_end for row in unique_rows)
+    if q_start >= q_end:
+        return None
     log_median_q_range = (
-        exp(median([log(row.q_start) for row in supporting_rows])),
-        exp(median([log(row.q_end) for row in supporting_rows])),
+        exp(median([log(row.q_start) for row in unique_rows])),
+        exp(median([log(row.q_end) for row in unique_rows])),
     )
     return ConsensusRegion(
         region_type=region_type,
         q_range=(q_start, q_end),
         coverage=coverage,
-        median_score=float(median([row.score for row in supporting_rows])),
-        supporting_curve_ids=tuple(row.curve_id for row in supporting_rows),
-        median_n_points=float(median([row.n_points for row in supporting_rows])),
-        candidate_n_points_min=float(min(row.n_points for row in supporting_rows)),
-        candidate_n_points_max=float(max(row.n_points for row in supporting_rows)),
+        median_score=float(median([row.score for row in unique_rows])),
+        supporting_curve_ids=tuple(row.curve_id for row in unique_rows),
+        median_n_points=float(median([row.n_points for row in unique_rows])),
+        candidate_n_points_min=float(min(row.n_points for row in unique_rows)),
+        candidate_n_points_max=float(max(row.n_points for row in unique_rows)),
         log_median_q_range=log_median_q_range,
-        minimum_log_span_decades=float(min_log_span_decades),
     )
 
 
@@ -177,13 +136,11 @@ def candidate_consensus(
     *,
     curve_count: int,
     min_coverage: float,
-    min_log_span_decades: float = 0.0,
 ) -> ConsensusRegion | None:
-    """Select the longest coverage-supported interval in a log-q cluster.
+    """Select the most broadly supported log-q candidate cluster.
 
-    All returned intervals already satisfy the configured support and span
-    gates.  Length is therefore the primary objective; coverage, score, point
-    count, and stable q ordering resolve ties.
+    The selection is coverage-first, then median score. Ties use a stable q-range
+    and curve-ID ordering so an input-list reorder does not change the result.
     """
 
     if not 0.0 < min_coverage <= 1.0:
@@ -205,7 +162,6 @@ def candidate_consensus(
             cluster,
             curve_count=curve_count,
             min_coverage=min_coverage,
-            min_log_span_decades=min_log_span_decades,
         )
         if region is not None:
             regions.append(region)
@@ -215,7 +171,6 @@ def candidate_consensus(
     return min(
         regions,
         key=lambda item: (
-            -log10(item.q_range[1] / item.q_range[0]),
             -item.coverage,
             -item.median_score,
             -item.median_n_points,
@@ -236,15 +191,8 @@ def resolve_consensus_regions(curves: list[CurveData], config: AutoBatchConfig) 
     grouped: dict[str, list[dict[str, Any]]] = {
         consensus_type: [] for consensus_type in _AUTO_REGION_TYPE_TO_CONSENSUS_TYPE.values()
     }
-    consensus_curves = [
-        curve
-        for curve in curves
-        if not bool(curve.metadata.get("is_reference"))
-        and curve.metadata.get("sequence_role") != "reference"
-    ]
-    curve_ids = {str(curve.curve_id) for curve in consensus_curves}
-    candidate_audit_rows: list[dict[str, Any]] = []
-    for curve in consensus_curves:
+    curve_ids = {str(curve.curve_id) for curve in curves}
+    for curve in curves:
         detection = detect_auto_regions(curve, q_range=config.effective_q_range)
         candidates = detection.results.get("candidates", [])
         if not isinstance(candidates, list):
@@ -252,10 +200,6 @@ def resolve_consensus_regions(curves: list[CurveData], config: AutoBatchConfig) 
         for candidate in candidates:
             if not isinstance(candidate, Mapping):
                 continue
-            audit_row = dict(candidate)
-            audit_row["sequence_role"] = curve.metadata.get("sequence_role", "series")
-            audit_row["is_reference"] = False
-            candidate_audit_rows.append(audit_row)
             if candidate.get("curve_id") != curve.curve_id:
                 continue
             consensus_type = _AUTO_REGION_TYPE_TO_CONSENSUS_TYPE.get(str(candidate.get("region_type", "")))
@@ -269,23 +213,10 @@ def resolve_consensus_regions(curves: list[CurveData], config: AutoBatchConfig) 
             rows,
             curve_count=len(curve_ids),
             min_coverage=config.consensus_min_coverage,
-            min_log_span_decades=(
-                max(
-                    config.common_min_log_q_span_decades,
-                    config.power_law_formal_min_log_q_span_decades,
-                )
-                if consensus_type == "power_law"
-                else max(
-                    config.common_min_log_q_span_decades,
-                    config.porod_formal_min_log_q_span_decades,
-                )
-                if consensus_type == "porod"
-                else config.common_min_log_q_span_decades
-            ),
         )
         if region is not None:
             output[consensus_type] = region
-    return ConsensusResolution(output, candidate_rows=candidate_audit_rows)
+    return output
 
 
-__all__ = ["ConsensusRegion", "ConsensusResolution", "candidate_consensus", "resolve_consensus_regions"]
+__all__ = ["ConsensusRegion", "candidate_consensus", "resolve_consensus_regions"]

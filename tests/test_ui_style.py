@@ -221,7 +221,7 @@ def test_import_tab_q_range_filter_defaults_to_enabled() -> None:
     try:
         assert window.import_tab.limit_q_range.isChecked()
         assert window.import_tab.import_q_min.value() == 0.01
-        assert window.import_tab.import_q_max.value() == 0.5
+        assert window.import_tab.import_q_max.value() == 0.05
         window.import_tab.limit_q_range.setChecked(False)
         assert not window.import_tab.import_q_min.isEnabled()
         assert not window.import_tab.import_q_max.isEnabled()
@@ -234,9 +234,9 @@ def test_analysis_tabs_require_confirmation_of_default_effective_q_range() -> No
     window = MainWindow()
     try:
         assert window.analysis_tab.q_min.value() == pytest.approx(0.01)
-        assert window.analysis_tab.q_max.value() == pytest.approx(0.5)
+        assert window.analysis_tab.q_max.value() == pytest.approx(0.05)
         assert window.deep_analysis_tab.q_min.value() == pytest.approx(0.01)
-        assert window.deep_analysis_tab.q_max.value() == pytest.approx(0.5)
+        assert window.deep_analysis_tab.q_max.value() == pytest.approx(0.05)
     finally:
         window.close()
 

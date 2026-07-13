@@ -184,11 +184,7 @@ def test_shape_models_return_every_allowed_model_and_isolate_a_failed_model(
         }
 
     monkeypatch.setattr(analysis_runner, "fit_all_allowed_models", fake_fit_all)
-    config = AutoBatchConfig(
-        batch_id="shape-models",
-        allowed_models=["sphere", "cylinder"],
-        enable_shape_models=True,
-    )
+    config = AutoBatchConfig(batch_id="shape-models", allowed_models=["sphere", "cylinder"])
 
     envelopes = run_registered_analysis(curve, "shape_models", (0.01, 0.2), config)
 
@@ -224,35 +220,3 @@ def test_envelope_status_is_invalid_when_reliability_label_is_invalid() -> None:
     assert envelope.reliability_label == "invalid"
     assert envelope.invalid_reason
     assert "invalid" in envelope.invalid_reason
-
-def test_residual_bootstrap_uses_primary_weighting_when_errors_are_valid() -> None:
-    q = np.linspace(0.01, 0.03, 60)
-    rg = 18.0
-    intensity = 4.0 * np.exp(-(rg**2) * q**2 / 3.0)
-    error = 0.02 * intensity
-    curve = CurveData.create(name="weighted-guinier", q=q, intensity=intensity, error=error)
-    config = AutoBatchConfig(
-        batch_id="weighted-boot",
-        enable_bootstrap=True,
-        bootstrap_samples=12,
-        bootstrap_seed=11,
-        enable_range_sensitivity=False,
-    )
-
-    envelope = run_registered_analysis(curve, "guinier", (0.01, 0.03), config)[0]
-    robustness = envelope.fit_quality  # not where robustness lives
-    # robustness fields live on the source results copied into envelope tables/fit_quality only partially;
-    # check envelope robustness via reporting and parameter presence
-    assert envelope.uncertainty_interpretation in {
-        "measurement_error_supported_plus_weighted_residual_bootstrap_robustness",
-        "measurement_error_supported_plus_unweighted_residual_bootstrap_fallback",
-        "measurement_error_supported_plus_robustness_interval",
-    }
-    # Direct unit check on callback construction
-    callback, count, weighted = analysis_runner._residual_bootstrap_callback(curve, (0.01, 0.03), "guinier")
-    assert callback is not None
-    assert count >= 5
-    assert weighted is True
-    sample = callback(np.arange(count, dtype=int))
-    assert sample.get("converged") is True
-    assert sample.get("weighted_fit") is True

@@ -23,7 +23,6 @@ from app.core.batch_cache import job_cache_key, load_job_envelopes, save_job_env
 from app.core.batch_consensus import resolve_consensus_regions
 from app.core.batch_inputs import collect_batch_inputs
 from app.core.auto_regions import detect_auto_regions
-from app.core.cancellation import cancel_scope
 from app.core.data_model import CurveData, utc_now_iso
 from app.core.metric_registry import METHOD_REGISTRY, applicable_method_ids
 from app.core.model_selection import flag_possible_model_transitions, rank_models, select_batch_main_model
@@ -71,8 +70,6 @@ class MethodRangeDecision:
     fit_ready_candidate_count: int = 0
     selection_basis: str = "not_recorded"
     selection_evidence: dict[str, Any] = field(default_factory=dict)
-    range_track: str = "effective"
-    common_range_supported: bool | None = None
 
 
 _CANDIDATE_CONSENSUS_METHODS = {"guinier", "power_law", "porod"}
@@ -249,8 +246,7 @@ def _consensus_q_ranges(
             "selection_basis": "method-specific candidate consensus",
             "cluster_rule": "abs(delta_log_q_center)<=0.35",
             "coverage_rule": "coverage>=configured_consensus_min_coverage",
-            "range_rule": getattr(region, "range_rule", "coverage_supported_widest_interval"),
-            "minimum_log_span_decades": getattr(region, "minimum_log_span_decades", None),
+            "range_rule": "strict_intersection(max_candidate_start,min_candidate_end)",
         }
     effective_low, effective_high = _configured_effective_q_range(run)
     for region_type in sorted(_CANDIDATE_CONSENSUS_METHODS):
@@ -274,8 +270,7 @@ def _consensus_q_ranges(
                 "selection_basis": "method-specific candidate consensus",
                 "cluster_rule": "abs(delta_log_q_center)<=0.35",
                 "coverage_rule": "coverage>=configured_consensus_min_coverage",
-                "range_rule": "coverage_supported_widest_interval",
-                "minimum_log_span_decades": None,
+                "range_rule": "strict_intersection(max_candidate_start,min_candidate_end)",
                 "reason_codes": ["no_method_specific_batch_consensus"],
             },
         )
@@ -418,7 +413,7 @@ def _consensus_selection_evidence(
         "consensus_supporting_curve_count": supporting_count,
         "consensus_cluster_rule": "abs(delta_log_q_center)<=0.35",
         "consensus_coverage_rule": "coverage>=configured_consensus_min_coverage",
-        "consensus_range_rule": detail.get("range_rule", "coverage_supported_widest_interval"),
+        "consensus_range_rule": "strict_intersection(max_candidate_start,min_candidate_end)",
         "log_median_q_range": detail.get("log_median_q_range"),
         "selection_rule": "method_specific_candidate_consensus",
     }
@@ -445,35 +440,18 @@ def _candidate_range_from_curve(
     curve: CurveData,
     region_type: str,
     effective_q_range: tuple[float, float],
-    candidate_rows: list[dict[str, Any]] | None = None,
 ) -> tuple[tuple[float, float] | None, str, tuple[str, ...], int, int, dict[str, Any]]:
     """Inspect one method's candidates without treating a candidate as a fit."""
 
-    if candidate_rows is None:
-        try:
-            detection = detect_auto_regions(curve, q_range=effective_q_range)
-        except Exception:
-            return None, "invalid_input", ("candidate_scan_failed",), 0, 0, {
-                "candidate_count": 0,
-                "fit_ready_candidate_count": 0,
-                "candidate_scan_error": "candidate_scan_failed",
-            }
-        rows = detection.results.get("candidates", [])
-    else:
-        rows = [row for row in candidate_rows if str(row.get("curve_id")) == str(curve.curve_id)]
-        if not rows and (
-            bool(curve.metadata.get("is_reference"))
-            or curve.metadata.get("sequence_role") == "reference"
-        ):
-            try:
-                detection = detect_auto_regions(curve, q_range=effective_q_range)
-            except Exception:
-                return None, "invalid_input", ("candidate_scan_failed",), 0, 0, {
-                    "candidate_count": 0,
-                    "fit_ready_candidate_count": 0,
-                    "candidate_scan_error": "candidate_scan_failed",
-                }
-            rows = detection.results.get("candidates", [])
+    try:
+        detection = detect_auto_regions(curve, q_range=effective_q_range)
+    except Exception:
+        return None, "invalid_input", ("candidate_scan_failed",), 0, 0, {
+            "candidate_count": 0,
+            "fit_ready_candidate_count": 0,
+            "candidate_scan_error": "candidate_scan_failed",
+        }
+    rows = detection.results.get("candidates", [])
     if not isinstance(rows, list):
         return None, "not_detected", ("candidate_rows_missing",), 0, 0, {
             "candidate_count": 0,
@@ -557,7 +535,6 @@ def _range_decision_for_method(
     run: AutoBatchRun,
     curve: CurveData,
     method_id: str,
-    range_track: str | None = None,
 ) -> MethodRangeDecision:
     effective_q_range = _configured_effective_q_range(run)
     spec = METHOD_REGISTRY.get(method_id)
@@ -595,130 +572,6 @@ def _range_decision_for_method(
         )
 
     region_type = _METHOD_REGION_TYPES.get(method_id)
-    configured_mode = str(run.config_snapshot.get("range_mode", "legacy"))
-    if range_track is None:
-        range_track = (
-            "adaptive"
-            if configured_mode == "adaptive"
-            else "common"
-            if configured_mode in {"dual", "common"}
-            else "legacy"
-        )
-
-    if range_track == "adaptive":
-        (
-            candidate_range,
-            candidate_status,
-            candidate_codes,
-            candidate_count,
-            ready_count,
-            candidate_evidence,
-        ) = _candidate_range_from_curve(
-            curve,
-            region_type or method_id,
-            effective_q_range,
-            run.candidate_windows if run.config_snapshot.get("candidate_windows_collected") else None,
-        )
-        if candidate_range is not None:
-            return MethodRangeDecision(
-                method_id,
-                candidate_range,
-                region_type,
-                "per_frame_adaptive_candidate",
-                candidate_status,
-                "not_required",
-                (*candidate_codes, "adaptive_track_selected"),
-                candidate_count,
-                ready_count,
-                selection_basis="method_candidate_scan_log_q_multiscale_best_fit_ready_per_frame",
-                selection_evidence={
-                    **candidate_evidence,
-                    "range_track": "adaptive",
-                    "cross_method_borrowing": False,
-                },
-                range_track="adaptive",
-            )
-        reason_codes = (*candidate_codes, "adaptive_track_has_no_fit_ready_candidate")
-        _append_warning_once(
-            run,
-            f"Adaptive track for method '{method_id}' on curve '{curve.name}' has no executable candidate; "
-            f"status={candidate_status}, reasons={','.join(reason_codes)}.",
-        )
-        return MethodRangeDecision(
-            method_id,
-            None,
-            region_type,
-            "none",
-            candidate_status,
-            "not_required",
-            reason_codes,
-            candidate_count,
-            ready_count,
-            selection_basis="method_candidate_scan_no_executable_interval",
-            selection_evidence={**candidate_evidence, "range_track": "adaptive"},
-            range_track="adaptive",
-        )
-
-    if range_track == "common":
-        q_range = run.consensus_regions.get(region_type) if region_type is not None else None
-        detail = run.consensus_region_details.get(region_type or method_id, {})
-        supporting_ids = detail.get("supporting_curve_ids", []) if isinstance(detail, Mapping) else []
-        is_reference = bool(curve.metadata.get("is_reference")) or curve.metadata.get("sequence_role") == "reference"
-        common_supported = None if is_reference else str(curve.curve_id) in {str(item) for item in supporting_ids}
-        if q_range is not None:
-            clipped = (
-                max(q_range[0], effective_q_range[0]),
-                min(q_range[1], effective_q_range[1]),
-            )
-            if clipped[0] < clipped[1]:
-                return MethodRangeDecision(
-                    method_id,
-                    clipped,
-                    region_type,
-                    "batch_method_common_range",
-                    "supported" if common_supported else "not_supporting" if common_supported is False else "reference_comparison",
-                    "available",
-                    (
-                        "method_specific_common_range",
-                        "reference_compared_on_series_common_range"
-                        if is_reference
-                        else "curve_supports_common_range"
-                        if common_supported
-                        else "curve_did_not_contribute_support_but_is_recomputed_for_comparability",
-                    ),
-                    selection_basis="coverage_supported_widest_continuous_common_interval",
-                    selection_evidence={
-                        **_consensus_selection_evidence(run, region_type or method_id, effective_q_range),
-                        "range_track": "common",
-                    },
-                    range_track="common",
-                    common_range_supported=common_supported,
-                )
-        reason_codes = ("method_common_range_not_available", "common_track_not_executed")
-        _append_warning_once(
-            run,
-            f"Common track for method '{method_id}' has no coverage-supported executable q interval; "
-            "the common result is intentionally left empty.",
-        )
-        return MethodRangeDecision(
-            method_id,
-            None,
-            region_type,
-            "none",
-            "not_evaluated",
-            "not_available",
-            reason_codes,
-            selection_basis="no_coverage_supported_common_interval",
-            selection_evidence={
-                **_consensus_selection_evidence(run, region_type or method_id, effective_q_range),
-                "range_track": "common",
-            },
-            range_track="common",
-            common_range_supported=common_supported,
-        )
-
-    # Compatibility path for callers that explicitly request the historical
-    # consensus-first behavior.  Dual-mode jobs above never use this branch.
     q_range = run.consensus_regions.get(region_type) if region_type is not None else None
     if q_range is not None:
         clipped = (
@@ -740,7 +593,6 @@ def _range_decision_for_method(
                     region_type or method_id,
                     effective_q_range,
                 ),
-                range_track="legacy",
             )
 
     (
@@ -769,7 +621,6 @@ def _range_decision_for_method(
                 **candidate_evidence,
                 "fallback_rule": "same_method_per_frame_candidate_only_when_explicitly_enabled",
             },
-            range_track="legacy",
         )
 
     reason_codes = (*consensus_codes, *candidate_codes)
@@ -795,7 +646,6 @@ def _range_decision_for_method(
             **candidate_evidence,
             "fallback_rule": "no_cross_method_borrowing; per_frame_fallback_disabled",
         },
-        range_track="legacy",
     )
 
 
@@ -822,8 +672,6 @@ def _range_audit_row(curve: CurveData, decision: MethodRangeDecision) -> dict[st
         "curve_id": curve.curve_id,
         "curve_name": curve.name,
         "method_id": decision.method_id,
-        "range_track": decision.range_track,
-        "common_range_supported": decision.common_range_supported,
         "region_type": decision.region_type,
         "q_start": None if decision.q_range is None else decision.q_range[0],
         "q_end": None if decision.q_range is None else decision.q_range[1],
@@ -879,63 +727,49 @@ def _feature_q_tolerance(curve: CurveData, effective_q_range: tuple[float, float
 
 
 def _link_related_local_features(run: AutoBatchRun) -> None:
-    """Link overlapping peak/shoulder/crossover evidence as one ambiguous feature."""
+    """Mark shoulder/crossover overlap instead of reporting duplicate features."""
 
     effective_q_range = _configured_effective_q_range(run)
     by_curve: dict[str, dict[str, AnalysisEnvelope]] = {}
     for item in run.analyses:
-        if item.analysis_type not in {"peaks", "shoulders", "crossover"}:
+        if item.analysis_type not in {"shoulders", "crossover"}:
             continue
         by_curve.setdefault(item.curve_id, {})[item.analysis_type] = item
 
     curve_by_id = {str(curve.curve_id): curve for curve in run.curves}
+    relation = "shoulder_crossover_same_q_grid_transition"
     for curve_id, items in by_curve.items():
+        shoulder = items.get("shoulders")
+        crossover = items.get("crossover")
         curve = curve_by_id.get(str(curve_id))
-        if curve is None:
+        if shoulder is None or crossover is None or curve is None:
+            continue
+        shoulder_q = _numeric_parameter(shoulder, "shoulder_q")
+        crossover_q = _numeric_parameter(crossover, "crossover_q")
+        if shoulder_q is None or crossover_q is None:
             continue
         tolerance = _feature_q_tolerance(curve, effective_q_range)
-        q_parameter = {"peaks": "q_star", "shoulders": "shoulder_q", "crossover": "crossover_q"}
-        feature_order = ("peaks", "shoulders", "crossover")
-        for left_index, left_name in enumerate(feature_order[:-1]):
-            for right_name in feature_order[left_index + 1 :]:
-                left = items.get(left_name)
-                right = items.get(right_name)
-                if left is None or right is None:
-                    continue
-                left_q = _numeric_parameter(left, q_parameter[left_name])
-                right_q = _numeric_parameter(right, q_parameter[right_name])
-                if left_q is None or right_q is None or abs(left_q - right_q) > tolerance:
-                    continue
-                pair = f"{left_name.rstrip('s')}_{right_name.rstrip('s')}"
-                relation = (
-                    "shoulder_crossover_same_q_grid_transition"
-                    if {left_name, right_name} == {"shoulders", "crossover"}
-                    else f"{pair}_same_q_grid_feature"
-                )
-                for current, other in ((left, right), (right, left)):
-                    if other.analysis_id not in current.related_analysis_ids:
-                        current.related_analysis_ids.append(other.analysis_id)
-                    current.feature_relation = (
-                        relation if current.feature_relation in {None, relation} else "overlapping_local_feature_evidence"
-                    )
-                    current.fit_quality["feature_relation"] = current.feature_relation
-                    current.fit_quality["related_analysis_ids"] = list(current.related_analysis_ids)
-                    current.fit_quality["q_match_tolerance"] = tolerance
-                    current.detection_status = "ambiguous"
-                    reason_code = f"{pair}_q_overlap"
-                    if reason_code not in current.detection_reason_codes:
-                        current.detection_reason_codes.append(reason_code)
-                    current.reporting_status = "not_reportable"
-                    if "overlapping_local_evidence_requires_joint_interpretation" not in current.reporting_reason_codes:
-                        current.reporting_reason_codes.append(
-                            "overlapping_local_evidence_requires_joint_interpretation"
-                        )
-                    warning = (
-                        f"Overlapping {left_name}/{right_name} q locations for curve '{current.curve_name}' "
-                        f"within {tolerance:.6g}; linked rows are not independent reportable features."
-                    )
-                    if warning not in current.warnings:
-                        current.warnings.append(warning)
+        if abs(shoulder_q - crossover_q) > tolerance:
+            continue
+        for current, other in ((shoulder, crossover), (crossover, shoulder)):
+            if other.analysis_id not in current.related_analysis_ids:
+                current.related_analysis_ids.append(other.analysis_id)
+            current.feature_relation = relation
+            current.fit_quality["feature_relation"] = relation
+            current.fit_quality["related_analysis_ids"] = list(current.related_analysis_ids)
+            current.fit_quality["q_match_tolerance"] = tolerance
+            current.detection_status = "ambiguous"
+            if "shoulder_crossover_q_overlap" not in current.detection_reason_codes:
+                current.detection_reason_codes.append("shoulder_crossover_q_overlap")
+            current.reporting_status = "not_reportable"
+            if "shared_local_derivative_evidence_requires_joint_interpretation" not in current.reporting_reason_codes:
+                current.reporting_reason_codes.append("shared_local_derivative_evidence_requires_joint_interpretation")
+            warning = (
+                f"Shoulder/crossover q locations overlap for curve '{current.curve_name}' within "
+                f"{tolerance:.6g}; the two rows are linked and are not independent reportable features."
+            )
+            if warning not in current.warnings:
+                current.warnings.append(warning)
 
 
 def _normalize_envelope_status(status: object) -> AnalysisStatus:
@@ -1058,12 +892,6 @@ def _apply_range_context(
 
     for item in envelopes:
         item.q_range = decision.q_range
-        item.range_track = decision.range_track
-        item.common_range_supported = decision.common_range_supported
-        if decision.range_track in {"adaptive", "common"}:
-            parts = str(item.analysis_id).split(":")
-            if not parts or parts[-1] != decision.range_track:
-                item.analysis_id = f"{item.analysis_id}:{decision.range_track}"
         if isinstance(item.status, AnalysisStatus):
             item.execution_status = (
                 "not_run"
@@ -1085,38 +913,17 @@ def _apply_range_context(
     return envelopes
 
 
-def _cancelled_range_decision(method_id: str, range_track: str) -> MethodRangeDecision:
-    """Cheap cancelled stub without re-scanning regions or consensus."""
-
-    return MethodRangeDecision(
-        method_id=method_id,
-        q_range=None,
-        region_type=_METHOD_REGION_TYPES.get(method_id),
-        range_source="cancelled",
-        candidate_status="not_run",
-        consensus_status="not_run",
-        reason_codes=("analysis_cancelled",),
-        selection_basis="cancelled_before_range_resolution",
-        selection_evidence={"range_track": range_track, "reason": "analysis_cancelled"},
-        range_track=range_track,
-        common_range_supported=None,
-    )
-
-
 def _append_cancelled_jobs(
     run: AutoBatchRun,
-    jobs: list[tuple[CurveData, str, str]],
+    jobs: list[tuple[CurveData, str]],
 ) -> None:
-    for curve, method_id, range_track in jobs:
-        # Avoid re-detecting auto regions while stopping; cancelled stubs only.
-        decision = _cancelled_range_decision(method_id, range_track)
+    for curve, method_id in jobs:
+        decision = _range_decision_for_method(run, curve, method_id)
         run.range_audit.append(_range_audit_row(curve, decision))
-        run.analyses.append(
-            _apply_range_context(
-                [_cancelled_envelope(curve, method_id, decision.q_range)],
-                decision,
-            )[0]
-        )
+        run.analyses.append(_apply_range_context(
+            [_cancelled_envelope(curve, method_id, decision.q_range)],
+            decision,
+        )[0])
 
 
 def _remap_cached_envelopes(
@@ -1168,10 +975,6 @@ def _remap_cached_envelopes(
                 detection_reason_codes=list(item.detection_reason_codes),
                 q_selection_basis=item.q_selection_basis,
                 q_selection_evidence=item.q_selection_evidence,
-                range_track=item.range_track,
-                common_range_supported=item.common_range_supported,
-                robustness_status=item.robustness_status,
-                uncertainty_interpretation=item.uncertainty_interpretation,
             )
         )
     return remapped
@@ -1252,11 +1055,8 @@ def run_auto_batch(
         "candidate_selection_rule": "highest_score_then_n_points_then_lowest_q",
         "consensus_cluster_rule": "abs(delta_log_q_center)<=0.35",
         "consensus_coverage_rule": f"coverage>={config.consensus_min_coverage:g}",
-        "consensus_range_rule": "coverage_supported_widest_continuous_interval",
-        "range_mode": config.range_mode,
-        "range_tracks": ["adaptive", "common"] if config.range_mode == "dual" else [config.range_mode],
-        "reference_consensus_rule": "reference_curves_excluded_from_consensus_but_recomputed_on_common_range",
-        "per_frame_fallback_rule": "legacy_mode_only",
+        "consensus_range_rule": "strict_intersection(max_candidate_start,min_candidate_end)",
+        "per_frame_fallback_rule": "same_method_only; disabled_by_default",
         "cross_method_intersection": False,
         "reporting_min_log_q_span_decades": config.reporting_min_log_q_span_decades,
         "feature_confirmed_noise_score": config.feature_confirmed_noise_score,
@@ -1264,18 +1064,7 @@ def run_auto_batch(
         "oscillation_min_cycles": config.oscillation_min_cycles,
         "oscillation_period_cv_max": config.oscillation_period_cv_max,
     }
-    jobs: list[tuple[CurveData, str, str]] = []
-    for curve in run.curves:
-        for method_id in methods:
-            if method_id not in _CANDIDATE_CONSENSUS_METHODS:
-                tracks = ("effective",)
-            elif config.range_mode == "dual":
-                tracks = ("adaptive", "common")
-            elif config.range_mode in {"adaptive", "common"}:
-                tracks = (config.range_mode,)
-            else:
-                tracks = ("legacy",)
-            jobs.extend((curve, method_id, track) for track in tracks)
+    jobs = [(curve, method_id) for curve in run.curves for method_id in methods]
 
     if _cancel_requested(run, cancel_requested):
         _append_cancelled_jobs(run, jobs)
@@ -1283,10 +1072,6 @@ def run_auto_batch(
 
     try:
         raw_consensus = resolve_consensus_regions(run.curves, config)
-        attached_candidates = getattr(raw_consensus, "candidate_rows", None)
-        if isinstance(attached_candidates, list):
-            run.candidate_windows = [dict(row) for row in attached_candidates if isinstance(row, Mapping)]
-            run.config_snapshot["candidate_windows_collected"] = True
         run.consensus_regions, consensus_problem = _consensus_q_ranges(raw_consensus, run)
         had_failure = had_failure or consensus_problem
     except Exception as exc:
@@ -1305,78 +1090,75 @@ def run_auto_batch(
     total = len(jobs)
     completed = 0
 
-    # Install cancel predicate so bootstrap / range-sensitivity loops can stop mid-job.
-    with cancel_scope(cancel_requested):
-        for job_index, (curve, method_id, range_track) in enumerate(jobs):
-            if _cancel_requested(run, cancel_requested):
-                _append_cancelled_jobs(run, jobs[job_index:])
-                if cache_root is not None:
-                    save_run_checkpoint(cache_root, run)
-                return _finish_cancelled(run)
+    for job_index, (curve, method_id) in enumerate(jobs):
+        if _cancel_requested(run, cancel_requested):
+            _append_cancelled_jobs(run, jobs[job_index:])
+            if cache_root is not None:
+                save_run_checkpoint(cache_root, run)
+            return _finish_cancelled(run)
 
-            decision = _range_decision_for_method(run, curve, method_id, range_track)
-            q_range = decision.q_range
-            run.range_audit.append(_range_audit_row(curve, decision))
-            cache_method_id = f"{method_id}__{range_track}"
-            cache_key = job_cache_key(curve, cache_method_id, config, q_range) if cache_root is not None else None
-            envelopes: list[AnalysisEnvelope] | None = None
-            used_cache = False
-            if cache_root is not None and cache_key is not None:
-                cached = load_job_envelopes(cache_root, cache_key)
-                if cached is not None:
-                    remapped = _remap_cached_envelopes(cached, curve, method_id)
-                    try:
-                        envelopes = _apply_range_context(
-                            _validate_runner_output(remapped, curve, method_id),
-                            decision,
-                        )
-                        used_cache = True
-                        cache_hits += 1
-                    except Exception:
-                        envelopes = None
-
-            if envelopes is None:
+        decision = _range_decision_for_method(run, curve, method_id)
+        q_range = decision.q_range
+        run.range_audit.append(_range_audit_row(curve, decision))
+        cache_key = job_cache_key(curve, method_id, config, q_range) if cache_root is not None else None
+        envelopes: list[AnalysisEnvelope] | None = None
+        used_cache = False
+        if cache_root is not None and cache_key is not None:
+            cached = load_job_envelopes(cache_root, cache_key)
+            if cached is not None:
+                remapped = _remap_cached_envelopes(cached, curve, method_id)
                 try:
-                    envelopes = _validate_runner_output(
-                        runner(curve, method_id, q_range, config),
-                        curve,
-                        method_id,
+                    envelopes = _apply_range_context(
+                        _validate_runner_output(remapped, curve, method_id),
+                        decision,
                     )
-                except Exception as exc:
-                    had_failure = True
-                    reason = _exception_text(exc)
-                    envelopes = [_failure_envelope(curve, method_id, q_range, reason)]
-                envelopes = _apply_range_context(envelopes, decision)
-                cacheable = not any(item.status in _PARTIAL_FAILURE_STATUSES for item in envelopes)
-                if cache_root is not None and cache_key is not None and cacheable:
-                    try:
-                        save_job_envelopes(cache_root, cache_key, envelopes)
-                    except Exception as exc:
-                        _append_warning_once(
-                            run,
-                            f"Failed to write job cache for '{curve.name}'/{method_id}: {_exception_text(exc)}.",
-                        )
+                    used_cache = True
+                    cache_hits += 1
+                except Exception:
+                    envelopes = None
 
-            run.analyses.extend(envelopes)
-            if any(item.status in _PARTIAL_FAILURE_STATUSES for item in envelopes):
+        if envelopes is None:
+            try:
+                envelopes = _validate_runner_output(
+                    runner(curve, method_id, q_range, config),
+                    curve,
+                    method_id,
+                )
+            except Exception as exc:
                 had_failure = True
-            completed += 1
-            _emit_progress(
-                run,
-                progress_callback,
-                ProgressEvent(
-                    completed,
-                    total,
-                    curve.name,
-                    f"{method_id}:{range_track}",
-                    message="cache_hit" if used_cache else "computed",
-                ),
-            )
-            if _cancel_requested(run, cancel_requested):
-                _append_cancelled_jobs(run, jobs[job_index + 1 :])
-                if cache_root is not None:
-                    save_run_checkpoint(cache_root, run)
-                return _finish_cancelled(run)
+                reason = _exception_text(exc)
+                envelopes = [_failure_envelope(curve, method_id, q_range, reason)]
+            envelopes = _apply_range_context(envelopes, decision)
+            cacheable = not any(item.status in _PARTIAL_FAILURE_STATUSES for item in envelopes)
+            if cache_root is not None and cache_key is not None and cacheable:
+                try:
+                    save_job_envelopes(cache_root, cache_key, envelopes)
+                except Exception as exc:
+                    _append_warning_once(
+                        run,
+                        f"Failed to write job cache for '{curve.name}'/{method_id}: {_exception_text(exc)}.",
+                    )
+
+        run.analyses.extend(envelopes)
+        if any(item.status in _PARTIAL_FAILURE_STATUSES for item in envelopes):
+            had_failure = True
+        completed += 1
+        _emit_progress(
+            run,
+            progress_callback,
+            ProgressEvent(
+                completed,
+                total,
+                curve.name,
+                method_id,
+                message="cache_hit" if used_cache else "computed",
+            ),
+        )
+        if _cancel_requested(run, cancel_requested):
+            _append_cancelled_jobs(run, jobs[job_index + 1 :])
+            if cache_root is not None:
+                save_run_checkpoint(cache_root, run)
+            return _finish_cancelled(run)
 
     _link_related_local_features(run)
 

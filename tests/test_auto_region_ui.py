@@ -84,13 +84,13 @@ def test_auto_region_detection_uses_default_effective_q_range() -> None:
         window.add_curve(curve)
 
         assert window.analysis_tab.q_min.value() == pytest.approx(0.01)
-        assert window.analysis_tab.q_max.value() == pytest.approx(0.5)
+        assert window.analysis_tab.q_max.value() == pytest.approx(0.05)
         window.analysis_tab.detect_auto_regions_for_current_curve()
 
         result = window.project.analysis_results[-1]
         assert result.analysis_type == "auto_region_detection"
-        assert result.q_range == (pytest.approx(0.01), pytest.approx(0.5))
-        assert window.analysis_tab.q_max.value() == pytest.approx(0.5)
+        assert result.q_range == (pytest.approx(0.01), pytest.approx(0.05))
+        assert window.analysis_tab.q_max.value() == pytest.approx(0.05)
     finally:
         window.close()
 
