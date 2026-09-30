@@ -13,6 +13,14 @@
 
 `sas_curve_analyzer` is a local desktop application for importing, checking, visualizing, comparing, and reporting calibrated one-dimensional small-angle scattering curves.
 
+Agent-driven unattended studies are available through `python -m app.cli` without Qt or a UI. Recursively discover sample folders, run each sample independently, and export source/plot data, numeric analyses, evolution tables, and PNG/SVG/PDF packages. See [the headless workflow](docs/agent_workflow_zh.md) and [example config](examples/agent_study.json).
+
+```powershell
+python -m pip install -r requirements-headless.txt
+python -m app.cli discover --input "D:\SAS\input" --config examples/agent_study.json
+python -m app.cli run --input "D:\SAS\input" --output "D:\SAS\derived\run_001" --config examples/agent_study.json
+```
+
 The software is intended for materials researchers working with reduced 1D SAXS/SANS/WAXS-SAXS curve files. It focuses on practical curve inspection, non-destructive data handling, model-free feature extraction, batch comparison, and traceable reporting.
 
 ## Scope
@@ -272,6 +280,8 @@ The GUI code should call `app/core` modules for numerical work. New analysis beh
 ## 简体中文
 
 `sas_curve_analyzer` 是一个本地 Windows 桌面工具，用于导入、检查、绘制、比较和导出已经完成一维归约与校准的小角散射曲线。
+
+无人值守场景使用 `python -m app.cli`：递归读取不同样品的原位一维数据，隔离每个样品的分析和演化，导出完整作图数据、分析结果和图片包；不需要启动 UI。完整操作、元数据配置、质量边界和断点恢复见 [Agent 工作流](docs/agent_workflow_zh.md)。
 
 ### 主要功能
 

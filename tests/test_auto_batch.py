@@ -785,6 +785,64 @@ def test_default_runner_uses_production_registry_runner_and_records_model_summar
     assert len(run.transition_flags) == len(run.curves)
 
 
+def test_run_auto_batch_passes_explicit_paths_and_trusted_identity_to_collection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "nested" / "sample_0001.csv"
+    source.parent.mkdir()
+    _write_curve(source, 1.0)
+    monkeypatch.setattr(auto_batch, "applicable_method_ids", lambda config: ["guinier"])
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+
+    identity = {
+        "nested/sample_0001.csv": {
+            "sample_id": "sample-A",
+            "series_id": "sample-A",
+            "frame_index": 1,
+            "identity_source": "folder_regex",
+        }
+    }
+    run = run_auto_batch(
+        tmp_path,
+        AutoBatchConfig(batch_id="sample-A"),
+        input_paths=[source],
+        input_metadata=identity,
+        analysis_runner=_success_runner,
+    )
+
+    assert run.curves[0].metadata["sample_id"] == "sample-A"
+    assert run.curves[0].metadata["frame_index"] == 1
+    assert run.input_manifest[0]["source_relative_path"] == "nested/sample_0001.csv"
+    assert run.config_snapshot["input_identity_overrides"] == identity
+
+
+def test_cancel_after_collection_checkpoint_records_cancelled_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    monkeypatch.setattr(
+        auto_batch,
+        "collect_batch_inputs",
+        lambda input_dir, config: BatchInputCollection(curves=[], manifest=[]),
+    )
+    cancel_values = iter([False, True])
+    cache = tmp_path / "cache"
+
+    run = run_auto_batch(
+        tmp_path,
+        AutoBatchConfig(batch_id="cancel-checkpoint"),
+        cache_dir=cache,
+        cancel_requested=lambda: next(cancel_values),
+    )
+
+    checkpoint = json.loads((cache / "run_checkpoint.json").read_text(encoding="utf-8"))
+    assert run.status == "cancelled"
+    assert checkpoint["status"] == "cancelled"
+
+
 def test_completed_batch_keeps_one_main_model_and_records_three_frame_transition_flags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

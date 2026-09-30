@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "grouping": "auto",
+  "analysis": {
+    "sample_type": "unknown",
+    "enable_shape_models": false,
+    "allow_per_frame_range_fallback": true,
+    "enable_sequence_analysis": true,
+    "enable_range_sensitivity": true,
+    "enable_pr": false,
+    "enable_correlation": false,
+    "enable_kinetics": false,
+    "enable_exploratory_statistics": false
+  },
+  "figures": {
+    "formats": ["png", "svg", "pdf"],
+    "dpi": 200,
+    "max_overlay_curves": 24
+  }
+}

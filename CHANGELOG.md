@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 2026-09-30 - Add unattended multi-sample analysis and complete export bundles
+
+- Added `python -m app.cli methods|discover|run` for Agent operation without Qt, a strict JSON study configuration, recursive discovery, per-sample overrides and sample-isolated analysis/cache/output directories.
+- Connected source copies, Origin long/matrix tables, transformed coordinates/validity flags, full analysis envelopes and audits, numeric parameter evolution, fitted/residual/conditional real-space plots, PNG/SVG/PDF images, and separate data/image ZIP packages with output hashes.
+- Added input/config/metadata fingerprint checks, verified resume, failure-isolated samples, new-destination retries, machine-readable progress/status, and safe cancellation. Original measurements remain read only.
+- Fixed q conversion before range filtering, numeric sample/frame parsing, ambiguous metadata joins and provenance overwrite risks; physical metric units and sequence quality/axis gates now reach exports.
+- Added a Qt-free dependency list, Chinese Agent workflow/config examples and Linux/Windows headless CI jobs.
+- Verification: 645 tests passed (three existing SciPy peak-property warnings); syntax/diff checks passed. A real two-sample CLI fixture exported 150 PNG/SVG/PDF images with matched data, verified all 356 package artifacts and ZIP integrity, retained a deliberately malformed frame, and reused the same outputs on resume.
+- P(r) now requires an explicit Dmax constraint; exploratory parameter evolution gets labeled candidate figures without promoting its scientific status.
+- Fixed the nested-input manifest test to compare path identity portably after Linux CI exposed its Windows-only separator assertion.
+- Scientific limits: reduced/calibrated 1D data only; experimental P(r)/correlation remain assumption-dependent; no validated particle-size-distribution inversion or 2D reduction is claimed. Automated completion does not establish a structure or mechanism.
+
 ## 2026-07-12 13:15:18 +08:00 - Change Log-Log View To Base-10 Coordinates
 
 ### Task Objective

@@ -14,6 +14,7 @@ from dataclasses import asdict, fields
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 
@@ -25,7 +26,7 @@ from app.core.data_model import CurveData
 CACHE_SCHEMA_VERSION = "2"
 # The executable q-range routing and envelope audit contract changed. A new
 # algorithm version prevents old shared-range job results from being restored.
-ANALYSIS_ALGORITHM_VERSION = "4"
+ANALYSIS_ALGORITHM_VERSION = "5"
 
 
 def _json_default(value: Any) -> Any:
@@ -38,6 +39,13 @@ def _json_default(value: Any) -> Any:
     if hasattr(value, "item"):
         return value.item()
     return str(value)
+
+
+def _write_json_atomic(path: Path, payload: Any) -> None:
+    """Leave the last complete cache record intact if writing is interrupted."""
+    temporary = path.with_name(f".{path.name}.{uuid4().hex[:8]}.tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+    temporary.replace(path)
 
 
 def _safe_token(value: object) -> str:
@@ -158,10 +166,7 @@ def save_job_envelopes(cache_dir: str | Path, key: str, envelopes: list[Analysis
     jobs = root / "jobs"
     jobs.mkdir(parents=True, exist_ok=True)
     path = jobs / f"{key}.json"
-    path.write_text(
-        json.dumps([envelope_to_dict(item) for item in envelopes], ensure_ascii=False, indent=2, default=_json_default),
-        encoding="utf-8",
-    )
+    _write_json_atomic(path, [envelope_to_dict(item) for item in envelopes])
     return path
 
 
@@ -242,7 +247,7 @@ def save_run_checkpoint(cache_dir: str | Path, run: AutoBatchRun) -> Path:
         "sequence_results": dict(run.sequence_results or {}),
     }
     path = root / "run_checkpoint.json"
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+    _write_json_atomic(path, payload)
     (root / "CHECKPOINT_README.md").write_text(
         "# Batch compute checkpoint\n\n"
         "This directory stores intermediate analysis results.\n\n"
