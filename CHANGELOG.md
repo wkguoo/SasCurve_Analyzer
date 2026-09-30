@@ -9,6 +9,7 @@
 - Added a Qt-free dependency list, Chinese Agent workflow/config examples and Linux/Windows headless CI jobs.
 - Verification: 645 tests passed (three existing SciPy peak-property warnings); syntax/diff checks passed. A real two-sample CLI fixture exported 150 PNG/SVG/PDF images with matched data, verified all 356 package artifacts and ZIP integrity, retained a deliberately malformed frame, and reused the same outputs on resume.
 - P(r) now requires an explicit Dmax constraint; exploratory parameter evolution gets labeled candidate figures without promoting its scientific status.
+- Fixed the nested-input manifest test to compare path identity portably after Linux CI exposed its Windows-only separator assertion.
 - Scientific limits: reduced/calibrated 1D data only; experimental P(r)/correlation remain assumption-dependent; no validated particle-size-distribution inversion or 2D reduction is claimed. Automated completion does not establish a structure or mechanism.
 
 ## 2026-07-12 13:15:18 +08:00 - Change Log-Log View To Base-10 Coordinates

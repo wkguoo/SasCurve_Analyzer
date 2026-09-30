@@ -150,7 +150,7 @@ def test_explicit_nested_paths_sort_by_relative_path_and_match_full_metadata_key
         "sample_2/curve_0001.csv",
         "sample_10/curve_0001.csv",
     ]
-    assert all(entry["source_path"].endswith(entry["source_relative_path"].replace("/", "\\")) for entry in result.manifest)
+    assert all(Path(entry["source_path"]).relative_to(tmp_path).as_posix() == entry["source_relative_path"] for entry in result.manifest)
 
 
 def test_explicit_nested_paths_do_not_fallback_to_ambiguous_basename(tmp_path: Path) -> None:
