@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.core.batch_import import (
     create_in_situ_group,
     import_in_situ_series,
@@ -26,6 +28,26 @@ def test_parse_sequence_metadata_from_in_situ_filename() -> None:
     assert metadata["frame_index"] == 1
 
 
+def test_parse_sequence_metadata_uses_standalone_frame_token_and_preserves_sample_prefix() -> None:
+    metadata = parse_sequence_metadata("Ti15_800WQ_00001_abs2d.csv")
+    assert metadata["series_id"] == "Ti15_800WQ"
+    assert metadata["frame_index"] == 1
+
+    metadata = parse_sequence_metadata("sample_10.csv")
+    assert metadata["series_id"] == "sample"
+    assert metadata["frame_index"] == 10
+
+    ambiguous = parse_sequence_metadata("Ti15_frame_2_take_3.csv")
+    assert ambiguous["frame_index"] is None
+    assert "multiple standalone" in ambiguous["sequence_parse_warning"]
+
+
+def test_filename_without_standalone_numeric_token_does_not_treat_alloy_digits_as_frame() -> None:
+    metadata = parse_sequence_metadata("Ti15_800WQ_abs2d.csv")
+    assert metadata["frame_index"] is None
+    assert metadata["series_id"] == "Ti15"
+
+
 def test_infer_curve_columns_for_abs_csv() -> None:
     columns = infer_curve_columns(["q_A_inv", "intensity_cm_inv"])
     assert columns.q_column == "q_A_inv"
@@ -33,6 +55,15 @@ def test_infer_curve_columns_for_abs_csv() -> None:
     assert columns.error_column is None
     assert columns.q_unit == "A^-1"
     assert columns.intensity_unit == "cm^-1"
+
+
+def test_generic_header_unit_defaults_are_recorded_as_assumptions(tmp_path) -> None:
+    source = tmp_path / "sample_1.csv"
+    source.write_text("q,I\n0.01,10\n0.02,5\n", encoding="utf-8")
+    result = import_in_situ_series([source])
+    assert result.imported_curves[0].metadata["q_unit_source"] == "default_assumption"
+    assert result.imported_curves[0].metadata["intensity_unit_source"] == "default_assumption"
+    assert any("defaulted" in warning for warning in result.warnings)
 
 
 def test_import_in_situ_series_natural_sorts_and_sets_metadata(tmp_path) -> None:
@@ -89,6 +120,36 @@ def test_import_in_situ_series_applies_same_q_range_to_each_file(tmp_path) -> No
     assert result.import_summary["raw_total_points"] == 8
     assert result.import_summary["imported_total_points"] == 4
     assert result.import_summary["filtered_out_total_points"] == 4
+
+
+def test_import_in_situ_series_converts_source_unit_before_q_filter(tmp_path) -> None:
+    path = tmp_path / "sample_0001.csv"
+    path.write_text(
+        "q_A_inv,intensity\n0.05,10\n0.1,8\n0.2,6\n0.5,4\n0.8,2\n",
+        encoding="utf-8",
+    )
+
+    result = import_in_situ_series(
+        [path],
+        limit_q_range=True,
+        q_min=0.01,
+        q_max=0.05,
+        source_q_unit_override="nm^-1",
+        source_intensity_unit_override="counts",
+        target_q_unit="A^-1",
+    )
+
+    assert result.failed_files == []
+    curve = result.imported_curves[0]
+    assert curve.q.tolist() == pytest.approx([0.01, 0.02, 0.05])
+    assert curve.q_unit == "A^-1"
+    assert curve.intensity_unit == "counts"
+    assert curve.metadata["source_q_unit"] == "nm^-1"
+    assert curve.metadata["q_unit_source"] == "batch_config_override"
+    assert curve.metadata["q_unit_conversion_factor"] == 0.1
+    assert curve.metadata["import_q_range_filter"]["q_min"] == 0.01
+    assert curve.processing_history[1]["action"] == "convert_q_unit"
+    assert curve.processing_history[2]["action"] == "filter_q_range"
 
 
 def test_import_in_situ_series_keeps_other_files_when_q_range_filters_one_file_out(tmp_path) -> None:

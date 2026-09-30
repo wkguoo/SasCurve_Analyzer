@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
-from app.core.analysis_runner import run_registered_analysis, validate_registered_handlers
+from app.core.analysis_runner import metric_unit_label, run_registered_analysis, validate_registered_handlers
 from app.core.auto_batch_schema import (
     AnalysisEnvelope,
     AnalysisStatus,
@@ -830,7 +830,7 @@ def _failure_envelope(
         ParameterValue(
             name=metric.name,
             value=None,
-            unit=metric.unit_role,
+            unit=metric_unit_label(metric.unit_role, curve),
             status=AnalysisStatus.FIT_FAILED,
             invalid_reason=reason,
         )
@@ -869,7 +869,7 @@ def _cancelled_envelope(
             ParameterValue(
                 name=metric.name,
                 value=None,
-                unit=metric.unit_role,
+                unit=metric_unit_label(metric.unit_role, curve),
                 status=AnalysisStatus.CANCELLED,
                 invalid_reason=reason,
             )
@@ -1001,6 +1001,8 @@ def run_auto_batch(
     input_dir: str | Path,
     config: AutoBatchConfig,
     *,
+    input_paths: Sequence[str | Path] | None = None,
+    input_metadata: Mapping[str, Mapping[str, Any]] | None = None,
     progress_callback: Callable[[ProgressEvent], None] | None = None,
     cancel_requested: Callable[[], bool] | None = None,
     analysis_runner: AnalysisRunner | None = None,
@@ -1031,7 +1033,23 @@ def run_auto_batch(
     if _cancel_requested(run, cancel_requested):
         return _finish_cancelled(run)
 
-    collected = collect_batch_inputs(input_dir, config)
+    if input_paths is None and input_metadata is None:
+        # Preserve the legacy two-argument call for existing monkeypatches and
+        # integrations that replace the collector with a two-parameter callable.
+        collected = collect_batch_inputs(input_dir, config)
+    elif input_metadata is None:
+        collected = collect_batch_inputs(input_dir, config, input_paths=input_paths)
+    else:
+        collected = collect_batch_inputs(
+            input_dir,
+            config,
+            input_paths=input_paths,
+            input_metadata=input_metadata,
+        )
+    if input_metadata is not None:
+        run.config_snapshot["input_identity_overrides"] = {
+            path: dict(values) for path, values in input_metadata.items()
+        }
     run.curves = list(collected.curves)
     run.input_manifest = list(collected.manifest)
     run.failed_inputs = list(collected.failed_inputs)
@@ -1068,7 +1086,10 @@ def run_auto_batch(
 
     if _cancel_requested(run, cancel_requested):
         _append_cancelled_jobs(run, jobs)
-        return _finish_cancelled(run)
+        _finish_cancelled(run)
+        if cache_root is not None:
+            save_run_checkpoint(cache_root, run)
+        return run
 
     try:
         raw_consensus = resolve_consensus_regions(run.curves, config)
@@ -1085,7 +1106,10 @@ def run_auto_batch(
 
     if _cancel_requested(run, cancel_requested):
         _append_cancelled_jobs(run, jobs)
-        return _finish_cancelled(run)
+        _finish_cancelled(run)
+        if cache_root is not None:
+            save_run_checkpoint(cache_root, run)
+        return run
 
     total = len(jobs)
     completed = 0
@@ -1093,9 +1117,10 @@ def run_auto_batch(
     for job_index, (curve, method_id) in enumerate(jobs):
         if _cancel_requested(run, cancel_requested):
             _append_cancelled_jobs(run, jobs[job_index:])
+            _finish_cancelled(run)
             if cache_root is not None:
                 save_run_checkpoint(cache_root, run)
-            return _finish_cancelled(run)
+            return run
 
         decision = _range_decision_for_method(run, curve, method_id)
         q_range = decision.q_range
@@ -1156,9 +1181,10 @@ def run_auto_batch(
         )
         if _cancel_requested(run, cancel_requested):
             _append_cancelled_jobs(run, jobs[job_index + 1 :])
+            _finish_cancelled(run)
             if cache_root is not None:
                 save_run_checkpoint(cache_root, run)
-            return _finish_cancelled(run)
+            return run
 
     _link_related_local_features(run)
 

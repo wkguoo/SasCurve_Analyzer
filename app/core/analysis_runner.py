@@ -30,6 +30,7 @@ from app.core.model_free import guinier_analysis, kratky_metrics, local_slope, p
 from app.core.porod_analysis import porod_deep_analysis
 from app.core.pr_analysis import compute_pr
 from app.core.region_scanners import curve_quality_metrics
+from app.core.transforms import normalize_q_unit
 
 
 Handler = Callable[[CurveData, tuple[float, float], AutoBatchConfig], AnalysisResult | list[AnalysisResult]]
@@ -131,6 +132,100 @@ def _shape_metric_values(result: AnalysisResult) -> dict[str, Any]:
     }
 
 
+def _curve_units(curve: CurveData) -> tuple[str, str, str]:
+    """Return canonical q, reciprocal-q length, and source intensity units."""
+
+    raw_q_unit = str(curve.q_unit).strip()
+    try:
+        q_unit = normalize_q_unit(raw_q_unit)
+    except ValueError:
+        q_unit = raw_q_unit or "q"
+    if q_unit == "A^-1":
+        length_unit = "A"
+    elif q_unit == "nm^-1":
+        length_unit = "nm"
+    elif q_unit.endswith("^-1") and len(q_unit) > 3:
+        length_unit = q_unit[:-3]
+    else:
+        length_unit = f"1/({q_unit})"
+    intensity_unit = str(curve.intensity_unit).strip() or "unspecified intensity unit"
+    return q_unit, length_unit, intensity_unit
+
+
+def metric_unit_label(role: str, curve: CurveData) -> str:
+    """Resolve a registry unit role using the curve's declared units."""
+
+    q_unit, length_unit, intensity_unit = _curve_units(curve)
+    q_squared = f"({q_unit})^2"
+    q_intensity = f"({q_unit}) {intensity_unit}"
+    role_units = {
+        "unspecified": "unspecified",
+        "dimensionless": "dimensionless",
+        "count": "count",
+        "rank": "rank",
+        "boolean": "boolean",
+        "text": "text",
+        "q": q_unit,
+        "length": length_unit,
+        "intensity": intensity_unit,
+        "q_squared": q_squared,
+        "q_intensity": q_intensity,
+        "q2_intensity": f"{q_squared} {intensity_unit}",
+        "q3_intensity": f"({q_unit})^3 {intensity_unit}",
+        "q4_intensity": f"({q_unit})^4 {intensity_unit}",
+        "q5_intensity": f"({q_unit})^5 {intensity_unit}",
+        "q_alpha_intensity": f"{intensity_unit}*({q_unit})^alpha",
+        "guinier_slope": f"{length_unit}^2",
+        "intensity_per_length": f"{intensity_unit}/{length_unit}",
+        "log_q_natural": f"dimensionless ln(q numeric value in {q_unit})",
+        "log_q_base10": f"dimensionless log10(q numeric value in {q_unit})",
+        "log_intensity_natural": f"dimensionless ln(I numeric value in {intensity_unit})",
+        "log_intensity_base10": f"dimensionless log10(I numeric value in {intensity_unit})",
+        "log_prefactor": f"dimensionless log10(prefactor [{intensity_unit}*({q_unit})^alpha])",
+        "log_residual": "dimensionless log-intensity residual",
+        "parameter_specific": "parameter-specific; see parameter_records table",
+        "not_estimated": "not estimated",
+    }
+    return role_units.get(role, "unspecified")
+
+
+def _record_unit(result: AnalysisResult, metric_name: str, role: str, curve: CurveData) -> str | None:
+    """Use a matching fit record's concrete unit when it agrees with its role."""
+
+    records = result.results.get("parameter_records")
+    if not isinstance(records, Sequence) or isinstance(records, (str, bytes)):
+        return None
+    expected = metric_unit_label(role, curve)
+    for row in records:
+        if not isinstance(row, Mapping) or str(row.get("name")) != metric_name:
+            continue
+        candidate = row.get("unit")
+        if not isinstance(candidate, str) or not candidate.strip():
+            continue
+        candidate = candidate.strip()
+        if role == "q":
+            try:
+                if normalize_q_unit(candidate) == _curve_units(curve)[0]:
+                    return candidate
+            except ValueError:
+                pass
+        elif role == "length":
+            _, length_unit, _ = _curve_units(curve)
+            aliases = {"A": {"A", "Å", "angstrom", "angstroms"}, "nm": {"nm", "nanometer", "nanometers"}}
+            if candidate == length_unit or candidate in aliases.get(length_unit, set()):
+                return candidate
+        elif candidate.casefold() == expected.casefold():
+            return candidate
+        return None
+    return None
+
+
+def _resolved_metric_unit(result: AnalysisResult, metric_name: str, role: str, curve: CurveData) -> str:
+    if role == "parameter_specific":
+        return metric_unit_label(role, curve)
+    return _record_unit(result, metric_name, role, curve) or metric_unit_label(role, curve)
+
+
 def _metric_value(result: AnalysisResult, method_id: str, metric_name: str) -> Any:
     if method_id == "shape_models":
         return _shape_metric_values(result).get(metric_name)
@@ -141,7 +236,7 @@ def _metric_value(result: AnalysisResult, method_id: str, metric_name: str) -> A
     return None
 
 
-def _parameter_values(result: AnalysisResult, method_id: str) -> list[ParameterValue]:
+def _parameter_values(result: AnalysisResult, method_id: str, curve: CurveData) -> list[ParameterValue]:
     values: list[ParameterValue] = []
     for metric in METHOD_REGISTRY[method_id].metrics:
         raw_value = _native(_metric_value(result, method_id, metric.name))
@@ -159,7 +254,7 @@ def _parameter_values(result: AnalysisResult, method_id: str) -> list[ParameterV
             ParameterValue(
                 name=metric.name,
                 value=raw_value,
-                unit=metric.unit_role,
+                unit=_resolved_metric_unit(result, metric.name, metric.unit_role, curve),
                 status=status,
                 invalid_reason=reason,
             )
@@ -170,7 +265,7 @@ def _parameter_values(result: AnalysisResult, method_id: str) -> list[ParameterV
 def _tables(result: AnalysisResult) -> dict[str, list[dict[str, Any]]]:
     raw_tables = result.results.get("export_tables", {})
     if not isinstance(raw_tables, Mapping):
-        return {}
+        raw_tables = {}
     output: dict[str, list[dict[str, Any]]] = {}
     for name, rows in raw_tables.items():
         if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
@@ -178,6 +273,12 @@ def _tables(result: AnalysisResult) -> dict[str, list[dict[str, Any]]]:
         output[str(name)] = [
             _native(row) if isinstance(row, Mapping) else {"value": _native(row)}
             for row in rows
+        ]
+    parameter_records = result.results.get("parameter_records")
+    if "parameter_records" not in output and isinstance(parameter_records, Sequence) and not isinstance(parameter_records, (str, bytes)):
+        output["parameter_records"] = [
+            _native(row) if isinstance(row, Mapping) else {"value": _native(row)}
+            for row in parameter_records
         ]
     return output
 
@@ -425,7 +526,7 @@ def _envelope_from_result(curve: CurveData, method_id: str, result: AnalysisResu
         analysis_type=method_id,
         status=status,
         q_range=_normalized_q_range(result.q_range),
-        parameters=_parameter_values(result, method_id),
+        parameters=_parameter_values(result, method_id, curve),
         fit_quality=_fit_quality_for_envelope(result),
         tables=_tables(result),
         validity_checks=_native(result.results.get("validity_checks", [])) if isinstance(result.results.get("validity_checks"), list) else [],
@@ -460,7 +561,13 @@ def _blank_envelope(
         status=status,
         q_range=q_range,
         parameters=[
-            ParameterValue(name=metric.name, value=None, unit=metric.unit_role, status=status, invalid_reason=reason)
+            ParameterValue(
+                name=metric.name,
+                value=None,
+                unit=metric_unit_label(metric.unit_role, curve),
+                status=status,
+                invalid_reason=reason,
+            )
             for metric in METHOD_REGISTRY[method_id].metrics
         ],
         reliability_label="invalid" if status in {AnalysisStatus.FIT_FAILED, AnalysisStatus.INVALID} else "low",
@@ -879,14 +986,16 @@ def _run_integrals(curve: CurveData, q_range: tuple[float, float], config: AutoB
     )
 
 
-def _default_dmax(q_range: tuple[float, float]) -> float:
-    q_low, q_high = q_range
-    return float(max(2.0 * math.pi / max(q_low, 1e-12), 4.0 * math.pi / max(q_high, q_low, 1e-12)))
-
-
 def _run_pr(curve: CurveData, q_range: tuple[float, float], config: AutoBatchConfig) -> AnalysisResult:
-    del config
-    return compute_pr(curve, q_range, dmax=_default_dmax(q_range))
+    if config.pr_dmax is None:
+        raise ValueError("A user-supplied pr_dmax is required before P(r) analysis can run.")
+    return compute_pr(
+        curve,
+        q_range,
+        dmax=config.pr_dmax,
+        regularization=config.pr_regularization,
+        r_points=config.pr_r_points,
+    )
 
 
 def _run_correlation(curve: CurveData, q_range: tuple[float, float], config: AutoBatchConfig) -> AnalysisResult:
@@ -986,6 +1095,16 @@ def run_registered_analysis(
                 reason="Method is not applicable to the supplied batch configuration.",
             )
         ]
+    if method_id == "pr" and config.pr_dmax is None:
+        return [
+            _blank_envelope(
+                curve,
+                method_id,
+                _normalized_q_range(q_range),
+                status=AnalysisStatus.MISSING_PREREQUISITE,
+                reason="A user-supplied positive pr_dmax is required before P(r) analysis can run.",
+            )
+        ]
     normalized_range = _normalized_q_range(q_range)
     if normalized_range is None:
         return [
@@ -1017,6 +1136,7 @@ def run_registered_analysis(
 __all__ = [
     "ANALYSIS_HANDLERS",
     "BatchConfigurationError",
+    "metric_unit_label",
     "run_registered_analysis",
     "validate_registered_analysis_handlers",
     "validate_registered_handlers",

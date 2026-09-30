@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from math import isfinite
+from numbers import Integral
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -130,6 +131,9 @@ class AutoBatchConfig:
     pca_components: int = 3
     cluster_count: int = 3
     random_seed: int = 12345
+    pr_dmax: float | None = None
+    pr_regularization: float = 0.01
+    pr_r_points: int = 80
 
     def __post_init__(self) -> None:
         if not self.batch_id.strip():
@@ -167,6 +171,28 @@ class AutoBatchConfig:
             raise ValueError("reference_mode must be first, previous, or selected")
         if self.pca_components < 1 or self.cluster_count < 2:
             raise ValueError("pca_components and cluster_count are invalid")
+        if self.pr_dmax is not None:
+            if isinstance(self.pr_dmax, bool):
+                raise ValueError("pr_dmax must be a positive finite number when supplied")
+            try:
+                self.pr_dmax = float(self.pr_dmax)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("pr_dmax must be a positive finite number when supplied") from exc
+            if not isfinite(self.pr_dmax) or self.pr_dmax <= 0.0:
+                raise ValueError("pr_dmax must be a positive finite number when supplied")
+        if isinstance(self.pr_regularization, bool):
+            raise ValueError("pr_regularization must be a finite non-negative number")
+        try:
+            self.pr_regularization = float(self.pr_regularization)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("pr_regularization must be a finite non-negative number") from exc
+        if not isfinite(self.pr_regularization) or self.pr_regularization < 0.0:
+            raise ValueError("pr_regularization must be a finite non-negative number")
+        if isinstance(self.pr_r_points, bool) or not isinstance(self.pr_r_points, Integral):
+            raise ValueError("pr_r_points must be an integer between 10 and 1000")
+        if not 10 <= self.pr_r_points <= 1000:
+            raise ValueError("pr_r_points must be an integer between 10 and 1000")
+        self.pr_r_points = int(self.pr_r_points)
 
 
 @dataclass

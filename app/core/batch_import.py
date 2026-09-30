@@ -5,9 +5,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+import numpy as np
+import pandas as pd
+
 from app.core.data_model import CurveData, CurveGroup, HistoryRecord
-from app.core.io import load_curve, QImportRangeFilterError, read_table
+from app.core.io import apply_q_import_range_filter, QImportRangeFilterError, read_table
 from app.core.project import ProjectState
+from app.core.transforms import convert_q_unit, normalize_q_unit
 
 
 Q_CANDIDATES = ("q", "Q", "q_A_inv", "q_A^-1", "q_inv_A", "q_nm_inv", "q_nm^-1", "q_inv_nm")
@@ -34,28 +38,34 @@ class BatchImportResult:
 
 
 def natural_sort_key(value: str | Path) -> list[Any]:
-    text = Path(value).name if isinstance(value, Path) else str(value)
+    text = Path(value).as_posix() if isinstance(value, Path) else str(value).replace("\\", "/")
     return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", text)]
 
 
 def parse_sequence_metadata(path: str | Path) -> dict[str, Any]:
     file_path = Path(path)
     stem = file_path.stem
-    match = re.search(r"_(\d+)_", stem)
-    if match is None:
-        match = re.search(r"(\d+)", stem)
-    if match is None:
+    # Numeric frame identifiers are whole underscore-delimited tokens. This
+    # avoids reading alloy names such as Ti15 or unit suffixes such as cm-1 as
+    # frame numbers.
+    matches = list(re.finditer(r"(?<![^_])(\d+)(?=_|$)", stem))
+    if len(matches) != 1:
         series_id = stem.split("_")[0] if "_" in stem else stem
+        warning = None
+        if len(matches) > 1:
+            warning = "multiple standalone numeric tokens found; frame_index was left unset."
         return {
             "series_id": series_id,
             "frame_index": None,
             "frame_label": None,
             "source_stem": stem,
             "import_mode": "batch_in_situ_series",
+            "sequence_parse_warning": warning,
         }
+    match = matches[0]
     frame_label = match.group(1)
     prefix = stem[: match.start()].strip("_")
-    series_id = prefix.split("_")[0] if prefix else stem.split("_")[0]
+    series_id = prefix if prefix else stem[:match.start()].rstrip("_")
     return {
         "series_id": series_id,
         "frame_index": int(frame_label),
@@ -121,6 +131,9 @@ def import_in_situ_series(
     limit_q_range: bool = False,
     q_min: float | None = None,
     q_max: float | None = None,
+    source_q_unit_override: str | None = None,
+    source_intensity_unit_override: str | None = None,
+    target_q_unit: str | None = None,
 ) -> BatchImportResult:
     file_paths = sorted([Path(path) for path in paths], key=natural_sort_key)
     result = BatchImportResult()
@@ -146,22 +159,101 @@ def import_in_situ_series(
                 first_columns = columns
             metadata = parse_sequence_metadata(file_path)
             if metadata["frame_index"] is None:
-                result.warnings.append(f"{file_path.name}: sequence number could not be parsed from file name.")
+                warning = metadata.get("sequence_parse_warning") or "no standalone numeric frame token was found."
+                result.warnings.append(f"{file_path.name}: {warning}")
             metadata["sequence_order"] = sequence_order
             if series_id is None:
                 series_id = metadata.get("series_id")
-            curve = load_curve(
-                file_path,
-                q_column=columns.q_column,
-                intensity_column=columns.intensity_column,
-                error_column=columns.error_column,
+            source_q_unit = source_q_unit_override or columns.q_unit
+            source_intensity_unit = source_intensity_unit_override or columns.intensity_unit
+            canonical_source_q_unit = normalize_q_unit(source_q_unit)
+            destination_q_unit = normalize_q_unit(target_q_unit or canonical_source_q_unit)
+            q_column = pd.to_numeric(df[columns.q_column], errors="coerce").to_numpy(dtype=float)
+            intensity = pd.to_numeric(df[columns.intensity_column], errors="coerce").to_numpy(dtype=float)
+            error = (
+                None
+                if columns.error_column is None
+                else pd.to_numeric(df[columns.error_column], errors="coerce").to_numpy(dtype=float)
+            )
+            if q_column.shape != intensity.shape:
+                raise ValueError("q and intensity columns must have the same length.")
+            if error is not None and error.shape != q_column.shape:
+                raise ValueError("error column must have the same length as q.")
+
+            source_curve = CurveData.create(
                 name=file_path.stem,
-                q_unit=columns.q_unit,
-                intensity_unit=columns.intensity_unit,
+                q=q_column,
+                intensity=intensity,
+                error=error,
+                q_unit=canonical_source_q_unit,
+                intensity_unit=source_intensity_unit,
+                source_file=file_path,
                 metadata=metadata,
+                processing_history=[
+                    {
+                        "action": "import",
+                        "source_file": str(file_path),
+                        "q_column": columns.q_column,
+                        "intensity_column": columns.intensity_column,
+                        "error_column": columns.error_column,
+                    }
+                ],
+            )
+            converted_curve = convert_q_unit(source_curve, destination_q_unit)
+            factor = 1.0 if canonical_source_q_unit == destination_q_unit else (0.1 if canonical_source_q_unit == "nm^-1" else 10.0)
+            metadata.update(
+                {
+                    "source_q_unit": source_q_unit,
+                    "source_intensity_unit": source_intensity_unit,
+                    "q_unit_source": "batch_config_override" if source_q_unit_override else "default_assumption" if _infer_q_unit(columns.q_column)[1] else "column_header",
+                    "intensity_unit_source": "batch_config_override" if source_intensity_unit_override else "default_assumption" if _infer_intensity_unit(columns.intensity_column)[1] else "column_header",
+                    "q_unit_target": destination_q_unit,
+                    "q_unit_conversion_factor": factor,
+                }
+            )
+            q, intensity, error, q_filter_diagnostics = apply_q_import_range_filter(
+                converted_curve.q,
+                converted_curve.intensity,
+                converted_curve.error,
                 limit_q_range=limit_q_range,
                 q_min=q_min,
                 q_max=q_max,
+            )
+            if limit_q_range:
+                metadata["import_q_range_filter"] = {
+                    "enabled": True,
+                    "q_min": q_filter_diagnostics["q_range_filter_min"],
+                    "q_max": q_filter_diagnostics["q_range_filter_max"],
+                    "raw_point_count": q_filter_diagnostics["raw_point_count"],
+                    "finite_qi_point_count": q_filter_diagnostics["finite_qi_point_count"],
+                    "imported_point_count": q_filter_diagnostics["imported_point_count"],
+                    "filtered_out_point_count": q_filter_diagnostics["filtered_out_point_count"],
+                    "q_min_imported": q_filter_diagnostics["q_min_imported"],
+                    "q_max_imported": q_filter_diagnostics["q_max_imported"],
+                }
+                converted_curve.processing_history.append(
+                    {
+                        "action": "filter_q_range",
+                        "q_unit": destination_q_unit,
+                        "q_range_filter_enabled": True,
+                        "q_range_filter_min": q_filter_diagnostics["q_range_filter_min"],
+                        "q_range_filter_max": q_filter_diagnostics["q_range_filter_max"],
+                        "raw_point_count": q_filter_diagnostics["raw_point_count"],
+                        "finite_qi_point_count": q_filter_diagnostics["finite_qi_point_count"],
+                        "imported_point_count": q_filter_diagnostics["imported_point_count"],
+                        "filtered_out_point_count": q_filter_diagnostics["filtered_out_point_count"],
+                    }
+                )
+            curve = CurveData.create(
+                name=file_path.stem,
+                q=q,
+                intensity=intensity,
+                error=error,
+                q_unit=destination_q_unit,
+                intensity_unit=source_intensity_unit,
+                source_file=file_path,
+                metadata=metadata,
+                processing_history=converted_curve.processing_history,
             )
             result.imported_curves.append(curve)
             result.warnings.extend(columns.warnings)
@@ -199,8 +291,10 @@ def import_in_situ_series(
         "q_column": None if first_columns is None else first_columns.q_column,
         "intensity_column": None if first_columns is None else first_columns.intensity_column,
         "error_column": None if first_columns is None else first_columns.error_column,
-        "q_unit": None if first_columns is None else first_columns.q_unit,
-        "intensity_unit": None if first_columns is None else first_columns.intensity_unit,
+        "q_unit": None if not result.imported_curves else result.imported_curves[0].q_unit,
+        "intensity_unit": None if not result.imported_curves else result.imported_curves[0].intensity_unit,
+        "source_q_unit": None if first_columns is None else (source_q_unit_override or first_columns.q_unit),
+        "source_intensity_unit": None if first_columns is None else (source_intensity_unit_override or first_columns.intensity_unit),
         "series_id": series_id,
         "q_range_filter_enabled": bool(limit_q_range),
         "q_range_filter_min": q_min if limit_q_range else None,
