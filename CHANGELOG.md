@@ -5875,3 +5875,9 @@ python scripts\analyze_ti15_first10.py --input-dir "D:\桌面\PostFile\6_sys\SAX
 - power-law 实际执行 log-q 跨度约 `0.0775` decades，小于默认 `0.10` 正式报告门槛，只保留在探索/审计层。
 - shoulder/crossover 在 10 帧中均出现 q 重叠，已关联，不能作为两个独立正式特征。
 - 原始 CSV 未修改；未提交 Git、未推送 GitHub、未自动打包项目。
+# 2026-10-03 — SAXS input uncertainty and result provenance
+
+- Accept beamline mean/absolute-intensity column names; classify series standard deviations and ambiguous std columns without treating them as measured fitting sigma.
+- Preserve nonmeasurement error arrays with aligned q and units in result packages; retain provided sample, acquisition, processing and unit-conversion metadata in summaries.
+- Import preview exposes the uncertainty meaning. Existing measured-error inputs and negative intensities remain supported.
+- See `docs/saxs_input_contract.md` for migration and API declarations.

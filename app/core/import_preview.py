@@ -9,6 +9,7 @@ import pandas as pd
 
 from app.core.batch_import import infer_curve_columns
 from app.core.io import apply_q_import_range_filter, read_table
+from app.core.uncertainty import input_uncertainty_kind
 
 
 @dataclass(frozen=True)
@@ -141,6 +142,7 @@ def preview_curve_file(
             "q_column": q_column,
             "intensity_column": intensity_column,
             "error_column": error_column,
+            "uncertainty_kind": input_uncertainty_kind(error_column, columns),
             "q_unit": q_unit,
             "intensity_unit": intensity_unit,
             "q_min": q_data_min,
@@ -154,6 +156,11 @@ def preview_curve_file(
             "intensity_negative_count": int(np.sum(np.isfinite(intensity) & (intensity < 0))),
         }
     )
+    if diagnostics["uncertainty_kind"] in {"series_std", "unknown"}:
+        messages.append(
+            f"Warning：{error_column} 的含义为 {diagnostics['uncertainty_kind']}，"
+            "保留为源数据，不作为实测误差参与加权拟合。"
+        )
 
     finite_q = q[np.isfinite(q)]
     diagnostics["q_duplicate_count"] = int(finite_q.size - np.unique(finite_q).size)

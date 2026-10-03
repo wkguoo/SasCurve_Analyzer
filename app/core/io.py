@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from app.core.data_model import CurveData
+from app.core.uncertainty import prepare_input_uncertainty
 
 
 COMMENT_PREFIXES = ("#", ";", "//")
@@ -199,6 +200,10 @@ def load_curve(
     )
 
     curve_metadata = dict(metadata or {})
+    actual_error_column = (
+        df.columns[error_column] if isinstance(error_column, int) else error_column
+    )
+    error = prepare_input_uncertainty(error, actual_error_column, df.columns, curve_metadata)
     if limit_q_range:
         curve_metadata["import_q_range_filter"] = {
             "enabled": True,
@@ -244,4 +249,3 @@ def load_curve(
         metadata=curve_metadata,
         processing_history=history,
     )
-

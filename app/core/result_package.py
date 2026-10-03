@@ -106,6 +106,19 @@ def _selected_q_values(values: Any, q_range: tuple[float, float] | None) -> np.n
     return finite[(finite >= q_range[0]) & (finite <= q_range[1])]
 
 
+def _curve_metadata_for_export(metadata: dict[str, Any]) -> dict[str, Any]:
+    # Preserve scientific identity and input semantics without embedding full arrays.
+    fields = (
+        "sample_id", "series_id", "frame_index", "frame_label", "sequence_order",
+        "acquisition_time", "time_s", "source_sha256", "source_relative_path",
+        "processing_branch", "uncertainty_kind", "uncertainty_column",
+        "source_q_unit", "source_intensity_unit", "q_unit_source",
+        "intensity_unit_source", "q_unit_target", "q_unit_conversion_factor",
+        "calibration_status", "calibration_evidence", "import_q_range_filter",
+    )
+    return {key: metadata[key] for key in fields if key in metadata}
+
+
 def _curve_summary_for_export(
     curve: Any,
     effective_q_range: tuple[float, float] | None = None,
@@ -126,6 +139,7 @@ def _curve_summary_for_export(
             "q_min": None if selected_q.size == 0 else float(np.min(selected_q)),
             "q_max": None if selected_q.size == 0 else float(np.max(selected_q)),
             "has_error": curve.error is not None,
+            "metadata": _curve_metadata_for_export(curve.metadata),
         }
         if effective_q_range is not None:
             summary["effective_q_range"] = list(effective_q_range)
@@ -154,6 +168,7 @@ def _curve_summary_for_export(
             summary["q_min"] = None if selected_q.size == 0 else float(np.min(selected_q))
             summary["q_max"] = None if selected_q.size == 0 else float(np.max(selected_q))
             summary["has_error"] = curve.get("error") is not None
+        summary["metadata"] = _curve_metadata_for_export(curve.get("metadata") or {})
         if effective_q_range is not None:
             summary["effective_q_range"] = list(effective_q_range)
         return summary
@@ -246,12 +261,34 @@ def _run_summary_payload(run: AutoBatchRun) -> dict[str, Any]:
     return payload
 
 
+def _curve_context_by_id(run: AutoBatchRun) -> dict[str, dict[str, Any]]:
+    result = {}
+    for curve in run.curves:
+        if isinstance(curve, CurveData):
+            cid, q_unit, intensity_unit = curve.curve_id, curve.q_unit, curve.intensity_unit
+            metadata = curve.metadata
+        elif isinstance(curve, dict):
+            cid, q_unit, intensity_unit = curve.get("curve_id"), curve.get("q_unit"), curve.get("intensity_unit")
+            metadata = curve.get("metadata") or {}
+        else:
+            continue
+        result[str(cid)] = {
+            "q_unit": q_unit,
+            "intensity_unit": intensity_unit,
+            "uncertainty_kind": metadata.get("uncertainty_kind", "unknown"),
+            "processing_branch": metadata.get("processing_branch"),
+        }
+    return result
+
+
 def _parameter_rows(run: AutoBatchRun) -> list[dict[str, Any]]:
+    contexts = _curve_context_by_id(run)
     rows = []
     for envelope in run.analyses:
         for parameter in envelope.parameters:
             row = {
                 "curve_id": envelope.curve_id,
+                **contexts.get(envelope.curve_id, {}),
                 "curve_name": envelope.curve_name,
                 "analysis_id": envelope.analysis_id,
                 "analysis_type": envelope.analysis_type,
@@ -282,9 +319,11 @@ def _parameter_rows(run: AutoBatchRun) -> list[dict[str, Any]]:
 
 
 def _fit_quality_rows(run: AutoBatchRun) -> list[dict[str, Any]]:
+    contexts = _curve_context_by_id(run)
     return [
         {
             "curve_id": item.curve_id,
+            **contexts.get(item.curve_id, {}),
             "curve_name": item.curve_name,
             "analysis_id": item.analysis_id,
             "analysis_type": item.analysis_type,
@@ -451,6 +490,7 @@ def export_result_package(
     tables_dir = details_dir / "analysis_tables"
     tables_dir.mkdir()
     table_index = []
+    curve_contexts = _curve_context_by_id(run)
     if detail_level != "none":
         for envelope in run.analyses:
             if detail_level == "usable" and not _is_usable_envelope(envelope.status):
@@ -466,15 +506,40 @@ def export_result_package(
                 table_index.append(
                     {
                         "curve_id": envelope.curve_id,
+                        **curve_contexts.get(envelope.curve_id, {}),
                         "analysis_id": envelope.analysis_id,
                         "analysis_type": envelope.analysis_type,
                         "analysis_status": envelope.status.value,
                         "table_name": table_name,
                         "file": f"details/analysis_tables/{filename}",
                         "row_count": len(filtered_rows),
+                        "q_start": None if envelope.q_range is None else envelope.q_range[0],
+                        "q_end": None if envelope.q_range is None else envelope.q_range[1],
                     }
                 )
     _write_csv(audit_dir / "analysis_tables_index.csv", table_index)
+    uncertainty_dir = details_dir / "input_uncertainties"
+    uncertainty_index = []
+    for curve in run.curves:
+        metadata = curve.metadata if isinstance(curve, CurveData) else curve.get("metadata", {})
+        preserved = metadata.get("non_measurement_error") or {}
+        values = preserved.get("values")
+        if values is None:
+            continue
+        q = curve.q if isinstance(curve, CurveData) else curve.get("q", [])
+        cid = curve.curve_id if isinstance(curve, CurveData) else curve.get("curve_id")
+        q_unit = curve.q_unit if isinstance(curve, CurveData) else curve.get("q_unit")
+        if len(q) != len(values):
+            raise ValueError(f"Nonmeasurement uncertainty length mismatch for curve {cid}")
+        uncertainty_dir.mkdir(exist_ok=True)
+        filename = sha1(str(cid).encode("utf-8")).hexdigest()[:16] + ".csv"
+        rows = [{"q": float(x), "q_unit": q_unit, "value": value,
+                 "uncertainty_kind": preserved.get("kind"), "source_column": preserved.get("column")}
+                for x, value in zip(q, values)]
+        _write_csv(uncertainty_dir / filename, rows)
+        uncertainty_index.append({"curve_id": cid, "file": f"details/input_uncertainties/{filename}",
+                                  "uncertainty_kind": preserved.get("kind"), "row_count": len(rows)})
+    _write_csv(audit_dir / "input_uncertainties_index.csv", uncertainty_index)
 
     (summary_dir / "README.md").write_text(
         "# summary — 建议首先阅读\n\n"
@@ -498,6 +563,7 @@ def export_result_package(
         "- `range_audit.csv` / `consensus_regions.csv`：逐任务区间来源、候选/共识状态及证据\n"
         "- `warnings.csv` / `failed_inputs.csv`\n"
         "- `analysis_tables_index.csv`：明细表索引\n"
+        "- `input_uncertainties_index.csv`：帧间标准差或未知误差列的来源表，不能作为实测 sigma\n"
         "- 非空 `sequence_*.csv`：原位序列审计\n",
         encoding="utf-8",
     )
@@ -506,6 +572,7 @@ def export_result_package(
         f"- detail_level: `{detail_level}`\n"
         "- `slim`：仅导出非空、有效 q 范围内的不变量积分明细。\n"
         "- `usable`：导出 success / assumption_dependent 的非空明细表。\n"
+        "- `input_uncertainties/`：保留非实测误差列与对应 q、单位及列含义。\n"
         "- 使用 `detail_level='all'` 可导出全部方法明细。\n",
         encoding="utf-8",
     )
