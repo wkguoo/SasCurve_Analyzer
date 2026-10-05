@@ -1,5 +1,6 @@
 from scripts.select_tests import select_tests
 import scripts.select_tests as selection
+import pytest
 
 
 def test_documentation_only_requires_no_runtime_suite():
@@ -50,6 +51,37 @@ def test_ci_reuses_plan_without_git_and_propagates_test_failure(monkeypatch):
     monkeypatch.setattr(selection.subprocess, "run", run)
     assert selection.main() == 7
     assert calls == [[selection.sys.executable, "-m", "pytest", "-q", "tests/test_io.py"]]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected_tests", "expected_bases"),
+    [
+        (["--full"], ["tests"], []),
+        (["--base", ""], ["tests"], []),
+        (["app/core/import_preview.py"],
+         ["tests/test_import_preview.py", "tests/test_ui_safety.py"], []),
+        (["--base", "review-base"],
+         ["tests/test_ui_safety.py", "tests/test_ui_style.py"], ["review-base"]),
+    ],
+)
+@pytest.mark.parametrize("saved_path", ["README.md", "app/core/settings.py"])
+def test_explicit_scope_overrides_saved_ci_plan(monkeypatch, arguments, expected_tests, expected_bases, saved_path):
+    import json
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("SAS_TEST_PLAN", json.dumps(select_tests([saved_path])))
+    monkeypatch.setattr(selection.sys, "argv", ["select_tests.py", "--run", *arguments])
+    bases, calls = [], []
+
+    def changed_paths(base):
+        bases.append(base)
+        return ["app/ui/style.py"]
+
+    monkeypatch.setattr(selection, "changed_paths", changed_paths)
+    monkeypatch.setattr(selection.subprocess, "run", lambda command, **kwargs: calls.append(command) or SimpleNamespace(returncode=0))
+    assert selection.main() == 0
+    assert bases == expected_bases
+    assert calls == [[selection.sys.executable, "-m", "pytest", "-q", *expected_tests]]
 
 
 def test_headless_ci_runs_only_the_saved_qt_free_scope(monkeypatch):

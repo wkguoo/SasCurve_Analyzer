@@ -71,11 +71,11 @@ def main() -> int:
     parser.add_argument("--headless", action="store_true", help="Run the Qt-free subset of a full plan")
     parser.add_argument("--github-output", type=Path, help="Write the plan for downstream CI jobs")
     args = parser.parse_args()
-    if args.run and os.environ.get("SAS_TEST_PLAN"):
-        plan = json.loads(os.environ["SAS_TEST_PLAN"])
-    elif args.full or (args.base is not None and not args.base.strip("0")):
+    if args.full or (args.base is not None and not args.base.strip("0")):
         plan = select_tests(["requirements.txt"])
         plan["reason"] = "Explicit full check or no comparable Git base"
+    elif args.run and not args.paths and args.base is None and os.environ.get("SAS_TEST_PLAN"):
+        plan = json.loads(os.environ["SAS_TEST_PLAN"])
     else:
         plan = select_tests(args.paths if args.paths else changed_paths(args.base))
     encoded = json.dumps(plan, separators=(",", ":"))

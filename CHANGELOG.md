@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-10-05 - Bind parsed study data to source snapshots after final review
+
+- Fixed a reproduced Windows transient-edit regression: cached parsed intensities could differ from the restored source while all later source hashes passed. Raw-table parsing now records the SHA-256 of the exact bytes read; study reuse verifies it against the initial snapshot and stops the affected sample before analysis/publication on mismatch. Study workflow version 2 rejects legacy packages lacking this verification; retain them and run into a new output directory.
+- q-domain preview now uses the existing curve importer with the same units and filtering, without building an unused input manifest. The four-frame fixture uses **16 source reads**, down from 20 in the first optimization and 24 originally; it still parses four curves and exports 174 artifacts.
+- Explicit test paths, `--base` and `--full` override a saved CI plan, preventing a stale documentation-only or targeted plan from silently skipping requested checks. Ordinary CI jobs continue reusing their one computed plan.
+- Verification: 679 integrated tests passed with the same three existing SciPy warnings; after updating the study version, all 29 study checks passed, including legacy-resume refusal before writes. The actual transient-edit study now stops before analysis and publishes no package; a normal guarded study exports the measured arrays and matching source copies. The self-cleaning workflow benchmark retains preview/import and resume savings. Review details are in `docs/developer_notes.md`.
+
 ## 2026-10-05 - Reduce repeated agent and curve-processing work
 
 - Replaced the fixed startup/full-check template with task-based documentation routes and a small, conservative test selector shared by local work and CI. Documentation changes need no runtime suite; mapped leaves run core/consumer tests; shared or unmapped changes retain full and cross-platform headless checks. Restored pytest's native cache and limited default collection to `tests/`.

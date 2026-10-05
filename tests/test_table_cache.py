@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from io import StringIO
 from pathlib import Path
 
@@ -117,10 +118,35 @@ def test_changed_parser_is_not_treated_as_equivalent_evidence(tmp_path):
     assert cache.read(path).loc[0, "I"] == 10
 
 
+def test_snapshot_guard_rejects_changed_bytes_even_with_unchanged_signature(tmp_path, monkeypatch):
+    path = _file(tmp_path / "curve.csv")
+    content = path.read_bytes()
+    signature = io.TableReadCache._signature(path)
+    cache = io.TableReadCache(expected_hashes={path: sha256(content).hexdigest()})
+    monkeypatch.setattr(io.TableReadCache, "_signature", staticmethod(lambda _path: signature))
+    _file(path, intensity=20)
+    assert path.stat().st_size == len(content)
+    with pytest.raises(io.SourceSnapshotError, match="source snapshot"):
+        cache.read(path)
+    path.write_bytes(content)
+    assert cache.read(path).loc[0, "I"] == 10  # Failed parses never enter the cache.
+
+
+def test_snapshot_guard_requires_known_source_and_parser_byte_provenance(tmp_path):
+    path = _file(tmp_path / "curve.csv")
+    cache = io.TableReadCache(expected_hashes={path: sha256(path.read_bytes()).hexdigest()})
+    with pytest.raises(io.SourceSnapshotError, match="source snapshot"):
+        cache.read(path, lambda _path: io.pd.DataFrame({"q": [0.01], "I": [10]}))
+    unknown = _file(tmp_path / "unplanned.csv")
+    with pytest.raises(io.SourceSnapshotError, match="source snapshot"):
+        cache.read(unknown)
+
+
 @pytest.mark.parametrize("encoding", ["utf-8-sig", "gbk", "utf-16"])
 def test_encoding_fallback_reads_source_bytes_once(tmp_path, monkeypatch, encoding):
     path = tmp_path / "curve.csv"
-    path.write_bytes("# 样品\r\nq,I\r\n0.01,10\r\n0.02,5\r\n".encode(encoding))
+    content = "# 样品\r\nq,I\r\n0.01,10\r\n0.02,5\r\n".encode(encoding)
+    path.write_bytes(content)
     opens = []
     original = Path.open
 
@@ -130,7 +156,8 @@ def test_encoding_fallback_reads_source_bytes_once(tmp_path, monkeypatch, encodi
         return original(source, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", opened)
-    curve = io.load_curve(path)
+    cache = io.TableReadCache(expected_hashes={path: sha256(content).hexdigest()})
+    curve = io.load_curve(path, table_cache=cache)
     np.testing.assert_allclose(curve.intensity, [10, 5])
     assert len(opens) == 1
 

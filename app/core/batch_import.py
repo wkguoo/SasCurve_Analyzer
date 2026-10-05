@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from app.core.data_model import CurveData, CurveGroup, HistoryRecord
-from app.core.io import apply_q_import_range_filter, QImportRangeFilterError, read_table, TableReadCache
+from app.core.io import apply_q_import_range_filter, QImportRangeFilterError, read_table, TableReadCache, SourceSnapshotError
 from app.core.project import ProjectState
 from app.core.transforms import convert_q_unit, normalize_q_unit
 
@@ -282,6 +282,8 @@ def import_in_situ_series(
                     "filtered_out_point_count": str(diagnostics.get("filtered_out_point_count")),
                 }
             )
+        except SourceSnapshotError:
+            raise  # A changed study source must stop publication, not drop one frame.
         except Exception as exc:
             result.failed_files.append({"file": file_path.name, "error": str(exc)})
 

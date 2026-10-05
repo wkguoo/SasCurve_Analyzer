@@ -21,7 +21,8 @@ in `app/core/`, widgets in `app/ui/`, tests in `tests/`.
   values. Derived data must not mutate sources. Experimental/model-dependent
   results retain their applicability and reporting gates.
 - Reuse raw parsed tables only within their explicit cache lifetime and file
-  signature. Keep content hashes at publication and cross-run reuse boundaries.
+  signature; study parses must match the existing source snapshot. Keep content
+  hashes at publication and cross-run reuse boundaries.
 - Keep private data, generated studies, `.tmp/`, environments and credentials
   out of Git. Preserve unrelated changes and active worktrees.
 - Follow existing Python style: four spaces, snake_case, PascalCase, useful type

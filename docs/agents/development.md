@@ -23,6 +23,9 @@ not scan or parse application files. `--base <revision>` compares a committed
 change. `--run` runs the selected tests once. Use the available Python environment;
 on Windows `py -3.13`/`py -3.12` may replace `python`.
 
+CI jobs reuse `SAS_TEST_PLAN` only when no paths, `--base` or `--full` are supplied.
+An explicit scope always takes precedence over that saved plan.
+
 | Evidence / change | Sufficient starting check | Expand when |
 | --- | --- | --- |
 | Documentation/instructions only | Review text, local links and diff | An executable example or runtime contract changed |

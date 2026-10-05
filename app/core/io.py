@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from hashlib import sha256
 from io import StringIO
 from pathlib import Path
 from typing import Any, Callable
@@ -13,6 +14,7 @@ from app.core.data_model import CurveData
 
 COMMENT_PREFIXES = ("#", ";", "//")
 TEXT_ENCODINGS = ("utf-8-sig", "utf-8", "gbk", "utf-16")
+_SOURCE_HASH_ATTR = "_source_sha256"
 
 
 class QImportRangeFilterError(ValueError):
@@ -23,9 +25,16 @@ class QImportRangeFilterError(ValueError):
         self.diagnostics = dict(diagnostics)
 
 
+class SourceSnapshotError(ValueError):
+    """Parsed source bytes could not be verified against a study snapshot."""
+
+
 def read_text_with_encoding_fallback(path: str | Path) -> tuple[str, str]:
     file_path = Path(path)
-    content = file_path.read_bytes()
+    return _decode_text_with_encoding_fallback(file_path.read_bytes(), file_path)
+
+
+def _decode_text_with_encoding_fallback(content: bytes, file_path: Path) -> tuple[str, str]:
     errors: list[str] = []
     for encoding in TEXT_ENCODINGS:
         try:
@@ -38,9 +47,10 @@ def read_text_with_encoding_fallback(path: str | Path) -> tuple[str, str]:
     raise UnicodeError(f"Could not decode {file_path} with supported encodings: {tried}. Details: {' | '.join(errors)}")
 
 
-def _read_text_without_comments(path: Path) -> str:
+def _read_text_without_comments(path: Path) -> tuple[str, str]:
     kept_lines: list[str] = []
-    text, _encoding = read_text_with_encoding_fallback(path)
+    content = path.read_bytes()
+    text, _encoding = _decode_text_with_encoding_fallback(content, path)
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
@@ -48,15 +58,17 @@ def _read_text_without_comments(path: Path) -> str:
         if any(stripped.startswith(prefix) for prefix in COMMENT_PREFIXES):
             continue
         kept_lines.append(line)
-    return "\n".join(kept_lines)
+    return "\n".join(kept_lines), sha256(content).hexdigest()
 
 
 def read_table(path: str | Path) -> pd.DataFrame:
     file_path = Path(path)
-    text = _read_text_without_comments(file_path)
+    text, source_hash = _read_text_without_comments(file_path)
     if not text.strip():
         raise ValueError(f"No tabular data found in {file_path}")
-    return pd.read_csv(StringIO(text), sep=r"[,\t ]+", engine="python")
+    table = pd.read_csv(StringIO(text), sep=r"[,\t ]+", engine="python")
+    table.attrs[_SOURCE_HASH_ATTR] = source_hash
+    return table
 
 
 class TableReadCache:
@@ -64,14 +76,21 @@ class TableReadCache:
 
     File signatures avoid another read during one task/window. They do not
     replace source/output content hashes at publication or cross-run reuse.
+    Optional snapshot hashes authenticate the exact bytes of each parsed table.
     Consumers receive copies, so mapping/filtering cannot pollute later reads.
     """
 
-    def __init__(self, max_entries: int = 32, max_bytes: int = 64 * 1024 * 1024) -> None:
+    def __init__(
+        self, max_entries: int = 32, max_bytes: int = 64 * 1024 * 1024,
+        *, expected_hashes: dict[Path, str] | None = None,
+    ) -> None:
         if max_entries < 1 or max_bytes < 1:
             raise ValueError("Table cache limits must be positive")
         self.max_entries = max_entries
         self.max_bytes = max_bytes
+        self._expected_hashes = None if expected_hashes is None else {
+            Path(path).resolve(): digest for path, digest in expected_hashes.items()
+        }
         self._entries: OrderedDict[Path, tuple[tuple[int, ...], pd.DataFrame, int, Callable]] = OrderedDict()
         self._bytes = 0
 
@@ -95,6 +114,10 @@ class TableReadCache:
                 return cached[1].copy(deep=True)
             self._bytes -= cached[2]
         table = parser(source)
+        if self._expected_hashes is not None:
+            expected = self._expected_hashes.get(source)
+            if expected is None or table.attrs.get(_SOURCE_HASH_ATTR) != expected:
+                raise SourceSnapshotError(f"Parsed bytes do not match the source snapshot: {source}")
         size = int(table.memory_usage(index=True, deep=True).sum())
         # Do not reuse a partial read if a writer changed the file while parsing.
         if self._signature(source) == signature and size <= self.max_bytes:
