@@ -15,14 +15,15 @@ import pandas as pd
 
 from app.core.auto_batch import run_auto_batch
 from app.core.auto_batch_schema import AutoBatchConfig, ProgressEvent
-from app.core.batch_import import natural_sort_key, parse_sequence_metadata
-from app.core.batch_inputs import SUPPORTED_CURVE_EXTENSIONS, collect_batch_inputs, sha256_file
+from app.core.batch_import import natural_sort_key, parse_sequence_metadata, import_in_situ_series
+from app.core.batch_inputs import SUPPORTED_CURVE_EXTENSIONS, sha256_file
 from app.core.batch_cache import ANALYSIS_ALGORITHM_VERSION, CACHE_SCHEMA_VERSION, SOFTWARE_VERSION
 from app.core.analysis_preflight import check_analysis_preflight
 from app.core.data_model import utc_now_iso
 from app.core.shape_models import MODEL_SPECS
 from app.core.transforms import normalize_q_unit
 from app.core.unit_checks import validate_compatible_curve_units
+from app.core.io import TableReadCache
 
 
 @dataclass(frozen=True)
@@ -233,7 +234,7 @@ def _snapshot(samples: list[SampleInput], root: Path, config: dict[str, Any]) ->
     metadata = [{"path": path, "sha256": sha256_file(path)} for path in sidecars]
     return {"input_root": str(root), "config": config, "inputs": inputs, "metadata": metadata,
             "software_version": SOFTWARE_VERSION, "algorithm_version": ANALYSIS_ALGORITHM_VERSION,
-            "cache_schema_version": CACHE_SCHEMA_VERSION, "study_algorithm_version": 1}
+            "cache_schema_version": CACHE_SCHEMA_VERSION, "study_algorithm_version": 2}
 
 
 def _output_inventory(root: Path) -> list[dict[str, Any]]:
@@ -252,18 +253,27 @@ def _verify_inventory(root: Path, inventory: list[dict[str, Any]]) -> bool:
     return True
 
 
-def _resolve_sample_config(sample: SampleInput, root: Path, settings: dict[str, Any]) -> AutoBatchConfig:
+def _resolve_sample_config(
+    sample: SampleInput, root: Path, settings: dict[str, Any],
+    table_cache: TableReadCache | None = None,
+) -> AutoBatchConfig:
     values = {**settings.get("analysis", {}), **settings.get("samples", {}).get(sample.sample_id, {})}
     config = _analysis_config(values, sample.sample_id)
     # Preview full measured data once to choose a shared domain, not an arbitrary
     # fixed window. Every per-sample integral then has the same q limits.
-    preview = collect_batch_inputs(root, replace(config, effective_q_range=(0.0, float(np.finfo(float).max))), input_paths=sample.files)
-    if not preview.curves:
+    preview = import_in_situ_series(
+        sample.files, limit_q_range=True, q_min=0.0, q_max=float(np.finfo(float).max),
+        source_q_unit_override=config.q_unit_override,
+        source_intensity_unit_override=config.intensity_unit_override,
+        target_q_unit="A^-1",
+        **({"table_cache": table_cache} if table_cache is not None else {}),
+    )
+    if not preview.imported_curves:
         return config  # runner exports all import failures in an auditable package
-    validate_compatible_curve_units(preview.curves, operation="sample study")
+    validate_compatible_curve_units(preview.imported_curves, operation="sample study")
     if "effective_q_range" not in values:
         bounds = []
-        for curve in preview.curves:
+        for curve in preview.imported_curves:
             valid = np.isfinite(curve.q) & np.isfinite(curve.intensity) & (curve.q > 0)
             if np.count_nonzero(valid) >= 2:
                 bounds.append((float(np.min(curve.q[valid])), float(np.max(curve.q[valid]))))
@@ -372,9 +382,7 @@ def run_study(
     for sample in samples:
         previous = state["samples"].get(sample.sample_id, {})
         if previous.get("package") and previous.get("status") != "cancelled" and not (retry_failed and previous.get("status") in {"failed", "partial_success"}):
-            package = (target / previous["package"]).resolve()
-            if not package.is_relative_to(target) or not _verify_inventory(package, previous.get("output_inventory", [])):
-                raise ValueError(f"Completed sample artifacts changed: {sample.sample_id}; use a new destination")
+            # All previous packages were content-verified above, before writes.
             if progress_callback:
                 progress_callback({"sample_id": sample.sample_id, "operation": "resume_verified", "status": previous["status"]})
             continue
@@ -391,15 +399,22 @@ def run_study(
         state["samples"][sample.sample_id] = record
         write_json_atomic(checkpoint, state)
         try:
-            sample_config = _resolve_sample_config(sample, root, settings)
+            expected = {row["source_file"]: row["sha256"] for row in snapshot["inputs"] if row["sample_id"] == sample.sample_id}
+            table_cache = TableReadCache(
+                max_entries=len(sample.files),
+                expected_hashes={root / path: digest for path, digest in expected.items()},
+            )
             def progress(event: ProgressEvent) -> None:
                 if progress_callback:
                     progress_callback({"sample_id": sample.sample_id, **asdict(event)})
-            run = run_auto_batch(root, sample_config, input_paths=sample.files, input_metadata=_input_metadata(sample, root, settings), cache_dir=target / ".cache" / _sample_directory(sample.sample_id), cancel_requested=cancel_requested, progress_callback=progress)
+            try:
+                sample_config = _resolve_sample_config(sample, root, settings, table_cache)
+                run = run_auto_batch(root, sample_config, input_paths=sample.files, input_metadata=_input_metadata(sample, root, settings), cache_dir=target / ".cache" / _sample_directory(sample.sample_id), cancel_requested=cancel_requested, progress_callback=progress, table_cache=table_cache)
+            finally:
+                table_cache.clear()
             run.config_snapshot["study_identity_source"] = sample.identity_source
             run.config_snapshot["planned_frames"] = _planned_frames(sample, root, settings, sample_config)
             run.config_snapshot["batch_preflight_audit"] = _preflight_rows(run)
-            expected = {row["source_file"]: row["sha256"] for row in snapshot["inputs"] if row["sample_id"] == sample.sample_id}
             if any(sha256_file(path) != expected[path.relative_to(root).as_posix()] for path in sample.files):
                 raise ValueError("Source data changed during analysis; result not published")
             for row in run.input_manifest:

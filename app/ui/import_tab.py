@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 
 from app.core.batch_import import create_in_situ_group, import_in_situ_series, infer_curve_columns
 from app.core.import_preview import format_import_preview, preview_curve_file
-from app.core.io import load_curve
+from app.core.io import load_curve, TableReadCache
 from app.core.records import create_history_record
 from app.core.transforms import convert_q_unit
 from app.core.user_messages import exception_detail, format_user_message, UserMessage
@@ -30,6 +30,7 @@ class ImportTab(QWidget):
         super().__init__()
         self.main_window = main_window
         self.selected_file: Path | None = None
+        self._table_cache = TableReadCache(max_entries=1)
 
         self.file_label = QLabel("未选择文件")
         self.file_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
@@ -225,8 +226,15 @@ class ImportTab(QWidget):
         if path:
             self.selected_file = Path(path)
             self._display_selected_file(self.selected_file)
-            self._auto_detect_columns(self.selected_file)
-            self.refresh_import_preview()
+            # Reuse only within this synchronous selection action. A later
+            # refresh/import must observe current bytes, even on filesystems
+            # whose stat timestamps do not identify every content change.
+            self._table_cache.clear()
+            try:
+                self._auto_detect_columns(self.selected_file)
+                self._render_import_preview(table_cache=self._table_cache)
+            finally:
+                self._table_cache.clear()
 
     def _display_selected_file(self, path: Path) -> None:
         self.file_label.setText(path.name)
@@ -240,7 +248,7 @@ class ImportTab(QWidget):
         try:
             from app.core.io import read_table
 
-            columns = infer_curve_columns(read_table(path).columns)
+            columns = infer_curve_columns(self._table_cache.read(path, read_table).columns)
         except Exception as exc:
             self.log.append(
                 format_user_message(
@@ -268,6 +276,9 @@ class ImportTab(QWidget):
         )
 
     def refresh_import_preview(self) -> None:
+        self._render_import_preview()
+
+    def _render_import_preview(self, table_cache: TableReadCache | None = None) -> None:
         if self.selected_file is None:
             self.preview_output.setPlainText("请先选择 csv、txt 或 dat 文件。")
             return
@@ -283,6 +294,7 @@ class ImportTab(QWidget):
             limit_q_range=limit_q_range,
             q_min=q_min,
             q_max=q_max,
+            table_cache=table_cache,
         )
         self.preview_output.setPlainText(format_import_preview(preview))
 

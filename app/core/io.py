@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections import OrderedDict
+from hashlib import sha256
 from io import StringIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -13,6 +15,7 @@ from app.core.uncertainty import prepare_input_uncertainty
 
 COMMENT_PREFIXES = ("#", ";", "//")
 TEXT_ENCODINGS = ("utf-8-sig", "utf-8", "gbk", "utf-16")
+_SOURCE_HASH_ATTR = "_source_sha256"
 
 
 class QImportRangeFilterError(ValueError):
@@ -23,21 +26,32 @@ class QImportRangeFilterError(ValueError):
         self.diagnostics = dict(diagnostics)
 
 
+class SourceSnapshotError(ValueError):
+    """Parsed source bytes could not be verified against a study snapshot."""
+
+
 def read_text_with_encoding_fallback(path: str | Path) -> tuple[str, str]:
     file_path = Path(path)
+    return _decode_text_with_encoding_fallback(file_path.read_bytes(), file_path)
+
+
+def _decode_text_with_encoding_fallback(content: bytes, file_path: Path) -> tuple[str, str]:
     errors: list[str] = []
     for encoding in TEXT_ENCODINGS:
         try:
-            return file_path.read_text(encoding=encoding), encoding
+            # Match text-mode universal newlines while decoding the same bytes.
+            text = content.decode(encoding).replace("\r\n", "\n").replace("\r", "\n")
+            return text, encoding
         except UnicodeError as exc:
             errors.append(f"{encoding}: {exc}")
     tried = ", ".join(TEXT_ENCODINGS)
     raise UnicodeError(f"Could not decode {file_path} with supported encodings: {tried}. Details: {' | '.join(errors)}")
 
 
-def _read_text_without_comments(path: Path) -> str:
+def _read_text_without_comments(path: Path) -> tuple[str, str]:
     kept_lines: list[str] = []
-    text, _encoding = read_text_with_encoding_fallback(path)
+    content = path.read_bytes()
+    text, _encoding = _decode_text_with_encoding_fallback(content, path)
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
@@ -45,15 +59,76 @@ def _read_text_without_comments(path: Path) -> str:
         if any(stripped.startswith(prefix) for prefix in COMMENT_PREFIXES):
             continue
         kept_lines.append(line)
-    return "\n".join(kept_lines)
+    return "\n".join(kept_lines), sha256(content).hexdigest()
 
 
 def read_table(path: str | Path) -> pd.DataFrame:
     file_path = Path(path)
-    text = _read_text_without_comments(file_path)
+    text, source_hash = _read_text_without_comments(file_path)
     if not text.strip():
         raise ValueError(f"No tabular data found in {file_path}")
-    return pd.read_csv(StringIO(text), sep=r"[,\t ]+", engine="python")
+    table = pd.read_csv(StringIO(text), sep=r"[,\t ]+", engine="python")
+    table.attrs[_SOURCE_HASH_ATTR] = source_hash
+    return table
+
+
+class TableReadCache:
+    """Bounded, explicitly owned reuse of successful raw table parses.
+
+    File signatures avoid another read during one task/window. They do not
+    replace source/output content hashes at publication or cross-run reuse.
+    Optional snapshot hashes authenticate the exact bytes of each parsed table.
+    Consumers receive copies, so mapping/filtering cannot pollute later reads.
+    """
+
+    def __init__(
+        self, max_entries: int = 32, max_bytes: int = 64 * 1024 * 1024,
+        *, expected_hashes: dict[Path, str] | None = None,
+    ) -> None:
+        if max_entries < 1 or max_bytes < 1:
+            raise ValueError("Table cache limits must be positive")
+        self.max_entries = max_entries
+        self.max_bytes = max_bytes
+        self._expected_hashes = None if expected_hashes is None else {
+            Path(path).resolve(): digest for path, digest in expected_hashes.items()
+        }
+        self._entries: OrderedDict[Path, tuple[tuple[int, ...], pd.DataFrame, int, Callable]] = OrderedDict()
+        self._bytes = 0
+
+    @staticmethod
+    def _signature(path: Path) -> tuple[int, ...]:
+        stat = path.stat()
+        return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+    def clear(self) -> None:
+        self._entries.clear()
+        self._bytes = 0
+
+    def read(self, path: str | Path, loader: Callable[[Path], pd.DataFrame] | None = None) -> pd.DataFrame:
+        parser = read_table if loader is None else loader
+        source = Path(path).resolve(strict=True)
+        signature = self._signature(source)
+        cached = self._entries.pop(source, None)
+        if cached is not None:
+            if cached[0] == signature and cached[3] is parser:
+                self._entries[source] = cached
+                return cached[1].copy(deep=True)
+            self._bytes -= cached[2]
+        table = parser(source)
+        if self._expected_hashes is not None:
+            expected = self._expected_hashes.get(source)
+            if expected is None or table.attrs.get(_SOURCE_HASH_ATTR) != expected:
+                raise SourceSnapshotError(f"Parsed bytes do not match the source snapshot: {source}")
+        size = int(table.memory_usage(index=True, deep=True).sum())
+        # Do not reuse a partial read if a writer changed the file while parsing.
+        if self._signature(source) == signature and size <= self.max_bytes:
+            while self._entries and (len(self._entries) >= self.max_entries or self._bytes + size > self.max_bytes):
+                _, (_, _, removed_size, _) = self._entries.popitem(last=False)
+                self._bytes -= removed_size
+            self._entries[source] = signature, table, size, parser
+            self._bytes += size
+            return table.copy(deep=True)
+        return table
 
 
 def _column_to_series(df: pd.DataFrame, column: str | int) -> pd.Series:
@@ -173,9 +248,10 @@ def load_curve(
     limit_q_range: bool = False,
     q_min: float | None = None,
     q_max: float | None = None,
+    table_cache: TableReadCache | None = None,
 ) -> CurveData:
     file_path = Path(path)
-    df = read_table(file_path)
+    df = read_table(file_path) if table_cache is None else table_cache.read(file_path, read_table)
     if isinstance(error_column, str) and not error_column.strip():
         error_column = None
     q = pd.to_numeric(_column_to_series(df, q_column), errors="coerce").to_numpy()

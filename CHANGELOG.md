@@ -1,5 +1,26 @@
 # CHANGELOG
 
+## 2026-10-05 - Merge SAXS input semantics with current workflow reuse
+
+- Resolved the input-preview and CI conflicts by retaining raw-table reuse, parsed-byte/source-snapshot verification and explicit uncertainty classification together. Preview and import share one raw parse while series/unknown uncertainty stays outside measured fitting sigma.
+- The existing CI test selector now includes SAXS input and result-package regressions in its Qt-free scope, retaining the single shared test plan.
+- Verification: **689 tests passed** on Windows/Python 3.13 with Qt offscreen; the three existing SciPy peak-property warnings remain. Added cached preview/import checks for measured, series and unknown uncertainty and test-plan coverage assertions. Final diff checks passed.
+
+## 2026-10-05 - Bind parsed study data to source snapshots after final review
+
+- Fixed a reproduced Windows transient-edit regression: cached parsed intensities could differ from the restored source while all later source hashes passed. Raw-table parsing now records the SHA-256 of the exact bytes read; study reuse verifies it against the initial snapshot and stops the affected sample before analysis/publication on mismatch. Study workflow version 2 rejects legacy packages lacking this verification; retain them and run into a new output directory.
+- q-domain preview now uses the existing curve importer with the same units and filtering, without building an unused input manifest. The four-frame fixture uses **16 source reads**, down from 20 in the first optimization and 24 originally; it still parses four curves and exports 174 artifacts.
+- Explicit test paths, `--base` and `--full` override a saved CI plan, preventing a stale documentation-only or targeted plan from silently skipping requested checks. Ordinary CI jobs continue reusing their one computed plan.
+- Verification: 679 integrated tests passed with the same three existing SciPy warnings; after updating the study version, all 29 study checks passed, including legacy-resume refusal before writes. The actual transient-edit study now stops before analysis and publishes no package; a normal guarded study exports the measured arrays and matching source copies. The self-cleaning workflow benchmark retains preview/import and resume savings. Review details are in `docs/developer_notes.md`.
+
+## 2026-10-05 - Reduce repeated agent and curve-processing work
+
+- Replaced the fixed startup/full-check template with task-based documentation routes and a small, conservative test selector shared by local work and CI. Documentation changes need no runtime suite; mapped leaves run core/consumer tests; shared or unmapped changes retain full and cross-platform headless checks. Restored pytest's native cache and limited default collection to `tests/`.
+- Added bounded, explicitly owned raw-table reuse for task-local preview/import and a study's q-range preview/import. GUI detection and initial preview share one selection action; later refresh/import reads current bytes. File/parser changes invalidate reuse; consumers get independent tables. Encoding fallback reads bytes once, and q-domain preview skips unneeded sidecar parsing. Source, metadata and output SHA-256 publication/resume checks remain in place; each completed package is verified once per resume invocation.
+- Deferred CLI runtime imports so help uses the standard library and method listing does not load study execution. No numerical algorithms, unit conversions, missing-value rules or reporting gates changed.
+- Reproducible synthetic workflow evidence: task-local preview/import reads and parses 4 -> 1; four-frame study parses 8 -> 4 and source reads 24 -> 20; two-package resume verifications 4 -> 2; q preview sidecar parses 1 -> 0 while formal metadata stays intact. Method-query cold-start median 2.267 -> 0.604 seconds. A 20,000-row preview control took 0.190 seconds without reuse and 0.042 seconds with reuse, with identical arrays. Both study versions exported 174 artifacts with the same status and q ranges. Full study timing varied across runs; rendering/numerical work dominates this small fixture.
+- Final validation: **668 tests passed**, with the same three existing SciPy peak-property warnings; source/output tampering, metadata parity, Windows timestamp restoration, real CLI export/resume, selector failure propagation, workflow structure and documentation links are covered. Details are recorded in `docs/developer_notes.md`; the self-cleaning benchmark is `scripts/benchmark_agent_workflow.py`. Scientific acceptance of experimental datasets is outside this engineering fixture.
+
 ## 2026-09-30 - Add unattended multi-sample analysis and complete export bundles
 
 - Added `python -m app.cli methods|discover|run` for Agent operation without Qt, a strict JSON study configuration, recursive discovery, per-sample overrides and sample-isolated analysis/cache/output directories.

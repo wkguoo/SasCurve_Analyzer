@@ -171,6 +171,103 @@ def test_resume_rejects_changed_source_or_tampered_output(tmp_path, monkeypatch)
         run_study(root, output, resume=True)
 
 
+def test_completed_resume_verifies_each_package_once(tmp_path, monkeypatch):
+    root, output = tmp_path / "input", tmp_path / "out"
+    for sample in ("LD", "TD"):
+        _curve(root / sample / "frame_1.csv")
+    monkeypatch.setattr(study, "run_auto_batch", lambda _, config, **kw: AutoBatchRun(batch_id=config.batch_id, status="completed"))
+    _fake_package(monkeypatch)
+    first = run_study(root, output)
+    calls = []
+    original = study._verify_inventory
+
+    def verify(package, inventory):
+        calls.append(package)
+        return original(package, inventory)
+
+    monkeypatch.setattr(study, "_verify_inventory", verify)
+    second = run_study(root, output, resume=True)
+    assert second["samples"] == first["samples"]
+    assert len(calls) == len(set(calls)) == 2
+
+
+def test_resume_rejects_legacy_study_without_parsed_byte_verification(tmp_path, monkeypatch):
+    from hashlib import sha256
+
+    root, output = tmp_path / "input", tmp_path / "out"
+    _curve(root / "sample_1.csv")
+    monkeypatch.setattr(study, "run_auto_batch", lambda _, config, **kw: AutoBatchRun(batch_id=config.batch_id, status="completed"))
+    _fake_package(monkeypatch)
+    state = run_study(root, output)
+    state["snapshot"]["study_algorithm_version"] = 1
+    state["fingerprint"] = sha256(json.dumps(state["snapshot"], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    checkpoint = output / "study.json"
+    study.write_json_atomic(checkpoint, state)
+    before = checkpoint.read_bytes()
+    with pytest.raises(ValueError, match="fingerprint differs"):
+        run_study(root, output, resume=True)
+    assert checkpoint.read_bytes() == before
+
+
+def test_q_domain_preview_does_not_parse_unneeded_metadata(tmp_path, monkeypatch):
+    import app.core.batch_inputs as batch_inputs
+
+    root = tmp_path / "input"
+    _curve(root / "sample_1.csv")
+    sidecar = tmp_path / "metadata.csv"
+    sidecar.write_text("source_file,frame_index,time_s\nsample_1.csv,77,5\n", encoding="utf-8")
+    settings = {"analysis": {"metadata_path": str(sidecar)}}
+    sample = discover_study(root, settings)[0]
+
+    def unexpected(*_args):
+        raise AssertionError("q preview must not parse the sidecar or build a full manifest")
+
+    monkeypatch.setattr(batch_inputs, "load_metadata_table", unexpected)
+    monkeypatch.setattr(batch_inputs, "_build_manifest_entry", unexpected)
+    config = study._resolve_sample_config(sample, root, settings)
+    assert Path(config.metadata_path) == sidecar
+    assert config.effective_q_range == pytest.approx((0.005, 0.2))
+
+
+def test_study_rejects_transient_preview_edit_even_after_source_is_restored(tmp_path, monkeypatch):
+    import os
+    from app.core.io import TableReadCache
+
+    root, output = tmp_path / "input", tmp_path / "out"
+    path = root / "sample_1.csv"
+    _curve(path)
+    content, stat = path.read_bytes(), path.stat()
+    modified = content.replace(b",0.", b",9.", 1)
+    assert modified != content and len(modified) == len(content)
+    signature = TableReadCache._signature(path)
+    monkeypatch.setattr(TableReadCache, "_signature", staticmethod(lambda _path: signature))
+    resolve = study._resolve_sample_config
+    calls = []
+
+    def transient_preview(*args, **kwargs):
+        path.write_bytes(modified)
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        try:
+            return resolve(*args, **kwargs)
+        finally:
+            path.write_bytes(content)
+            os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+    def unexpected_analysis(*_args, **_kwargs):
+        calls.append("analysis")
+        raise AssertionError("unverified preview must not reach analysis")
+
+    monkeypatch.setattr(study, "_resolve_sample_config", transient_preview)
+    monkeypatch.setattr(study, "run_auto_batch", unexpected_analysis)
+    _fake_package(monkeypatch)
+    state = run_study(root, output)
+    assert state["status"] == "failed"
+    assert "source snapshot" in state["samples"]["sample"]["error"]
+    assert not state["samples"]["sample"].get("package")
+    assert not calls
+    assert path.read_bytes() == content
+
+
 def test_failure_isolated_and_retry_uses_a_new_destination(tmp_path, monkeypatch):
     root, output = tmp_path / "input", tmp_path / "out"
     for sample in ("good", "bad"):
@@ -242,7 +339,10 @@ def test_cli_methods_and_discover_need_no_qt(tmp_path):
     command = subprocess.run([sys.executable, "-c", invocation, "discover", "--input", str(tmp_path)], capture_output=True, text=True)
     assert command.returncode == 0, command.stderr
     assert json.loads(command.stdout)["samples"][0]["sample_id"] == "S1"
-    command = subprocess.run([sys.executable, "-m", "app.cli", "methods"], capture_output=True, text=True)
+    methods = ("import sys; from app.cli import main; code=main(['methods']); "
+               "assert 'app.core.study' not in sys.modules; assert 'app.core.auto_batch' not in sys.modules; "
+               "assert not any(n.startswith('PySide6') for n in sys.modules); raise SystemExit(code)")
+    command = subprocess.run([sys.executable, "-c", methods], capture_output=True, text=True)
     assert command.returncode == 0
     assert "guinier" in [row["method_id"] for row in json.loads(command.stdout)["methods"]]
     invalid = tmp_path / "invalid.json"
@@ -251,6 +351,15 @@ def test_cli_methods_and_discover_need_no_qt(tmp_path):
     assert command.returncode == 3
     assert json.loads(command.stdout)["status"] == "error"
     assert not command.stderr
+
+
+def test_cli_help_does_not_import_numerical_runtime():
+    invocation = ("import sys; import app.cli; "
+                  "assert not any(name in sys.modules for name in ('numpy', 'scipy', 'pandas', 'PySide6')); "
+                  "app.cli.main(['--help'])")
+    command = subprocess.run([sys.executable, "-c", invocation], capture_output=True, text=True)
+    assert command.returncode == 0, command.stderr
+    assert "methods" in command.stdout
 
 
 def test_real_cli_exports_and_resumes_without_loading_qt(tmp_path):

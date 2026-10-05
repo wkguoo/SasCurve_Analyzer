@@ -2,9 +2,34 @@ name: Tests
 
 on:
   pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      scope: ${{ steps.select.outputs.scope }}
+      plan: ${{ steps.select.outputs.plan }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Select tests from the changed paths
+        id: select
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -n "$BASE_SHA" ] && [ "${BASE_SHA//0/}" != "" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          fi
+          python scripts/select_tests.py --base "$BASE_SHA" --github-output "$GITHUB_OUTPUT"
+
   headless:
+    needs: plan
+    if: needs.plan.outputs.scope == 'full'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -20,9 +45,12 @@ jobs:
       - name: Verify unattended workflow without Qt
         env:
           MPLBACKEND: Agg
-        run: python -m pytest -q tests/test_study.py tests/test_publication_bundle.py tests/test_metric_units.py tests/test_pr_batch_config.py tests/test_cache_atomic.py tests/test_batch_inputs.py tests/test_batch_import.py tests/test_sequence_analysis.py tests/test_auto_batch.py tests/test_analysis_runner.py tests/test_saxs_input_contract.py tests/test_result_package.py
+          SAS_TEST_PLAN: ${{ needs.plan.outputs.plan }}
+        run: python scripts/select_tests.py --run --headless
 
   pytest:
+    needs: plan
+    if: needs.plan.outputs.scope != 'none'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -62,4 +90,6 @@ jobs:
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q
+          MPLBACKEND: Agg
+          SAS_TEST_PLAN: ${{ needs.plan.outputs.plan }}
+        run: python scripts/select_tests.py --run

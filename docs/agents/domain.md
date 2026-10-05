@@ -1,6 +1,9 @@
 # Domain Docs
 
-This is a single-context repository. Engineering skills should check `CONTEXT.md` at the repository root and relevant files in `docs/adr/` before making domain-level decisions. If either location does not exist, proceed silently.
+This is a single-context repository. Load this route only for a terminology or
+architecture decision. Use any domain context already in the task; otherwise
+check `CONTEXT.md` and only the ADR relevant to the unresolved decision. If they
+do not exist, proceed without creating a substitute or scanning other docs.
 
 Use terms defined in `CONTEXT.md` when present. If a proposed change conflicts with an ADR, surface that conflict explicitly instead of silently overriding the decision.
 
