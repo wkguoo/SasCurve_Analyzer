@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-10-05 - Merge SAXS input semantics with current workflow reuse
+
+- Resolved the input-preview and CI conflicts by retaining raw-table reuse, parsed-byte/source-snapshot verification and explicit uncertainty classification together. Preview and import share one raw parse while series/unknown uncertainty stays outside measured fitting sigma.
+- The existing CI test selector now includes SAXS input and result-package regressions in its Qt-free scope, retaining the single shared test plan.
+- Verification: **689 tests passed** on Windows/Python 3.13 with Qt offscreen; the three existing SciPy peak-property warnings remain. Added cached preview/import checks for measured, series and unknown uncertainty and test-plan coverage assertions. Final diff checks passed.
+
 ## 2026-10-05 - Bind parsed study data to source snapshots after final review
 
 - Fixed a reproduced Windows transient-edit regression: cached parsed intensities could differ from the restored source while all later source hashes passed. Raw-table parsing now records the SHA-256 of the exact bytes read; study reuse verifies it against the initial snapshot and stops the affected sample before analysis/publication on mismatch. Study workflow version 2 rejects legacy packages lacking this verification; retain them and run into a new output directory.
@@ -5890,3 +5896,9 @@ python scripts\analyze_ti15_first10.py --input-dir "D:\桌面\PostFile\6_sys\SAX
 - power-law 实际执行 log-q 跨度约 `0.0775` decades，小于默认 `0.10` 正式报告门槛，只保留在探索/审计层。
 - shoulder/crossover 在 10 帧中均出现 q 重叠，已关联，不能作为两个独立正式特征。
 - 原始 CSV 未修改；未提交 Git、未推送 GitHub、未自动打包项目。
+# 2026-10-03 — SAXS input uncertainty and result provenance
+
+- Accept beamline mean/absolute-intensity column names; classify series standard deviations and ambiguous std columns without treating them as measured fitting sigma.
+- Preserve nonmeasurement error arrays with aligned q and units in result packages; retain provided sample, acquisition, processing and unit-conversion metadata in summaries.
+- Import preview exposes the uncertainty meaning. Existing measured-error inputs and negative intensities remain supported.
+- See `docs/saxs_input_contract.md` for migration and API declarations.

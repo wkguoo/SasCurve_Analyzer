@@ -27,6 +27,7 @@ HEADLESS_TESTS = (
     "tests/test_batch_import.py", "tests/test_sequence_analysis.py", "tests/test_auto_batch.py",
     "tests/test_analysis_runner.py", "tests/test_io.py", "tests/test_import_preview.py",
     "tests/test_table_cache.py", "tests/test_test_selection.py",
+    "tests/test_saxs_input_contract.py", "tests/test_result_package.py",
 )
 DOC_FILES = {"AGENTS.md", "README.md", "CHANGELOG.md", "LICENSE"}
 

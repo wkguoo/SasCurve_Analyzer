@@ -1,5 +1,11 @@
 # Developer Notes
 
+## 2026-10-05 - Integrate SAXS uncertainty and export fixes after workflow optimization
+
+Reason: PR #2 diverged from main in `import_preview` imports and the headless CI command after raw-table reuse and test selection were added. Kept `TableReadCache` and input uncertainty classification together, and retained the CI selector with SAXS input/result-package tests in `HEADLESS_TESTS`. The automatically merged importer continues using parsed-byte provenance and source-snapshot guards.
+
+Checks: **689 passed in 54.69 s**, Windows/Python 3.13, `QT_QPA_PLATFORM=offscreen`, via `scripts/select_tests.py --full --run`. Added measured/series/unknown cached preview/import checks that assert one parse, source immutability and the correct fitting-sigma boundary; selector tests assert both added headless files. `git diff --check` passed. The three pre-existing SciPy peak-property warnings persist. These are engineering checks, not acceptance of experimental data or a unique structural interpretation.
+
 ## 2026-10-05 - Final review: parsed-byte provenance and explicit verification scope
 
 Review scope: `review-pro` compared `d7304e0..6b4c8ad` because the optimization was already on main. Specialist findings were checked against actual consumers and reproduced execution; repairs are limited to `io`, `batch_import`, `study`, test selection, relevant tests and workflow/change documentation.
@@ -1270,3 +1276,10 @@ Power-law results now retain both `eligible_points`/candidate evidence and the a
 Automatic peak discovery uses a robust log-intensity trend residual and does not accept a large collection of raw local maxima as confirmed peaks. Peak area must be positive and the candidate must pass the configured noise-separation gate. Shoulder and crossover locations that coincide on the same q grid are linked through `related_analysis_ids`, marked `ambiguous`, and not counted as two independent reportable features. Oscillation confirmation requires a minimum number of cycles, period consistency, and amplitude-to-noise evidence; local-slope plateaus require a stability threshold.
 
 These states are exported to `parameters.csv`, `fit_quality.csv`, `all_parameters_audit.csv`, `accepted_parameters.csv`, and the Ti15 report. They are intentionally orthogonal: a numerical fit can succeed while still being non-reportable, and a candidate or detection can exist without being a physical conclusion.
+# 2026-10-03 — 1D SAXS import/export repair
+
+- Symptoms: mean_intensity headers could not be inferred; an explicitly selected std_intensity could enter measured-sigma calculations; metadata-only result summaries discarded processing/source semantics.
+- Cause: limited header aliases, no column-meaning classification at import boundaries, and an export whitelist omitting scientific metadata.
+- Modules: batch_import, io, import_preview, uncertainty and result_package. Classification is shared by single and batch import; source columns are retained outside the fitting error array. Metadata export remains bounded and does not embed full arrays.
+- Validation: regression fixtures reproduce all three defects before repair. Final full suite passed 651 tests, including Qt offscreen tests (three existing SciPy peak-property warnings). Focused tests cover q conversion/filter alignment, source immutability, explicit measured declarations and exported arrays. Five actual input profiles from two beamtimes matched AutoSAS q/I arrays after conversion and compatible point selection; all source hashes were unchanged. This checks implementation consistency, not independent experimental accuracy.
+- Limits: legacy checkpoints are not reclassified; a user declaration of measurement uncertainty remains a scientific input assumption. No raw experimental data is committed.

@@ -12,11 +12,12 @@ from app.core.data_model import CurveData, CurveGroup, HistoryRecord
 from app.core.io import apply_q_import_range_filter, QImportRangeFilterError, read_table, TableReadCache, SourceSnapshotError
 from app.core.project import ProjectState
 from app.core.transforms import convert_q_unit, normalize_q_unit
+from app.core.uncertainty import input_uncertainty_kind, prepare_input_uncertainty
 
 
 Q_CANDIDATES = ("q", "Q", "q_A_inv", "q_A^-1", "q_inv_A", "q_nm_inv", "q_nm^-1", "q_inv_nm")
-I_CANDIDATES = ("I", "intensity", "Intensity", "I(q)", "intensity_cm_inv", "I_cm_inv", "I_cm^-1")
-ERROR_CANDIDATES = ("error", "sigma", "err", "std", "uncertainty")
+I_CANDIDATES = ("I", "intensity", "Intensity", "I(q)", "intensity_cm_inv", "I_cm_inv", "I_cm^-1", "mean_intensity", "I_abs_cm_inv", "I_abs_cm^-1", "I_abs_cm-1")
+ERROR_CANDIDATES = ("error", "sigma", "sigma_I", "err", "uncertainty", "dI", "d_i", "std_intensity", "std")
 
 
 @dataclass
@@ -27,6 +28,7 @@ class ColumnInference:
     q_unit: str
     intensity_unit: str
     warnings: list[str] = field(default_factory=list)
+    uncertainty_kind: str = "missing"
 
 
 @dataclass
@@ -115,13 +117,18 @@ def infer_curve_columns(columns: Iterable[str]) -> ColumnInference:
         raise ValueError(f"Could not infer required columns: {', '.join(missing)}. Available columns: {column_list}")
     q_unit, q_warnings = _infer_q_unit(q_column)
     intensity_unit, intensity_warnings = _infer_intensity_unit(intensity_column)
+    kind = input_uncertainty_kind(error_column, column_list)
+    uncertainty_warnings = []
+    if kind in {"series_std", "unknown"}:
+        uncertainty_warnings.append(f"Column '{error_column}' is {kind}, not measured pointwise uncertainty; retained as metadata, not fitting sigma.")
     return ColumnInference(
         q_column=q_column,
         intensity_column=intensity_column,
         error_column=error_column,
         q_unit=q_unit,
         intensity_unit=intensity_unit,
-        warnings=[*q_warnings, *intensity_warnings],
+        warnings=[*q_warnings, *intensity_warnings, *uncertainty_warnings],
+        uncertainty_kind=kind,
     )
 
 
@@ -245,6 +252,7 @@ def import_in_situ_series(
                         "filtered_out_point_count": q_filter_diagnostics["filtered_out_point_count"],
                     }
                 )
+            error = prepare_input_uncertainty(error, columns.error_column, df.columns, metadata)
             curve = CurveData.create(
                 name=file_path.stem,
                 q=q,

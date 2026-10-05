@@ -44,6 +44,42 @@ def test_preview_mapping_range_and_import_reuse_only_raw_table(tmp_path, monkeyp
     assert len(calls) == 1  # Mapping diagnostics are recomputed without reparsing.
 
 
+@pytest.mark.parametrize(
+    ("column", "kind"),
+    [("std_intensity", "series_std"), ("std", "unknown"), ("error", "measurement")],
+)
+def test_cached_preview_and_import_preserve_uncertainty_semantics(
+    tmp_path, monkeypatch, column, kind
+):
+    path = tmp_path / "contract.csv"
+    path.write_text(
+        f"q_nm_inv,I,{column}\n0.1,10,0.5\n0.2,8,0.4\n0.3,6,0.3\n",
+        encoding="utf-8",
+    )
+    source = path.read_bytes()
+    calls = _count_parses(monkeypatch)
+    cache = io.TableReadCache()
+    preview = preview_curve_file(
+        path, q_column="q_nm_inv", intensity_column="I", error_column=column,
+        table_cache=cache,
+    )
+    curve = io.load_curve(
+        path, q_column="q_nm_inv", intensity_column="I", error_column=column,
+        q_unit="nm^-1", table_cache=cache,
+    )
+    assert preview.can_import
+    assert preview.diagnostics["uncertainty_kind"] == kind
+    assert curve.metadata["uncertainty_kind"] == kind
+    np.testing.assert_allclose(curve.q, [0.1, 0.2, 0.3])
+    if kind == "measurement":
+        np.testing.assert_allclose(curve.error, [0.5, 0.4, 0.3])
+    else:
+        assert curve.error is None
+        assert curve.metadata["non_measurement_error"]["values"] == [0.5, 0.4, 0.3]
+    assert len(calls) == 1
+    assert path.read_bytes() == source
+
+
 def test_signature_change_reparses_and_caller_mutation_does_not_leak(tmp_path, monkeypatch):
     path = _file(tmp_path / "curve.csv")
     calls = _count_parses(monkeypatch)

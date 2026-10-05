@@ -29,6 +29,8 @@ def test_shared_or_unmapped_change_retains_deep_checks():
         assert plan["scope"] == "full", path
         assert plan["tests"] == ["tests"]
         assert "tests/test_study.py" in plan["headless_tests"]
+        assert "tests/test_saxs_input_contract.py" in plan["headless_tests"]
+        assert "tests/test_result_package.py" in plan["headless_tests"]
 
 
 def test_empty_diff_has_no_checks():
