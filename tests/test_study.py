@@ -171,6 +171,45 @@ def test_resume_rejects_changed_source_or_tampered_output(tmp_path, monkeypatch)
         run_study(root, output, resume=True)
 
 
+def test_completed_resume_verifies_each_package_once(tmp_path, monkeypatch):
+    root, output = tmp_path / "input", tmp_path / "out"
+    for sample in ("LD", "TD"):
+        _curve(root / sample / "frame_1.csv")
+    monkeypatch.setattr(study, "run_auto_batch", lambda _, config, **kw: AutoBatchRun(batch_id=config.batch_id, status="completed"))
+    _fake_package(monkeypatch)
+    first = run_study(root, output)
+    calls = []
+    original = study._verify_inventory
+
+    def verify(package, inventory):
+        calls.append(package)
+        return original(package, inventory)
+
+    monkeypatch.setattr(study, "_verify_inventory", verify)
+    second = run_study(root, output, resume=True)
+    assert second["samples"] == first["samples"]
+    assert len(calls) == len(set(calls)) == 2
+
+
+def test_q_domain_preview_does_not_parse_unneeded_metadata(tmp_path, monkeypatch):
+    import app.core.batch_inputs as batch_inputs
+
+    root = tmp_path / "input"
+    _curve(root / "sample_1.csv")
+    sidecar = tmp_path / "metadata.csv"
+    sidecar.write_text("source_file,frame_index,time_s\nsample_1.csv,77,5\n", encoding="utf-8")
+    settings = {"analysis": {"metadata_path": str(sidecar)}}
+    sample = discover_study(root, settings)[0]
+
+    def unexpected(*_args):
+        raise AssertionError("q preview must not parse the sidecar")
+
+    monkeypatch.setattr(batch_inputs, "load_metadata_table", unexpected)
+    config = study._resolve_sample_config(sample, root, settings)
+    assert Path(config.metadata_path) == sidecar
+    assert config.effective_q_range == pytest.approx((0.005, 0.2))
+
+
 def test_failure_isolated_and_retry_uses_a_new_destination(tmp_path, monkeypatch):
     root, output = tmp_path / "input", tmp_path / "out"
     for sample in ("good", "bad"):
@@ -242,7 +281,10 @@ def test_cli_methods_and_discover_need_no_qt(tmp_path):
     command = subprocess.run([sys.executable, "-c", invocation, "discover", "--input", str(tmp_path)], capture_output=True, text=True)
     assert command.returncode == 0, command.stderr
     assert json.loads(command.stdout)["samples"][0]["sample_id"] == "S1"
-    command = subprocess.run([sys.executable, "-m", "app.cli", "methods"], capture_output=True, text=True)
+    methods = ("import sys; from app.cli import main; code=main(['methods']); "
+               "assert 'app.core.study' not in sys.modules; assert 'app.core.auto_batch' not in sys.modules; "
+               "assert not any(n.startswith('PySide6') for n in sys.modules); raise SystemExit(code)")
+    command = subprocess.run([sys.executable, "-c", methods], capture_output=True, text=True)
     assert command.returncode == 0
     assert "guinier" in [row["method_id"] for row in json.loads(command.stdout)["methods"]]
     invalid = tmp_path / "invalid.json"
@@ -251,6 +293,15 @@ def test_cli_methods_and_discover_need_no_qt(tmp_path):
     assert command.returncode == 3
     assert json.loads(command.stdout)["status"] == "error"
     assert not command.stderr
+
+
+def test_cli_help_does_not_import_numerical_runtime():
+    invocation = ("import sys; import app.cli; "
+                  "assert not any(name in sys.modules for name in ('numpy', 'scipy', 'pandas', 'PySide6')); "
+                  "app.cli.main(['--help'])")
+    command = subprocess.run([sys.executable, "-c", invocation], capture_output=True, text=True)
+    assert command.returncode == 0, command.stderr
+    assert "methods" in command.stdout
 
 
 def test_real_cli_exports_and_resumes_without_loading_qt(tmp_path):

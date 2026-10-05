@@ -8,10 +8,6 @@ import signal
 import sys
 from pathlib import Path
 
-from app.core.metric_registry import METHOD_REGISTRY
-from app.core.shape_models import MODEL_SPECS
-from app.core.study import discover_study, run_study, validate_study_config
-
 
 def _load_config(path: str | None) -> dict:
     if path is None:
@@ -24,6 +20,7 @@ def _load_config(path: str | None) -> dict:
         if values.get("metadata_path"):
             metadata = Path(values["metadata_path"])
             values["metadata_path"] = str((source.parent / metadata).resolve()) if not metadata.is_absolute() else str(metadata.resolve())
+    from app.core.study import validate_study_config
     return validate_study_config(settings)
 
 
@@ -48,8 +45,11 @@ def main(argv: list[str] | None = None) -> int:
     old_handler = signal.signal(signal.SIGINT, cancel)
     try:
         if args.command == "methods":
+            from app.core.metric_registry import METHOD_REGISTRY
+            from app.core.shape_models import MODEL_SPECS
             result = {"schema_version": 1, "methods": [{"method_id": spec.method_id, "sample_types": spec.sample_types, "config_flag": spec.config_flag, "range_strategy": spec.range_strategy, "metrics": [metric.name for metric in spec.metrics]} for spec in METHOD_REGISTRY.values()], "models": list(MODEL_SPECS), "prerequisites": {"pr": {"required": ["enable_pr", "pr_dmax"], "pr_dmax_unit": "A for canonical headless q", "experimental": True}}, "input_scope": "calibrated reduced 1D q-I-error curves", "unsupported": ["2D detector reduction", "azimuthal integration", "particle-size distribution inversion"]}
         else:
+            from app.core.study import discover_study, run_study
             config = _load_config(args.config)
             if args.command == "discover":
                 samples = discover_study(args.input, config)

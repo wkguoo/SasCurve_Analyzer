@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from app.core.data_model import CurveData, CurveGroup, HistoryRecord
-from app.core.io import apply_q_import_range_filter, QImportRangeFilterError, read_table
+from app.core.io import apply_q_import_range_filter, QImportRangeFilterError, read_table, TableReadCache
 from app.core.project import ProjectState
 from app.core.transforms import convert_q_unit, normalize_q_unit
 
@@ -134,6 +134,7 @@ def import_in_situ_series(
     source_q_unit_override: str | None = None,
     source_intensity_unit_override: str | None = None,
     target_q_unit: str | None = None,
+    table_cache: TableReadCache | None = None,
 ) -> BatchImportResult:
     file_paths = sorted([Path(path) for path in paths], key=natural_sort_key)
     result = BatchImportResult()
@@ -153,7 +154,7 @@ def import_in_situ_series(
 
     for sequence_order, file_path in enumerate(file_paths):
         try:
-            df = read_table(file_path)
+            df = read_table(file_path) if table_cache is None else table_cache.read(file_path, read_table)
             columns = infer_curve_columns(df.columns)
             if first_columns is None:
                 first_columns = columns

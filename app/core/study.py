@@ -23,6 +23,7 @@ from app.core.data_model import utc_now_iso
 from app.core.shape_models import MODEL_SPECS
 from app.core.transforms import normalize_q_unit
 from app.core.unit_checks import validate_compatible_curve_units
+from app.core.io import TableReadCache
 
 
 @dataclass(frozen=True)
@@ -252,12 +253,19 @@ def _verify_inventory(root: Path, inventory: list[dict[str, Any]]) -> bool:
     return True
 
 
-def _resolve_sample_config(sample: SampleInput, root: Path, settings: dict[str, Any]) -> AutoBatchConfig:
+def _resolve_sample_config(
+    sample: SampleInput, root: Path, settings: dict[str, Any],
+    table_cache: TableReadCache | None = None,
+) -> AutoBatchConfig:
     values = {**settings.get("analysis", {}), **settings.get("samples", {}).get(sample.sample_id, {})}
     config = _analysis_config(values, sample.sample_id)
     # Preview full measured data once to choose a shared domain, not an arbitrary
     # fixed window. Every per-sample integral then has the same q limits.
-    preview = collect_batch_inputs(root, replace(config, effective_q_range=(0.0, float(np.finfo(float).max))), input_paths=sample.files)
+    preview = collect_batch_inputs(
+        root, replace(config, effective_q_range=(0.0, float(np.finfo(float).max)), metadata_path=None),
+        input_paths=sample.files,
+        **({"table_cache": table_cache} if table_cache is not None else {}),
+    )
     if not preview.curves:
         return config  # runner exports all import failures in an auditable package
     validate_compatible_curve_units(preview.curves, operation="sample study")
@@ -372,9 +380,7 @@ def run_study(
     for sample in samples:
         previous = state["samples"].get(sample.sample_id, {})
         if previous.get("package") and previous.get("status") != "cancelled" and not (retry_failed and previous.get("status") in {"failed", "partial_success"}):
-            package = (target / previous["package"]).resolve()
-            if not package.is_relative_to(target) or not _verify_inventory(package, previous.get("output_inventory", [])):
-                raise ValueError(f"Completed sample artifacts changed: {sample.sample_id}; use a new destination")
+            # All previous packages were content-verified above, before writes.
             if progress_callback:
                 progress_callback({"sample_id": sample.sample_id, "operation": "resume_verified", "status": previous["status"]})
             continue
@@ -391,11 +397,15 @@ def run_study(
         state["samples"][sample.sample_id] = record
         write_json_atomic(checkpoint, state)
         try:
-            sample_config = _resolve_sample_config(sample, root, settings)
+            table_cache = TableReadCache(max_entries=len(sample.files))
             def progress(event: ProgressEvent) -> None:
                 if progress_callback:
                     progress_callback({"sample_id": sample.sample_id, **asdict(event)})
-            run = run_auto_batch(root, sample_config, input_paths=sample.files, input_metadata=_input_metadata(sample, root, settings), cache_dir=target / ".cache" / _sample_directory(sample.sample_id), cancel_requested=cancel_requested, progress_callback=progress)
+            try:
+                sample_config = _resolve_sample_config(sample, root, settings, table_cache)
+                run = run_auto_batch(root, sample_config, input_paths=sample.files, input_metadata=_input_metadata(sample, root, settings), cache_dir=target / ".cache" / _sample_directory(sample.sample_id), cancel_requested=cancel_requested, progress_callback=progress, table_cache=table_cache)
+            finally:
+                table_cache.clear()
             run.config_snapshot["study_identity_source"] = sample.identity_source
             run.config_snapshot["planned_frames"] = _planned_frames(sample, root, settings, sample_config)
             run.config_snapshot["batch_preflight_audit"] = _preflight_rows(run)

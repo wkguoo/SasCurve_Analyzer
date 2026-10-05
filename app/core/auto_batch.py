@@ -22,6 +22,7 @@ from app.core.auto_batch_schema import (
 from app.core.batch_cache import job_cache_key, load_job_envelopes, save_job_envelopes, save_run_checkpoint
 from app.core.batch_consensus import resolve_consensus_regions
 from app.core.batch_inputs import collect_batch_inputs
+from app.core.io import TableReadCache
 from app.core.auto_regions import detect_auto_regions
 from app.core.data_model import CurveData, utc_now_iso
 from app.core.metric_registry import METHOD_REGISTRY, applicable_method_ids
@@ -1007,6 +1008,7 @@ def run_auto_batch(
     cancel_requested: Callable[[], bool] | None = None,
     analysis_runner: AnalysisRunner | None = None,
     cache_dir: str | Path | None = None,
+    table_cache: TableReadCache | None = None,
 ) -> AutoBatchRun:
     """Run every applicable method while isolating each individual method failure.
 
@@ -1033,7 +1035,12 @@ def run_auto_batch(
     if _cancel_requested(run, cancel_requested):
         return _finish_cancelled(run)
 
-    if input_paths is None and input_metadata is None:
+    if table_cache is not None:
+        collected = collect_batch_inputs(
+            input_dir, config, input_paths=input_paths,
+            input_metadata=input_metadata, table_cache=table_cache,
+        )
+    elif input_paths is None and input_metadata is None:
         # Preserve the legacy two-argument call for existing monkeypatches and
         # integrations that replace the collector with a two-parameter callable.
         collected = collect_batch_inputs(input_dir, config)

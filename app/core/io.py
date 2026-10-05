@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from io import StringIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -24,10 +25,13 @@ class QImportRangeFilterError(ValueError):
 
 def read_text_with_encoding_fallback(path: str | Path) -> tuple[str, str]:
     file_path = Path(path)
+    content = file_path.read_bytes()
     errors: list[str] = []
     for encoding in TEXT_ENCODINGS:
         try:
-            return file_path.read_text(encoding=encoding), encoding
+            # Match text-mode universal newlines while decoding the same bytes.
+            text = content.decode(encoding).replace("\r\n", "\n").replace("\r", "\n")
+            return text, encoding
         except UnicodeError as exc:
             errors.append(f"{encoding}: {exc}")
     tried = ", ".join(TEXT_ENCODINGS)
@@ -53,6 +57,54 @@ def read_table(path: str | Path) -> pd.DataFrame:
     if not text.strip():
         raise ValueError(f"No tabular data found in {file_path}")
     return pd.read_csv(StringIO(text), sep=r"[,\t ]+", engine="python")
+
+
+class TableReadCache:
+    """Bounded, explicitly owned reuse of successful raw table parses.
+
+    File signatures avoid another read during one task/window. They do not
+    replace source/output content hashes at publication or cross-run reuse.
+    Consumers receive copies, so mapping/filtering cannot pollute later reads.
+    """
+
+    def __init__(self, max_entries: int = 32, max_bytes: int = 64 * 1024 * 1024) -> None:
+        if max_entries < 1 or max_bytes < 1:
+            raise ValueError("Table cache limits must be positive")
+        self.max_entries = max_entries
+        self.max_bytes = max_bytes
+        self._entries: OrderedDict[Path, tuple[tuple[int, ...], pd.DataFrame, int, Callable]] = OrderedDict()
+        self._bytes = 0
+
+    @staticmethod
+    def _signature(path: Path) -> tuple[int, ...]:
+        stat = path.stat()
+        return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+    def clear(self) -> None:
+        self._entries.clear()
+        self._bytes = 0
+
+    def read(self, path: str | Path, loader: Callable[[Path], pd.DataFrame] | None = None) -> pd.DataFrame:
+        parser = read_table if loader is None else loader
+        source = Path(path).resolve(strict=True)
+        signature = self._signature(source)
+        cached = self._entries.pop(source, None)
+        if cached is not None:
+            if cached[0] == signature and cached[3] is parser:
+                self._entries[source] = cached
+                return cached[1].copy(deep=True)
+            self._bytes -= cached[2]
+        table = parser(source)
+        size = int(table.memory_usage(index=True, deep=True).sum())
+        # Do not reuse a partial read if a writer changed the file while parsing.
+        if self._signature(source) == signature and size <= self.max_bytes:
+            while self._entries and (len(self._entries) >= self.max_entries or self._bytes + size > self.max_bytes):
+                _, (_, _, removed_size, _) = self._entries.popitem(last=False)
+                self._bytes -= removed_size
+            self._entries[source] = signature, table, size, parser
+            self._bytes += size
+            return table.copy(deep=True)
+        return table
 
 
 def _column_to_series(df: pd.DataFrame, column: str | int) -> pd.Series:
@@ -172,9 +224,10 @@ def load_curve(
     limit_q_range: bool = False,
     q_min: float | None = None,
     q_max: float | None = None,
+    table_cache: TableReadCache | None = None,
 ) -> CurveData:
     file_path = Path(path)
-    df = read_table(file_path)
+    df = read_table(file_path) if table_cache is None else table_cache.read(file_path, read_table)
     if isinstance(error_column, str) and not error_column.strip():
         error_column = None
     q = pd.to_numeric(_column_to_series(df, q_column), errors="coerce").to_numpy()

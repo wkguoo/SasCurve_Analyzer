@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from app.core.batch_import import infer_curve_columns
-from app.core.io import apply_q_import_range_filter, read_table
+from app.core.io import apply_q_import_range_filter, read_table, TableReadCache
 
 
 @dataclass(frozen=True)
@@ -65,10 +65,11 @@ def preview_curve_file(
     q_min: float | None = None,
     q_max: float | None = None,
     max_rows: int = 5,
+    table_cache: TableReadCache | None = None,
 ) -> ImportPreview:
     file_path = Path(path)
     try:
-        df = read_table(file_path)
+        df = read_table(file_path) if table_cache is None else table_cache.read(file_path, read_table)
     except Exception as exc:
         return ImportPreview(path=str(file_path), status="error", messages=[f"发生了什么：无法读取表格数据。", f"技术细节：{exc}"])
 

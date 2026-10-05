@@ -11,6 +11,7 @@ import pandas as pd
 from app.core.auto_batch_schema import AutoBatchConfig
 from app.core.batch_import import import_in_situ_series, natural_sort_key
 from app.core.data_model import CurveData
+from app.core.io import TableReadCache
 
 
 SUPPORTED_CURVE_EXTENSIONS = {".csv", ".txt", ".dat"}
@@ -203,6 +204,7 @@ def collect_batch_inputs(
     *,
     input_paths: Sequence[str | Path] | None = None,
     input_metadata: Mapping[str, Mapping[str, Any]] | None = None,
+    table_cache: TableReadCache | None = None,
 ) -> BatchInputCollection:
     """Import calibrated curves and merge optional CSV metadata in memory only."""
     root, paths = _resolve_input_paths(input_dir, input_paths)
@@ -233,6 +235,7 @@ def collect_batch_inputs(
         source_q_unit_override=config.q_unit_override,
         source_intensity_unit_override=config.intensity_unit_override,
         target_q_unit="A^-1",
+        **({"table_cache": table_cache} if table_cache is not None else {}),
     )
 
     metadata = None if config.metadata_path is None else load_metadata_table(config.metadata_path)

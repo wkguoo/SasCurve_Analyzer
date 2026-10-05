@@ -1,5 +1,38 @@
 # Developer Notes
 
+## 2026-10-05 - Agent workflow efficiency
+
+Reason/root cause: the repository's template advertised full pytest and whole-application compilation without an impact route; pytest's cache provider was disabled. CI always ran the headless pair and full GUI suite. `study._resolve_sample_config` imported complete curves before `run_auto_batch` imported them again, GUI column detection/preview/import parsed the same file repeatedly, encoding retries reopened source files, and resume traversed/hash-verified each old package twice. CLI method queries imported study execution eagerly.
+
+Available historical trace: the local project-purpose session `01a0e14d-4863-73e2-b67c-714a446f2d08` (2026-09-27) contains one tool call requesting README's first 220 lines and the domain route's first 160 lines. It supports the unnecessary domain pre-read finding, not a frequency estimate or a claim of observed repeated full tests. Runtime findings below come from executing the actual code paths, not imagined agent traces. There are no repository-owned skill files; the project routes and CI/local check contract were changed, leaving externally installed skills outside this repository's scope.
+
+Implementation/touched modules: lightweight `AGENTS.md`, conditional domain/development/study docs; `scripts/select_tests.py`, pytest config and CI; `io.TableReadCache` and its optional propagation through preview, batch import/collector, auto batch, study and GUI import; CLI lazy imports; focused cache/selection/CLI/resume/widget regressions. The selector is an explicit allowlist with full fallback, not a repository map or dependency-cache framework. CI computes one plan, passes it to consumers and fetches just the comparison commit. Documentation skips dependency/test jobs; current mapped leaves use core plus consumer tests.
+
+Cache contract: only successful raw tables; canonical path plus parser identity and `(dev, ino, size, mtime_ns, ctime_ns)`; stat before/after cold reads; copies on reuse; GUI one selection action, study at most its selected frame count, both bounded to 64 MiB. Old entries are evicted, oversized tables are not retained and study tables are released after compute. GUI selection shares detection/initial preview, then clears its cache; later refresh/import reads current bytes. There is no persistent table cache, analysis-result substitution, or sidecar parser/dtype change. q-domain preview now disables its unneeded sidecar read; formal import and frame planning keep their existing metadata behavior. The original import's q-unit conversion, q filtering, identity/metadata merge, diagnostics and SHA manifests run with current configuration. Input snapshot/manifest/post-analysis/copy hashes and cross-run input/config/version/output verification remain authoritative. The redundant second package verification is removed because the same invocation has already verified all prior packages before processing.
+
+Measurement (`py -3.13 scripts/benchmark_agent_workflow.py`, Python 3.13.0, baseline `d7304e0`; same machine):
+
+| Common operation | Before | After |
+| --- | --- | --- |
+| Method query cold start, median of 3 processes | 2.2667 s; 1,290 modules | 0.6041 s; 433 modules |
+| Detect columns, preview twice, import one 120-row curve | 4 reads / 4 parses / 3 repeated reads | 1 read / 1 parse / 0 repeated reads |
+| GUI select file, initial preview, then import | 3 table parses | 2 parses; fresh bytes at import |
+| Same path with a 20,000-row UTF-8 table, paired current-code control | Cache bypass: 4 reads / 4 parses, 0.1904 s | Cache enabled: 1 read / 1 parse, 0.0421 s; arrays exactly equal |
+| Fresh 2-sample, 4-frame study, real PNG export | 8 curve parses; 24 source reads | 4 curve parses; 20 source reads |
+| Resume those 2 completed packages | 4 full inventory verifications; 0.5364 s | 2 verifications; 0.2458 s; no curve parse or compute |
+| q-domain preview with a sidecar, paired control | 1 sidecar parse | 0 sidecar parses; formal import retains frame 77/78 and time 0/10 |
+| Study outputs | 174 artifacts, 4 curves, `completed_with_limitations`, common q = 0.005–0.2 A^-1 | Same counts, status and q bounds |
+| Documentation-only local/CI test plan | Advertised full suite / 3 CI test jobs | No runtime suite/dependency jobs |
+| Message formatter edit via selector | Advertised full suite | 7 core/GUI consumer tests, passed in 5.05 s |
+
+Read counts above include necessary SHA reads and source copies, which intentionally remain. Small-study baseline was 7.1729 seconds, with isolated after-runs between 6.5535 and 7.4738 seconds; no stable overall study speedup is claimed. An earlier after-run overlapped tests and is excluded from timing evidence. Parsing/query/resume counts and the large-table paired control are the useful evidence. Timings are local observations, not platform guarantees. The benchmark uses generated calibrated curves with A^-1/nm^-1 headers and missing errors, actual numerics and PNG packaging, asserts resume reuse, and deletes its temporary inputs/packages. Optional JSON receipts are task-local and removed before handoff; durable counts are here.
+
+Checks: baseline affected scope 88 passed; first modified scope 95 passed, including corrupt source/output refusal and the real CLI export/resume; selector-driven message edit 7 passed; documentation selector ran no pytest; workflow structure and touched documentation links passed. The first integrated suite passed 664 tests in 55.20 seconds; after the review-triggered GUI/sidecar fixes and added regression/CI-plan coverage, the final shared-boundary suite passed **668 tests in 47.24 seconds**, with the same three existing SciPy peak-property warnings. No compile-all or duplicate integrity pass was added. The final benchmark again produced 174 real artifacts and identical resume records. Final diff review found only the intended 22 code/config/test/documentation files. Hosted CI status is verified after the authorized push.
+
+Review repair: a long-lived GUI stat cache could serve old values after a same-size in-place rewrite with restored mtime, because [Python 3.11 Windows ctime means creation time](https://docs.python.org/3.11/library/os.html#os.stat_result). A reproducing test observed intensity 10 instead of 20. The final UI cache is limited to one selection action, with fresh reads for later explicit refresh/import; the regression models Windows signatures on both CI platforms. Review also found the unnecessary sidecar parse during q-domain preview; it is removed without changing formal metadata matching. An initial regression-fixture error assumed `ProjectState.curves` was a dict; the fixture was corrected to the existing list contract before reproducing and repairing the stale-import failure.
+
+Limits/follow-up: tables beyond the memory budget may need parsing again. A stat signature is task-local reuse evidence, not cryptographic source identity; source/publication/resume SHA checks remain necessary. No user experimental data was supplied, so this demonstrates engineering behavior, not scientific model acceptance. The external skill's narrowest-meaningful-check rule agrees with the new local routing; no duplicate skill-driven verification layer was added.
+
 ## 2026-09-30 - Agent-first study pipeline and export provenance
 
 Symptom/reason: the existing core batch API and export helpers were disconnected; flat-folder batches could mix different samples in consensus windows, model selection and sequence comparisons. The tiered result package omitted q/I arrays and did not generate figures. q-unit overrides occurred after cropping, and registry metrics defaulted to dimensionless units.
