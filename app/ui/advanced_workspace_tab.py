@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
+from app.ui.widgets import scroll_page
 
 
 class AdvancedWorkspaceTab(QWidget):
@@ -11,12 +12,12 @@ class AdvancedWorkspaceTab(QWidget):
         self.batch_tab = batch_tab
         self.tabs = QTabWidget()
         self.tabs.setObjectName("advancedWorkspaceTabs")
-        self.tabs.addTab(self.advanced_tab, "高级方法")
-        self.tabs.addTab(self.deep_analysis_tab, "深度分析")
-        self.tabs.addTab(self.batch_tab, "批量比较")
+        self.tabs.addTab(scroll_page(self.advanced_tab), "高级方法")
+        self.tabs.addTab(scroll_page(self.deep_analysis_tab), "深度分析")
+        self.tabs.addTab(scroll_page(self.batch_tab), "批量比较")
         if auto_batch_tab is not None:
             self.auto_batch_tab = auto_batch_tab
-            self.tabs.addTab(auto_batch_tab, "全自动批量分析")
+            self.tabs.addTab(scroll_page(auto_batch_tab), "全自动批量分析")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

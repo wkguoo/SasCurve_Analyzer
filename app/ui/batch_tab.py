@@ -7,7 +7,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
-    QHBoxLayout,
     QLineEdit,
     QListWidget,
     QTableWidget,
@@ -22,6 +21,7 @@ from app.core.comparison import compare_curves
 from app.core.records import create_history_record
 from app.core.user_messages import UserMessage, exception_detail, format_user_message
 from app.ui.style import action_button, apply_help
+from app.ui.widgets import FlowLayout
 
 
 class BatchTab(QWidget):
@@ -147,20 +147,18 @@ class BatchTab(QWidget):
         form.addRow("比较类型", self.comparison_type)
         layout.addWidget(self.curve_list)
         layout.addLayout(form)
-        sequence_buttons = QHBoxLayout()
+        sequence_buttons = FlowLayout()
         sequence_buttons.addWidget(refresh_sequence_button)
         sequence_buttons.addWidget(select_sequence_button)
         sequence_buttons.addWidget(group_sequence_button)
         sequence_buttons.addWidget(export_sequence_button)
-        sequence_buttons.addStretch(1)
         layout.addLayout(sequence_buttons)
         layout.addWidget(self.sequence_table)
-        buttons = QHBoxLayout()
+        buttons = FlowLayout()
         buttons.addWidget(refresh_button)
         buttons.addWidget(group_button)
         buttons.addWidget(average_button)
         buttons.addWidget(compare_button)
-        buttons.addStretch(1)
         layout.addLayout(buttons)
         layout.addWidget(self.output, 1)
         self.refresh_curves()

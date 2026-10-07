@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pathlib import Path
-
 from PySide6.QtWidgets import QFileDialog, QGroupBox, QLabel, QMessageBox, QTextEdit, QVBoxLayout, QWidget
 
 from app.core.export import (
@@ -17,6 +15,7 @@ from app.core.export import (
 from app.core.records import create_history_record
 from app.core.user_messages import exception_detail, format_user_message, UserMessage
 from app.ui.style import action_button
+from app.ui.widgets import FlowLayout
 
 
 class ExportTab(QWidget):
@@ -61,17 +60,33 @@ class ExportTab(QWidget):
 
         self.output = QTextEdit()
         self.output.setReadOnly(True)
+        self.output.setPlaceholderText("选择导出方式和目标文件夹后，这里显示文件路径或失败原因。")
+        self.output.setMinimumHeight(160)
+        self.output.setMaximumHeight(280)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(10)
 
-        basic_group = QGroupBox("基础导出")
+        basic_group = QGroupBox("曲线与项目特征")
         basic_layout = QVBoxLayout(basic_group)
-        basic_layout.addWidget(export_curve_button)
-        basic_layout.addWidget(export_feature_button)
-        basic_layout.addWidget(export_origin_long_button)
-        basic_layout.addWidget(export_origin_matrix_button)
+        basic_note = QLabel("曲线 CSV 导出当前选中曲线的 q、I(q) 与可选误差；feature_table.csv 汇总项目已有曲线和分析结果。")
+        basic_note.setWordWrap(True)
+        basic_layout.addWidget(basic_note)
+        basic_actions = FlowLayout()
+        basic_actions.addWidget(export_curve_button)
+        basic_actions.addWidget(export_feature_button)
+        basic_layout.addLayout(basic_actions)
+
+        origin_group = QGroupBox("Origin 表格")
+        origin_layout = QVBoxLayout(origin_group)
+        origin_note = QLabel("长表：一行一个 q-I 点，附导入说明。矩阵表：仅适用于 q 网格一致的曲线，不自动插值。")
+        origin_note.setWordWrap(True)
+        origin_layout.addWidget(origin_note)
+        origin_actions = FlowLayout()
+        origin_actions.addWidget(export_origin_long_button)
+        origin_actions.addWidget(export_origin_matrix_button)
+        origin_layout.addLayout(origin_actions)
 
         transform_group = QGroupBox("第一手转换数据")
         transform_layout = QVBoxLayout(transform_group)
@@ -81,8 +96,11 @@ class ExportTab(QWidget):
         transform_layout.addWidget(export_transform_button)
 
         layout.addWidget(basic_group)
+        layout.addWidget(origin_group)
         layout.addWidget(transform_group)
-        layout.addWidget(self.output, 1)
+        layout.addWidget(QLabel("导出结果"))
+        layout.addWidget(self.output)
+        layout.addStretch()
 
     def _choose_folder(self) -> Path | None:
         folder = QFileDialog.getExistingDirectory(self, "选择导出文件夹", self.main_window.settings.default_export_dir)

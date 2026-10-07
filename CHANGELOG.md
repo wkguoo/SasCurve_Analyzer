@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-10-07 - Improve the desktop analysis workflow and UI consistency
+
+- Reused the four workspaces and action roles; added a searchable curve sidebar, current-data summary and project save state. Replaced overflowing action rows with wrapping layouts, scrollable forms and an adaptive plot/analysis workspace. The font-loaded baseline required 2422×1022; the updated UI supports 900×640 and was visually checked at 1440×900 and 1000×720.
+- Grouped import, preview/logs, output and formal records; made q filtering explicit without changing its defaults. Same-name records retain unique IDs. Plot options can collapse without resetting settings; empty projects clear the prior plot. Results and warnings precede preflight details, and plot fonts support Chinese labels with math-symbol fallback.
+- Integrated consistent Chinese hover/status/F1 help, including dropdown options, dynamically rebuilt sources and dialogs. Fixed empty batch input being interpreted as the current directory, duplicate batch starts, closing while a batch runs, and stale candidate regions after changing curves.
+- Validation: offscreen synthetic workflow checks import, analysis, PNG/CSV exports, A/B comparison, averaging, bounded background batch packaging and project roundtrip; 16 screenshots inspected. Source-byte hashes and curve IDs retained. The batch UI check uses two synthetic frames and the existing sphere model; partial-success/assumption limits remain visible. Integrated pytest and final Git checks are recorded in developer notes. Numerical algorithms and applicability gates are unchanged.
+
 ## 2026-10-05 - Merge SAXS input semantics with current workflow reuse
 
 - Resolved the input-preview and CI conflicts by retaining raw-table reuse, parsed-byte/source-snapshot verification and explicit uncertainty classification together. Preview and import share one raw parse while series/unknown uncertainty stays outside measured fitting sigma.

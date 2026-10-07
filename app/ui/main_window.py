@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QCloseEvent
-from PySide6.QtWidgets import QFileDialog, QListWidget, QMainWindow, QMessageBox, QSplitter, QTabWidget
+from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QSizePolicy, QSplitter, QTabWidget, QVBoxLayout, QWidget
 
 from app.core.data_model import CurveData
 from app.core.project import ProjectState, load_project, save_project
@@ -25,15 +26,17 @@ from app.ui.import_tab import ImportTab
 from app.ui.plotting_tab import PlottingTab
 from app.ui.records_tab import RecordsTab
 from app.ui.settings_dialog import SettingsDialog
-from app.ui.style import apply_help
+from app.ui.style import action_button, apply_help
 from app.ui.templates_tab import TemplatesTab
+from app.ui.widgets import configure_combo, configure_table, scroll_page
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("SAS Curve Analyzer")
-        self.resize(1240, 780)
+        self.resize(1440, 900)
+        self.setMinimumSize(900, 640)
         self.project = ProjectState()
         self.current_project_folder: Path | None = None
         self._saved_revision = self.project.revision
@@ -66,9 +69,9 @@ class MainWindow(QMainWindow):
 
         self.output_tabs = QTabWidget()
         self.output_tabs.setObjectName("outputTabs")
-        self.output_tabs.addTab(self.records_tab, "历史与正式记录")
-        self.output_tabs.addTab(self.export_tab, "导出报告")
-        self.output_tabs.addTab(self.templates_tab, "分析模板")
+        self.output_tabs.addTab(scroll_page(self.records_tab), "历史与正式记录")
+        self.output_tabs.addTab(scroll_page(self.export_tab), "导出报告")
+        self.output_tabs.addTab(scroll_page(self.templates_tab), "分析模板")
 
         self.data_import_workspace_tab = DataImportWorkspaceTab(self.import_tab, self.check_tab)
         self.curve_workspace_tab = CurveWorkspaceTab(self.plotting_tab, self.analysis_tab)
@@ -87,35 +90,152 @@ class MainWindow(QMainWindow):
         settings_action.setStatusTip("配置默认 q 单位、图像格式、误差检查和导出目录。")
         settings_action.triggered.connect(self.open_settings)
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self.curve_list)
-        splitter.addWidget(self.tabs)
-        splitter.setChildrenCollapsible(False)
-        splitter.setSizes([285, 955])
-        self.setCentralWidget(splitter)
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter.addWidget(self._build_sidebar())
+        self.main_splitter.addWidget(self.tabs)
+        self.main_splitter.setChildrenCollapsible(False)
+        self.main_splitter.setHandleWidth(8)
+        self.main_splitter.setStretchFactor(0, 0)
+        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setSizes([240, 1200])
+
+        header = QWidget()
+        header.setObjectName("workspaceHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(16, 10, 16, 10)
+        brand = QLabel("SAS Curve Analyzer")
+        brand.setObjectName("brandTitle")
+        subtitle = QLabel("一维小角散射曲线分析")
+        subtitle.setProperty("uiRole", "muted")
+        header_layout.addWidget(brand)
+        header_layout.addWidget(subtitle)
+        header_layout.addStretch(1)
+        self.project_state = QLabel()
+        self.project_state.setObjectName("projectState")
+        self.project_state.setTextFormat(Qt.PlainText)
+        self.project_state.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        header_layout.addWidget(self.project_state, 1)
+
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(12, 10, 12, 8)
+        layout.setSpacing(10)
+        layout.addWidget(header)
+        layout.addWidget(self.main_splitter, 1)
+        self.setCentralWidget(central)
+
+        from PySide6.QtWidgets import QComboBox, QTableWidget
+        for combo in self.findChildren(QComboBox):
+            configure_combo(combo)
+        for table in self.findChildren(QTableWidget):
+            configure_table(table)
 
         self.statusBar().showMessage("请导入已经完成绝对强度校准的一维 SAS 曲线。")
+        self._update_curve_context()
         self._update_window_title()
+        from app.ui.help_texts import install_ui_help
+        install_ui_help(self)
+
+    def _build_sidebar(self) -> QWidget:
+        sidebar = QWidget()
+        sidebar.setObjectName("projectSidebar")
+        sidebar.setMinimumWidth(200)
+        sidebar.setMaximumWidth(300)
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(12, 14, 12, 14)
+        layout.setSpacing(10)
+        title = QLabel("项目曲线")
+        title.setProperty("uiRole", "heading")
+        self.curve_count = QLabel("0 条曲线")
+        self.curve_count.setObjectName("curveCount")
+        self.curve_search = QLineEdit()
+        self.curve_search.setObjectName("curveSearch")
+        self.curve_search.setPlaceholderText("搜索曲线名称或单位")
+        self.curve_search.setClearButtonEnabled(True)
+        self.curve_search.textChanged.connect(self._filter_curve_list)
+        self.sidebar_hint = QLabel("尚未导入曲线。\n从数据导入开始，再检查数据并分析。")
+        self.sidebar_hint.setWordWrap(True)
+        self.sidebar_hint.setProperty("uiRole", "muted")
+        self.curve_summary = QLabel()
+        self.curve_summary.setObjectName("curveSummary")
+        self.curve_summary.setTextFormat(Qt.PlainText)
+        self.curve_summary.setWordWrap(True)
+        self.curve_summary.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        import_button = action_button("导入数据", role="primary")
+        import_button.setObjectName("sidebarImportButton")
+        import_button.clicked.connect(self.show_import_tab)
+        plot_button = action_button("查看曲线与分析", role="secondary")
+        plot_button.setObjectName("sidebarPlotButton")
+        plot_button.clicked.connect(self.show_plotting_tab)
+        layout.addWidget(title)
+        layout.addWidget(self.curve_count)
+        layout.addWidget(self.curve_search)
+        layout.addWidget(self.sidebar_hint)
+        layout.addWidget(self.curve_list, 1)
+        layout.addWidget(self.curve_summary)
+        layout.addWidget(import_button)
+        layout.addWidget(plot_button)
+        search_action = QAction(self)
+        search_action.setShortcut(QKeySequence("Ctrl+F"))
+        search_action.triggered.connect(self.curve_search.setFocus)
+        self.addAction(search_action)
+        return sidebar
+
+    def show_import_tab(self) -> None:
+        self.tabs.setCurrentWidget(self.data_import_workspace_tab)
+        self.data_import_workspace_tab.tabs.setCurrentIndex(0)
+
+    def _filter_curve_list(self, text: str = "") -> None:
+        query = text.strip().casefold()
+        visible = 0
+        for index in range(self.curve_list.count()):
+            item = self.curve_list.item(index)
+            hidden = query not in item.text().casefold()
+            item.setHidden(hidden)
+            visible += not hidden
+        total = self.curve_list.count()
+        self.curve_count.setText(f"{visible} / {total} 条曲线" if query else f"{total} 条曲线")
+        self.sidebar_hint.setVisible(total == 0 or visible == 0)
+        self.sidebar_hint.setText("没有匹配的曲线，请修改或清除搜索。" if total else "尚未导入曲线。\n从数据导入开始，再检查数据并分析。")
+
+    def _update_curve_context(self) -> None:
+        if not hasattr(self, "curve_summary"):
+            return
+        self._filter_curve_list(self.curve_search.text())
+        curve = self.current_curve()
+        if curve is None:
+            self.curve_summary.setText("选择曲线后，这里显示点数、单位与测量范围。")
+            return
+        q = curve.q[np.isfinite(curve.q)]
+        q_range = f"{q.min():.5g} – {q.max():.5g}" if q.size else "无有限值"
+        self.curve_summary.setText(
+            f"当前曲线\n{curve.name}\n\n{curve.q.size} 个数据点\n"
+            f"q：{q_range} {curve.q_unit}\nI(q)：{curve.intensity_unit}"
+        )
 
     def _create_project_menu(self) -> None:
         project_menu = self.menuBar().addMenu("项目")
 
         new_action = QAction("新建项目", self)
+        new_action.setShortcut(QKeySequence.New)
         new_action.setStatusTip("清空当前项目状态并开始一个新项目。")
         new_action.triggered.connect(self.new_project)
         project_menu.addAction(new_action)
 
         open_action = QAction("打开项目...", self)
+        open_action.setShortcut(QKeySequence.Open)
         open_action.setStatusTip("从包含 project.json 的文件夹恢复项目。")
         open_action.triggered.connect(self.open_project_dialog)
         project_menu.addAction(open_action)
 
         save_action = QAction("保存项目", self)
+        save_action.setShortcut(QKeySequence.Save)
         save_action.setStatusTip("保存到当前项目文件夹；若尚未选择文件夹则执行另存为。")
         save_action.triggered.connect(self.save_project)
         project_menu.addAction(save_action)
 
         save_as_action = QAction("另存为项目...", self)
+        save_as_action.setShortcut(QKeySequence.SaveAs)
         save_as_action.setStatusTip("选择文件夹并保存当前项目。")
         save_as_action.triggered.connect(self.save_project_as_dialog)
         project_menu.addAction(save_as_action)
@@ -174,13 +294,17 @@ class MainWindow(QMainWindow):
 
     def add_curve(self, curve: CurveData) -> None:
         self.project.add_curve(curve)
+        self.curve_search.clear()
         self._append_curve_list_item(curve)
         self.curve_list.setCurrentRow(len(self.project.curves) - 1)
         self.statusBar().showMessage(f"已导入曲线: {curve.name}")
         self._update_window_title()
 
     def _append_curve_list_item(self, curve: CurveData) -> None:
-        self.curve_list.addItem(f"{curve.name}  [{curve.q_unit}]")
+        item = QListWidgetItem(f"{curve.name}  [{curve.q_unit}]")
+        item.setData(Qt.UserRole, curve.curve_id)
+        item.setToolTip(f"{curve.name}\nq：{curve.q_unit} · I(q)：{curve.intensity_unit}\nID：{curve.curve_id}")
+        self.curve_list.addItem(item)
 
     def refresh_curve_list(self, selected_row: int | None = None) -> None:
         previous_row = self.curve_list.currentRow()
@@ -194,6 +318,7 @@ class MainWindow(QMainWindow):
             row = max(0, min(row, len(self.project.curves) - 1))
             self.curve_list.setCurrentRow(row)
         self.refresh_curve_dependent_controls()
+        self._update_curve_context()
 
     def refresh_curve_dependent_controls(self) -> None:
         if hasattr(self, "batch_tab"):
@@ -211,6 +336,7 @@ class MainWindow(QMainWindow):
         self.add_curve(curve)
 
     def _on_curve_selection_changed(self) -> None:
+        self._update_curve_context()
         self.check_tab.refresh()
         self.plotting_tab.refresh()
         self.analysis_tab.refresh_results()
@@ -232,9 +358,13 @@ class MainWindow(QMainWindow):
         self._update_window_title()
 
     def _update_window_title(self) -> None:
-        project_name = "Untitled" if self.current_project_folder is None else self.current_project_folder.name
+        project_name = "未命名项目" if self.current_project_folder is None else self.current_project_folder.name
         dirty_marker = " *" if self.is_project_dirty() else ""
         self.setWindowTitle(f"SAS Curve Analyzer - {project_name}{dirty_marker}")
+        if hasattr(self, "project_state"):
+            state = "未保存更改" if self.is_project_dirty() else ("尚未保存" if self.current_project_folder is None else "已保存")
+            self.project_state.setText(f"{project_name} · {state}")
+            self.project_state.setToolTip(f"{project_name} · {state}")
 
     def _handle_unsaved_changes_before_destructive_action(self) -> bool:
         if not self.is_project_dirty():
@@ -262,6 +392,7 @@ class MainWindow(QMainWindow):
         return self._handle_unsaved_changes_before_destructive_action()
 
     def _refresh_all_project_views(self) -> None:
+        self._update_curve_context()
         self.refresh_curve_dependent_controls()
         self.check_tab.refresh()
         self.plotting_tab.refresh()
@@ -406,6 +537,12 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(message.title)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self.auto_batch_tab.is_running():
+            self.tabs.setCurrentWidget(self.advanced_workspace_tab)
+            self.advanced_workspace_tab.tabs.setCurrentIndex(3)
+            self.statusBar().showMessage("批量分析仍在运行。请等待完成，或点击取消并等待结果保存后关闭。")
+            event.ignore()
+            return
         if not self.isVisible():
             event.accept()
             return

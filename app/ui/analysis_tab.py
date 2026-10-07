@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QTextEdit, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QLabel, QTextEdit, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 
 from app.core.analysis_preflight import check_analysis_preflight, format_analysis_preflight
 from app.core.auto_regions import AutoRegionCandidate, detect_auto_regions, region_type_label, run_analysis_for_region
@@ -15,6 +15,7 @@ from app.core.plotting import display_x_limits_to_q_range_for_curve, transform_x
 from app.core.records import create_history_record
 from app.core.user_messages import exception_detail, format_user_message, UserMessage
 from app.ui.style import action_button, apply_help
+from app.ui.widgets import FlowLayout, configure_combo, configure_table
 
 
 ANALYSIS_TYPE_ITEMS = [
@@ -49,6 +50,7 @@ class AnalysisTab(QWidget):
         self.title_label = QLabel("曲线分析")
         self.title_label.setObjectName("curveAnalysisTitle")
         self.analysis_type = QComboBox()
+        configure_combo(self.analysis_type)
         for label, key in ANALYSIS_TYPE_ITEMS:
             self.analysis_type.addItem(label, key)
         apply_help(
@@ -69,12 +71,12 @@ class AnalysisTab(QWidget):
         self.q_max.valueChanged.connect(lambda _value: self._set_manual_range_source())
         apply_help(
             self.q_min,
-            tooltip="分析前请确认有效 q 下限；默认值为 0.01 Å⁻¹。",
+            tooltip="分析前请确认有效 q 下限；默认值为 0.01，单位与当前曲线一致。",
             status_tip="输入本次分析使用的 raw q 最小值。",
         )
         apply_help(
             self.q_max,
-            tooltip="分析前请确认有效 q 上限；默认值为 0.05 Å⁻¹。",
+            tooltip="分析前请确认有效 q 上限；默认值为 0.05，单位与当前曲线一致。",
             status_tip="输入本次分析使用的 raw q 最大值。",
         )
 
@@ -110,33 +112,41 @@ class AnalysisTab(QWidget):
 
         self.output = QTextEdit()
         self.output.setReadOnly(True)
+        self.output.setMinimumHeight(160)
+        self.output.setPlaceholderText("选中曲线 → 确认有效 q 范围 → 检查范围 → 运行分析。\n结果的适用条件和警告将显示在此处。")
         self.auto_region_candidates: list[AutoRegionCandidate] = []
         self.auto_region_detection_result = None
         self._auto_region_filled_candidate_id: str | None = None
         self._auto_region_filled_q_range: tuple[float, float] | None = None
         self.auto_region_group = self._build_auto_region_group()
+        self.auto_region_toggle = action_button("自动识别 q 区间", role="quiet", tooltip="展开候选区间工具；候选区不等同于结构结论。")
+        self.auto_region_toggle.setObjectName("autoRegionToggle")
+        self.auto_region_toggle.setCheckable(True)
+        self.auto_region_toggle.toggled.connect(self.auto_region_group.setVisible)
 
         form = QFormLayout()
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         form.addRow("分析类型", self.analysis_type)
-        form.addRow("有效 q_min (Å⁻¹)", self.q_min)
-        form.addRow("有效 q_max (Å⁻¹)", self.q_max)
+        form.addRow("有效 q_min（当前曲线单位）", self.q_min)
+        form.addRow("有效 q_max（当前曲线单位）", self.q_max)
 
-        controls = QHBoxLayout()
-        controls.addWidget(fill_button)
-        controls.addWidget(preflight_button)
-        controls.addWidget(plot_range_button)
-        controls.addWidget(linked_plot_button)
+        controls = FlowLayout()
         controls.addWidget(run_button)
-        controls.addStretch(1)
+        controls.addWidget(preflight_button)
+        controls.addWidget(linked_plot_button)
+        controls.addWidget(fill_button)
+        controls.addWidget(plot_range_button)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(10)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
         layout.addWidget(self.title_label)
         layout.addLayout(form)
-        layout.addWidget(self.auto_region_group)
         layout.addLayout(controls)
+        layout.addWidget(self.auto_region_toggle)
+        layout.addWidget(self.auto_region_group)
         layout.addWidget(self.output, 1)
+        self.auto_region_group.hide()
 
     def _build_auto_region_group(self) -> QGroupBox:
         group = QGroupBox("自动识别 q 区间")
@@ -158,24 +168,28 @@ class AnalysisTab(QWidget):
 
         self.auto_region_table = QTableWidget(0, 8)
         self.auto_region_table.setHorizontalHeaderLabels(["类型", "q 范围", "d 范围", "点数", "评分", "等级", "推荐操作", "警告"])
-        self.auto_region_table.setAlternatingRowColors(True)
-        self.auto_region_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        configure_table(self.auto_region_table)
         self.auto_region_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.auto_region_table.setMinimumHeight(140)
+        self.auto_region_table.setMaximumHeight(210)
         self.auto_region_table.itemSelectionChanged.connect(self._refresh_auto_region_detail)
 
         self.auto_region_detail = QTextEdit()
         self.auto_region_detail.setReadOnly(True)
-        self.auto_region_detail.setMaximumHeight(120)
+        self.auto_region_detail.setMaximumHeight(100)
+        self.auto_region_detail.setPlaceholderText("识别区间后选择一行，复核检测指标、适用条件和警告。")
 
-        button_row = QHBoxLayout()
-        button_row.addWidget(fill_full_range_button)
+        button_row = FlowLayout()
         button_row.addWidget(detect_button)
+        button_row.addWidget(fill_full_range_button)
         button_row.addWidget(fill_region_button)
         button_row.addWidget(run_region_button)
         button_row.addWidget(export_region_button)
-        button_row.addStretch(1)
 
         layout = QVBoxLayout(group)
+        guidance = QLabel("自动识别生成候选分析区间；请复核适用条件。候选区不等同于结构结论。")
+        guidance.setWordWrap(True)
+        layout.addWidget(guidance)
         layout.addLayout(button_row)
         layout.addWidget(self.auto_region_table)
         layout.addWidget(self.auto_region_detail)
@@ -341,13 +355,17 @@ class AnalysisTab(QWidget):
         if self.auto_region_candidates:
             self.auto_region_table.selectRow(0)
         self.auto_region_table.resizeColumnsToContents()
+        for column in range(self.auto_region_table.columnCount()):
+            self.auto_region_table.setColumnWidth(column, min(220, self.auto_region_table.columnWidth(column)))
         self._refresh_auto_region_detail()
 
     def _selected_auto_region(self) -> AutoRegionCandidate | None:
         row = self.auto_region_table.currentRow()
         if row < 0 or row >= len(self.auto_region_candidates):
             return None
-        return self.auto_region_candidates[row]
+        candidate = self.auto_region_candidates[row]
+        curve = self.main_window.current_curve()
+        return candidate if curve is not None and candidate.curve_id == curve.curve_id else None
 
     def _refresh_auto_region_detail(self) -> None:
         candidate = self._selected_auto_region()
@@ -626,10 +644,18 @@ class AnalysisTab(QWidget):
         )
         self.main_window.records_tab.refresh()
         self.main_window.mark_project_dirty()
-        self.output.setPlainText(preflight_text + "\n\n" + self._format_result(result))
+        self.output.setPlainText(self._format_result(result) + "\n\n" + preflight_text)
 
     def refresh_results(self) -> None:
         curve = self.main_window.current_curve()
+        detection = self.auto_region_detection_result
+        if detection is not None and (curve is None or detection.curve_id != curve.curve_id):
+            self.auto_region_candidates = []
+            self.auto_region_detection_result = None
+            self._auto_region_filled_candidate_id = None
+            self._auto_region_filled_q_range = None
+            self.auto_region_table.setRowCount(0)
+            self.auto_region_detail.setPlainText("曲线已切换，请为当前曲线重新识别 q 区间。")
         if curve is None:
             self.output.setPlainText("尚未选择曲线。")
             return
@@ -638,34 +664,20 @@ class AnalysisTab(QWidget):
         if not results:
             self.output.setPlainText("当前曲线尚无分析结果。")
             return
-        self.output.setPlainText("\n\n".join(self._format_result(result) for result in results))
+        self.output.setPlainText("\n\n".join(self._format_result(result) for result in reversed(results)))
 
     def _format_result(self, result) -> str:
+        plot_type = result.results.get("plot_type")
+        title = next((label for label, key in ANALYSIS_TYPE_ITEMS if key == plot_type), result.analysis_type)
+        if result.analysis_type == "auto_region_detection":
+            title = "自动 q 区间识别（候选区需复核）"
+        curve = self.main_window.project.get_curve(result.curve_id)
+        unit = curve.q_unit if curve is not None else "当前曲线单位"
         lines = [
-            f"analysis_id: {result.analysis_id}",
-            f"analysis_type: {result.analysis_type}",
-            f"plot_type: {result.results.get('plot_type')}",
-            f"q_range: {result.q_range}",
-            "",
-            "results:",
+            title,
+            f"分析 q 范围：{result.q_range[0]:.6g} – {result.q_range[1]:.6g} {unit}",
+            "", "适用条件与警告：",
         ]
-        for key, value in result.results.items():
-            if key == "export_tables":
-                table_counts = {name: len(rows) if hasattr(rows, "__len__") else 1 for name, rows in value.items()}
-                lines.append(f"- export_tables: {table_counts}")
-            elif isinstance(value, list):
-                lines.append(f"- {key}: list[{len(value)}]")
-            elif isinstance(value, dict):
-                scalar_items = {
-                    item_key: item_value
-                    for item_key, item_value in value.items()
-                    if isinstance(item_value, (str, int, float, bool)) or item_value is None
-                }
-                lines.append(f"- {key}: {scalar_items if scalar_items else 'dict'}")
-            else:
-                lines.append(f"- {key}: {value}")
-        lines.append("")
-        lines.append("warnings:")
         if getattr(result, "structured_warnings", None):
             for warning in result.structured_warnings:
                 lines.append(f"- {warning.get('warning_code')} [{warning.get('severity')}]: {warning.get('message')}")
@@ -673,4 +685,33 @@ class AnalysisTab(QWidget):
             lines.extend(f"- {warning}" for warning in result.warnings)
         else:
             lines.append("- 无")
+        lines.extend(["", "计算结果："])
+        labels = {
+            "formula": "计算公式", "fit_point_count": "拟合点数",
+            "filtered_point_count": "排除点数", "candidate_count": "候选区数量",
+            "Rg": "Rg（回转半径）", "I0": "I(0)", "R2": "R²",
+            "slope": "斜率", "intercept": "截距", "weighted_fit": "误差加权拟合",
+        }
+        for key, value in result.results.items():
+            if key in {"plot_type", "warnings"}:
+                continue
+            label = labels.get(key, key)
+            if key == "export_tables":
+                table_counts = {name: len(rows) if hasattr(rows, "__len__") else 1 for name, rows in value.items()}
+                lines.append(f"- 可导出表格行数：{table_counts}")
+            elif isinstance(value, list):
+                lines.append(f"- {label}：{len(value)} 项（完整内容保留在项目结果中）")
+            elif isinstance(value, dict):
+                scalar_items = {
+                    item_key: item_value
+                    for item_key, item_value in value.items()
+                    if isinstance(item_value, (str, int, float, bool)) or item_value is None
+                }
+                lines.append(f"- {label}：")
+                for item_key, item_value in scalar_items.items():
+                    lines.append(f"  {item_key}: {item_value}")
+            else:
+                display = f"{value:.6g}" if isinstance(value, (float, np.floating)) else value
+                lines.append(f"- {label}：{display}")
+        lines.extend(["", f"结果 ID：{result.analysis_id}"])
         return "\n".join(lines)

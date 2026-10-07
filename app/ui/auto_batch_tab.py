@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from threading import Event
+from shiboken6 import isValid
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 from PySide6.QtWidgets import (
@@ -197,10 +198,13 @@ class AutoBatchTab(QWidget):
             self.output_dir.setText(path)
 
     def start_run(self) -> None:
+        if self.is_running():
+            self.output.append("当前批量分析仍在运行；请等待完成或先取消。")
+            return
         source = Path(self.input_dir.text().strip())
         output = Path(self.output_dir.text().strip())
         batch_id = self.batch_id.text().strip()
-        if not source.is_dir() or not self.output_dir.text().strip() or not batch_id:
+        if not self.input_dir.text().strip() or not source.is_dir() or not self.output_dir.text().strip() or not batch_id:
             self.output.setPlainText("请填写有效的数据文件夹、结果父目录和批次名称。")
             return
         q_low = self.effective_q_min.value()
@@ -234,6 +238,9 @@ class AutoBatchTab(QWidget):
         self.thread.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
         self.thread.start()
+
+    def is_running(self) -> bool:
+        return self.thread is not None and isValid(self.thread) and self.thread.isRunning()
 
     @Slot()
     def cancel_run(self) -> None:

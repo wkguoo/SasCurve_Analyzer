@@ -23,6 +23,8 @@ python -m app.cli run --input "D:\SAS\input" --output "D:\SAS\derived\run_001" -
 
 The software is intended for materials researchers working with reduced 1D SAXS/SANS/WAXS-SAXS curve files. It focuses on practical curve inspection, non-destructive data handling, model-free feature extraction, batch comparison, and traceable reporting.
 
+The desktop UI provides searchable curves, adaptive plot/analysis panes, grouped import/export controls and Chinese hover/F1 help. See the [user manual](docs/user_manual_zh.md) and [UI help](docs/ui_help_zh.md). To reproduce offscreen UI checks with synthetic data, run `python scripts/check_ui_quality.py`; it saves screenshots and a verification receipt without using the desktop.
+
 ## Scope
 
 Supported input data:

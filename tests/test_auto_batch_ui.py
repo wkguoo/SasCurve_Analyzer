@@ -2,7 +2,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QScrollArea
 
 from app.ui.main_window import MainWindow
 
@@ -20,7 +20,13 @@ def test_main_window_exposes_auto_batch_tab(tmp_path) -> None:
         tab.input_dir.setText(str(tmp_path / "missing"))
         tab.start_run()
         assert "有效的数据文件夹" in tab.output.toPlainText()
-        assert window.advanced_workspace_tab.tabs.indexOf(tab) >= 0
+        pages = window.advanced_workspace_tab.tabs
+        assert any(
+            isinstance(pages.widget(index), QScrollArea)
+            and pages.widget(index).widget() is tab
+            and pages.tabText(index) == "全自动批量分析"
+            for index in range(pages.count())
+        )
     finally:
         window.close()
 

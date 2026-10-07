@@ -7,10 +7,12 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QSizePolicy,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -23,6 +25,7 @@ from app.core.records import create_history_record
 from app.core.transforms import convert_q_unit
 from app.core.user_messages import exception_detail, format_user_message, UserMessage
 from app.ui.style import action_button, apply_help
+from app.ui.widgets import FlowLayout
 
 
 class ImportTab(QWidget):
@@ -48,11 +51,15 @@ class ImportTab(QWidget):
         choose_button.clicked.connect(self.choose_file)
 
         self.q_column = QLineEdit("q")
+        self.q_column.setPlaceholderText("例如 q")
         self.intensity_column = QLineEdit("I")
+        self.intensity_column.setPlaceholderText("例如 I")
         self.error_column = QLineEdit("")
         self.error_column.setPlaceholderText("留空表示无误差列")
         self.q_unit = QLineEdit(self.main_window.settings.default_q_unit)
         self.intensity_unit = QLineEdit("cm^-1")
+        self.q_unit.setPlaceholderText("A^-1 或 nm^-1")
+        self.intensity_unit.setPlaceholderText("例如 cm^-1 或 a.u.")
         self.limit_q_range = QCheckBox("导入时限制 q 范围")
         self.limit_q_range.setChecked(True)
         self.import_q_min = QDoubleSpinBox()
@@ -145,36 +152,89 @@ class ImportTab(QWidget):
 
         self.log = QTextEdit()
         self.log.setReadOnly(True)
+        self.log.setPlaceholderText("导入、批量导入和单位转换的结果将显示在这里。")
         self.preview_output = QTextEdit()
         self.preview_output.setReadOnly(True)
+        self.preview_output.setPlaceholderText("选择 csv、txt 或 dat 文件后显示列映射、数据预览和诊断。")
 
-        file_row = QHBoxLayout()
+        file_group = QGroupBox("1 · 选择数据文件")
+        file_row = QHBoxLayout(file_group)
         file_row.addWidget(choose_button)
         file_row.addWidget(self.file_label, 1)
 
-        form = QFormLayout()
-        form.addRow("q 列", self.q_column)
-        form.addRow("I(q) 列", self.intensity_column)
-        form.addRow("error/sigma 列，可留空", self.error_column)
-        form.addRow("q 单位", self.q_unit)
-        form.addRow("强度单位", self.intensity_unit)
+        mapping_group = QGroupBox("2 · 确认列、单位与导入范围")
+        mapping_layout = QVBoxLayout(mapping_group)
+        mapping_row = QHBoxLayout()
+        columns_form = QFormLayout()
+        columns_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        columns_form.addRow("q 列", self.q_column)
+        columns_form.addRow("I(q) 列", self.intensity_column)
+        columns_form.addRow("error/sigma 列", self.error_column)
+        units_form = QFormLayout()
+        units_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        units_form.addRow("q 单位", self.q_unit)
+        units_form.addRow("强度单位", self.intensity_unit)
+        mapping_row.addLayout(columns_form, 1)
+        mapping_row.addLayout(units_form, 1)
+        mapping_layout.addLayout(mapping_row)
+        mapping_layout.addWidget(self.limit_q_range)
+        range_row = QHBoxLayout()
+        range_row.addWidget(QLabel("q_min"))
+        range_row.addWidget(self.import_q_min, 1)
+        range_row.addWidget(QLabel("q_max"))
+        range_row.addWidget(self.import_q_max, 1)
+        mapping_layout.addLayout(range_row)
+        self.q_range_note = QLabel()
+        self.q_range_note.setWordWrap(True)
+        mapping_layout.addWidget(self.q_range_note)
+        self.limit_q_range.toggled.connect(self._update_q_range_note)
+        self.import_q_min.valueChanged.connect(self._update_q_range_note)
+        self.import_q_max.valueChanged.connect(self._update_q_range_note)
+        self.q_unit.textChanged.connect(self._update_q_range_note)
+        self._update_q_range_note()
 
-        form.addRow("", self.limit_q_range)
-        form.addRow("q_min", self.import_q_min)
-        form.addRow("q_max", self.import_q_max)
+        preview_group = QGroupBox("3 · 预览后导入")
+        preview_layout = QVBoxLayout(preview_group)
+        preview_layout.addWidget(preview_button)
+        self.output_tabs = QTabWidget()
+        self.output_tabs.addTab(self.preview_output, "文件预览与诊断")
+        self.output_tabs.addTab(self.log, "操作日志")
+        self.output_tabs.setMinimumHeight(140)
+        self.output_tabs.setMaximumHeight(180)
+        preview_layout.addWidget(self.output_tabs)
+        preview_layout.addWidget(import_button)
+
+        extra_group = QGroupBox("批量导入与单位转换")
+        extra_layout = QVBoxLayout(extra_group)
+        extra_note = QLabel("批量导入使用上面的 q 范围设置；单位转换会生成新曲线，保留原始曲线。")
+        extra_note.setWordWrap(True)
+        extra_layout.addWidget(extra_note)
+        extra_actions = FlowLayout()
+        for button in (batch_button, convert_to_nm_button, convert_to_a_button):
+            extra_actions.addWidget(button)
+        extra_layout.addLayout(extra_actions)
+        preview_button.clicked.connect(lambda: self.output_tabs.setCurrentWidget(self.preview_output))
+        choose_button.clicked.connect(lambda: self.output_tabs.setCurrentWidget(self.preview_output))
+        for button in (import_button, batch_button, convert_to_nm_button, convert_to_a_button):
+            button.clicked.connect(lambda: self.output_tabs.setCurrentWidget(self.log))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(10)
-        layout.addLayout(file_row)
-        layout.addLayout(form)
-        layout.addWidget(preview_button)
-        layout.addWidget(self.preview_output, 1)
-        layout.addWidget(import_button)
-        layout.addWidget(batch_button)
-        layout.addWidget(convert_to_nm_button)
-        layout.addWidget(convert_to_a_button)
-        layout.addWidget(self.log, 1)
+        layout.addWidget(file_group)
+        layout.addWidget(mapping_group)
+        layout.addWidget(preview_group)
+        layout.addWidget(extra_group)
+        layout.addStretch()
+
+    def _update_q_range_note(self, *_args) -> None:
+        if self.limit_q_range.isChecked():
+            self.q_range_note.setText(
+                f"仅保留 {self.import_q_min.value():g} ≤ q ≤ {self.import_q_max.value():g} "
+                f"{self.q_unit.text().strip()} 范围内的数据点（含端点）；范围外数据点不导入，源文件不修改。"
+            )
+        else:
+            self.q_range_note.setText("q 范围筛选已关闭：不按 q 范围排除数据点，源文件不修改。")
 
     def _sync_q_range_filter_enabled(self, enabled: bool) -> None:
         self.import_q_min.setEnabled(enabled)
@@ -480,4 +540,3 @@ class ImportTab(QWidget):
         )
         self.main_window.records_tab.refresh()
         self.log.append(f"已生成新曲线: {converted.name}; 原始曲线未被修改。")
-

@@ -129,10 +129,10 @@ def test_plotting_tab_exposes_figure_export_presets_and_handles_empty_export() -
     try:
         buttons = {button.text(): button for button in window.plotting_tab.findChildren(QPushButton)}
 
-        assert "Export current figure" in buttons
+        assert "导出当前图像" in buttons
         assert window.plotting_tab.figure_preset.count() == 3
         assert window.plotting_tab.figure_format.count() == 3
-        buttons["Export current figure"].click()
+        buttons["导出当前图像"].click()
         assert "Figure export unavailable" in window.plotting_tab.messages.toPlainText()
         assert "建议操作" not in window.plotting_tab.messages.toPlainText()
     finally:
@@ -145,7 +145,7 @@ def test_plot_analysis_link_buttons_switch_tabs_and_types() -> None:
     try:
         window.set_plot_type("loglog")
         plot_buttons = {button.text(): button for button in window.plotting_tab.findChildren(QPushButton)}
-        plot_buttons["Use this view for analysis"].click()
+        plot_buttons["用于当前分析"].click()
 
         assert window.tabs.currentWidget() is window.curve_workspace_tab
         assert window.analysis_tab.analysis_type.currentData() == "loglog"
@@ -404,8 +404,8 @@ def test_settings_dialog_exposes_negative_thresholds_and_model_catalog_button() 
         checkbox_labels = {checkbox.text() for checkbox in dialog.findChildren(QCheckBox)}
         spinboxes = dialog.findChildren(QDoubleSpinBox)
 
-        assert "View calculation models and formulas" in buttons
-        assert "Allow slight negative calibrated intensities" in checkbox_labels
+        assert "查看计算模型与公式" in buttons
+        assert "将轻微负强度列为提示信息" in checkbox_labels
         assert len(spinboxes) >= 2
     finally:
         dialog.close()

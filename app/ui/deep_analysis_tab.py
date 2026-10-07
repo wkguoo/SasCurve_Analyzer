@@ -7,6 +7,7 @@ from app.core.deep_analysis import DeepAnalysisOptions, SAMPLE_TYPES, SHAPE_MODE
 from app.core.records import create_history_record
 from app.core.user_messages import exception_detail, format_user_message, UserMessage
 from app.ui.style import action_button, apply_help
+from app.ui.widgets import FlowLayout
 
 
 class DeepAnalysisTab(QWidget):
@@ -24,12 +25,12 @@ class DeepAnalysisTab(QWidget):
         self.q_max.setValue(DEFAULT_EFFECTIVE_Q_RANGE[1])
         apply_help(
             self.q_min,
-            tooltip="深度分析前请确认有效 q 下限；默认值为 0.01 Å⁻¹。",
+            tooltip="深度分析前请确认有效 q 下限；数值采用当前曲线单位。",
             status_tip="输入本次深度分析使用的 raw q 最小值。",
         )
         apply_help(
             self.q_max,
-            tooltip="深度分析前请确认有效 q 上限；默认值为 0.05 Å⁻¹。",
+            tooltip="深度分析前请确认有效 q 上限；数值采用当前曲线单位。",
             status_tip="输入本次深度分析使用的 raw q 最大值。",
         )
 
@@ -78,8 +79,8 @@ class DeepAnalysisTab(QWidget):
         run_button.clicked.connect(self.run_deep_analysis)
 
         form = QFormLayout()
-        form.addRow("有效 q_min (Å⁻¹)", self.q_min)
-        form.addRow("有效 q_max (Å⁻¹)", self.q_max)
+        form.addRow("有效 q_min（当前曲线单位）", self.q_min)
+        form.addRow("有效 q_max（当前曲线单位）", self.q_max)
         form.addRow("样品类型", self.sample_type)
         form.addRow("形状/模型", self.shape_model)
         form.addRow("Dmax", self.dmax)
@@ -90,10 +91,9 @@ class DeepAnalysisTab(QWidget):
         form.addRow(self.absolute_intensity)
         form.addRow(self.fit_background)
 
-        controls = QHBoxLayout()
+        controls = FlowLayout()
         controls.addWidget(fill_button)
         controls.addWidget(run_button)
-        controls.addStretch(1)
 
         self.output = QTextEdit()
         self.output.setReadOnly(True)

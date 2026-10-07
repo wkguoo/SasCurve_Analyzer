@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QListWidget, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QComboBox, QFormLayout, QGroupBox, QLabel, QListWidget, QTextEdit, QVBoxLayout, QWidget
 
 from app.core.records import create_formal_record
 from app.core.records import create_history_record
 from app.ui.style import action_button, apply_help
+from app.ui.widgets import FlowLayout, configure_combo
 
 
 class RecordsTab(QWidget):
@@ -26,6 +28,9 @@ class RecordsTab(QWidget):
         )
         self.source_type.currentTextChanged.connect(self.refresh_sources)
         self.source_selector = QComboBox()
+        configure_combo(self.source_type)
+        configure_combo(self.source_selector)
+        self.source_selector.setPlaceholderText("当前项目暂无可选对象")
         apply_help(
             self.source_selector,
             tooltip="选择要标记的对象。",
@@ -60,27 +65,65 @@ class RecordsTab(QWidget):
         )
         self.output = QTextEdit()
         self.output.setReadOnly(True)
+        self.output.setPlaceholderText("项目操作历史和正式记录将在这里显示。")
+        self.output.setMinimumHeight(160)
+        self.output.setMaximumHeight(280)
+        self.formal_list.setMinimumHeight(100)
+        self.formal_list.setMaximumHeight(200)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(10)
-        source_row = QHBoxLayout()
-        source_row.addWidget(self.source_type)
-        source_row.addWidget(self.source_selector, 1)
-        source_row.addWidget(mark_button)
-        source_row.addWidget(unmark_button)
-        source_row.addWidget(refresh_button)
-        layout.addLayout(source_row)
-        layout.addWidget(self.formal_list)
-        layout.addWidget(self.output, 1)
+        source_group = QGroupBox("选择正式记录来源")
+        source_layout = QVBoxLayout(source_group)
+        source_form = QFormLayout()
+        source_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        source_form.addRow("来源类型", self.source_type)
+        source_form.addRow("来源对象", self.source_selector)
+        source_layout.addLayout(source_form)
+        source_note = QLabel("曲线选项显示单位和 ID，便于区分同名曲线；正式记录将进入报告上下文。")
+        source_note.setWordWrap(True)
+        source_layout.addWidget(source_note)
+        source_actions = FlowLayout()
+        source_actions.addWidget(mark_button)
+        source_actions.addWidget(refresh_button)
+        source_layout.addLayout(source_actions)
+
+        formal_group = QGroupBox("已标记的正式记录")
+        formal_layout = QVBoxLayout(formal_group)
+        formal_layout.addWidget(self.formal_list)
+        formal_layout.addWidget(unmark_button)
+        layout.addWidget(source_group)
+        layout.addWidget(formal_group)
+        layout.addWidget(QLabel("历史记录与正式记录详情"))
+        layout.addWidget(self.output)
+        layout.addStretch()
         self.refresh_sources()
 
     def refresh_sources(self) -> None:
         source_type = self.source_type.currentData()
+        selected_id = self.source_selector.currentData()
         self.source_selector.clear()
         if source_type == "curve":
-            for curve in self.main_window.project.curves:
-                self.source_selector.addItem(curve.name, curve.curve_id)
+            curves = self.main_window.project.curves
+            prefix_ids: dict[str, list[str]] = {}
+            for curve in curves:
+                prefix_ids.setdefault(curve.curve_id[:8], []).append(curve.curve_id)
+            for curve in curves:
+                id_length = 8
+                while id_length < len(curve.curve_id) and any(
+                    other_id != curve.curve_id
+                    and other_id[:id_length] == curve.curve_id[:id_length]
+                    for other_id in prefix_ids[curve.curve_id[:8]]
+                ):
+                    id_length += 1
+                label = f"{curve.name} · q: {curve.q_unit} · I: {curve.intensity_unit} · ID: {curve.curve_id[:id_length]}"
+                self.source_selector.addItem(label, curve.curve_id)
+                self.source_selector.setItemData(
+                    self.source_selector.count() - 1,
+                    f"{label}\n完整 ID: {curve.curve_id}\n源文件: {curve.source_file or '无'}",
+                    Qt.ToolTipRole,
+                )
         elif source_type == "analysis_result":
             for result in self.main_window.project.analysis_results:
                 self.source_selector.addItem(f"{result.analysis_type} {result.analysis_id}", result.analysis_id)
@@ -89,6 +132,9 @@ class RecordsTab(QWidget):
                 self.source_selector.addItem(f"{result.comparison_type} {result.comparison_id}", result.comparison_id)
         else:
             self.source_selector.addItem("手动图像路径入口预留", "")
+        selected_index = self.source_selector.findData(selected_id)
+        if selected_index >= 0:
+            self.source_selector.setCurrentIndex(selected_index)
 
     def mark_selected_source(self) -> None:
         source_type = self.source_type.currentData()

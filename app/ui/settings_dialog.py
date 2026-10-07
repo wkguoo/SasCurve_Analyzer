@@ -8,23 +8,25 @@ from PySide6.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
     QFormLayout,
-    QHBoxLayout,
     QLineEdit,
     QTextEdit,
     QVBoxLayout,
+    QWidget,
 )
 
 from app.core.model_catalog import format_model_catalog_summary
 from app.core.settings import AppSettings, SettingsLoadInfo, load_settings_with_info, save_settings
 from app.ui.model_catalog_dialog import ModelCatalogDialog
 from app.ui.style import action_button, apply_help
+from app.ui.widgets import FlowLayout, scroll_page
 
 
 class SettingsDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Settings")
+        self.setWindowTitle("设置")
         self.resize(760, 620)
+        self.setMinimumSize(560, 420)
         current = getattr(parent, "settings", AppSettings())
 
         self.q_unit = QComboBox()
@@ -40,15 +42,15 @@ class SettingsDialog(QDialog):
         self.figure_format.addItems(["png", "svg", "pdf"])
         self.figure_format.setCurrentText(current.default_figure_format)
 
-        self.show_error = QCheckBox("Show error bars by default")
+        self.show_error = QCheckBox("默认显示误差棒")
         self.show_error.setChecked(current.show_error_bars)
-        self.show_warnings = QCheckBox("Show method warnings by default")
+        self.show_warnings = QCheckBox("默认显示方法警告")
         self.show_warnings.setChecked(current.show_method_warnings)
         self.export_dir = QLineEdit(current.default_export_dir)
         self.log_level = QComboBox()
         self.log_level.addItems(["INFO", "WARNING", "ERROR"])
         self.log_level.setCurrentText(current.log_level)
-        self.allow_slight_negative = QCheckBox("Allow slight negative calibrated intensities")
+        self.allow_slight_negative = QCheckBox("将轻微负强度列为提示信息")
         self.allow_slight_negative.setChecked(current.allow_slight_negative_intensity)
         apply_help(
             self.allow_slight_negative,
@@ -67,20 +69,20 @@ class SettingsDialog(QDialog):
         self.slight_negative_fraction.setValue(current.slight_negative_fraction_threshold)
 
         save_button = action_button(
-            "Save default settings JSON",
+            "保存并应用设置",
             role="primary",
             tooltip="Save settings to the default settings path.",
             status_tip="Writes sas_curve_analyzer_settings.json and applies the values to the open window immediately.",
         )
         save_button.clicked.connect(self.save_settings)
         refresh_button = action_button(
-            "Refresh current settings view",
+            "刷新设置摘要",
             role="secondary",
             tooltip="Reload the settings summary area.",
         )
         refresh_button.clicked.connect(self.refresh_settings_view)
         model_catalog_button = action_button(
-            "View calculation models and formulas",
+            "查看计算模型与公式",
             role="secondary",
             tooltip="Open the model/formula catalog.",
             status_tip="Shows formulas, inputs, outputs, assumptions, limitations, and status for plotting and analysis methods.",
@@ -91,28 +93,32 @@ class SettingsDialog(QDialog):
         self.current_settings_view.setReadOnly(True)
 
         form = QFormLayout()
-        form.addRow("Default q unit", self.q_unit)
-        form.addRow("Default figure format", self.figure_format)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        form.addRow("默认 q 单位", self.q_unit)
+        form.addRow("默认图像格式", self.figure_format)
         form.addRow("", self.show_error)
         form.addRow("", self.show_warnings)
-        form.addRow("Default export directory", self.export_dir)
-        form.addRow("Default log level", self.log_level)
+        form.addRow("默认导出目录", self.export_dir)
+        form.addRow("日志级别", self.log_level)
         form.addRow("", self.allow_slight_negative)
-        form.addRow("Slight negative abs-ratio threshold", self.slight_negative_abs_ratio)
-        form.addRow("Slight negative fraction threshold", self.slight_negative_fraction)
+        form.addRow("负强度幅度比例阈值", self.slight_negative_abs_ratio)
+        form.addRow("负强度点数比例阈值", self.slight_negative_fraction)
 
-        buttons = QHBoxLayout()
+        buttons = FlowLayout()
         buttons.addWidget(save_button)
         buttons.addWidget(refresh_button)
         buttons.addWidget(model_catalog_button)
-        buttons.addStretch(1)
 
-        layout = QVBoxLayout(self)
+        content = QWidget()
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(10)
         layout.addLayout(form)
         layout.addLayout(buttons)
         layout.addWidget(self.current_settings_view, 1)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll_page(content))
         self.refresh_settings_view()
 
     def save_settings(self) -> None:
@@ -148,16 +154,25 @@ class SettingsDialog(QDialog):
             settings, info = load_settings_with_info()
 
         lines = [
-            "Current settings status:",
-            f"- Settings file path: {info.path}",
-            f"- File exists: {info.exists}",
-            f"- Loaded from file: {info.loaded_from_file}",
-            f"- Using defaults: {info.used_defaults}",
-            f"- Load error: {info.error_message or 'none'}",
+            "当前设置状态：",
+            f"设置文件：{info.path}",
+            f"文件存在：{'是' if info.exists else '否'}",
+            f"从文件加载：{'是' if info.loaded_from_file else '否'}",
+            f"使用默认值：{'是' if info.used_defaults else '否'}",
+            f"加载错误：{info.error_message or '无'}",
             "",
-            "Active values:",
+            "当前生效值：",
         ]
+        labels = {
+            "default_q_unit": "默认 q 单位", "default_figure_format": "默认图像格式",
+            "show_error_bars": "默认显示误差棒", "show_method_warnings": "方法警告偏好",
+            "default_export_dir": "默认导出目录", "log_level": "日志级别",
+            "allow_slight_negative_intensity": "轻微负强度分类",
+            "slight_negative_abs_ratio_threshold": "负强度幅度比例阈值",
+            "slight_negative_fraction_threshold": "负强度点数比例阈值",
+        }
         for key, value in asdict(settings).items():
-            lines.append(f"- {key}: {value}")
+            display_value = ('是' if value else '否') if isinstance(value, bool) else value
+            lines.append(f"- {labels.get(key, key)}：{display_value}")
         lines.extend(["", format_model_catalog_summary()])
         self.current_settings_view.setPlainText("\n".join(lines))
