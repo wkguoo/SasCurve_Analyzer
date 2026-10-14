@@ -12,7 +12,9 @@ import json
 import re
 from dataclasses import asdict, fields
 from enum import Enum
+from importlib.metadata import version
 from pathlib import Path
+import platform
 from typing import Any
 from uuid import uuid4
 
@@ -27,6 +29,13 @@ CACHE_SCHEMA_VERSION = "2"
 # The executable q-range routing and envelope audit contract changed. A new
 # algorithm version prevents old shared-range job results from being restored.
 ANALYSIS_ALGORITHM_VERSION = "5"
+
+# Cross-run reuse must follow the actual numerical and publication dependencies.
+# This is collected once per process, not probed for every curve-method job.
+RUNTIME_DEPENDENCIES = {
+    "python": platform.python_version(), "numpy": np.__version__,
+    **{name: version(name) for name in ("scipy", "pandas", "matplotlib")},
+}
 
 
 def _json_default(value: Any) -> Any:
@@ -110,6 +119,7 @@ def job_cache_key(
             "cache_schema_version": CACHE_SCHEMA_VERSION,
             "software_version": SOFTWARE_VERSION,
             "analysis_algorithm_version": ANALYSIS_ALGORITHM_VERSION,
+            "runtime_dependencies": RUNTIME_DEPENDENCIES,
             "source": source,
             "curve_content": curve_content_fingerprint(curve),
             "method_id": method_id,

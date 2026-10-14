@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 2026-10-13 - Reduce repeated study work and protect complete delivery
+
+- Share automatic region detections between batch consensus and per-method fallbacks within one run. Reuse is bound to the curve object, numerical content, units/metadata and exact q bounds; changed inputs and later runs scan again. Missing/failed detections retain their audit gates without repeated scans.
+- Read plot source row indices as an array rather than constructing a pandas row for every plotted point. Coordinates, intensity errors, invalid-point filtering and figure formats are unchanged.
+- Bind study and job reuse to exact Python/NumPy/SciPy/pandas/Matplotlib versions. Older study snapshots without this dependency evidence fail closed before checkpoint writes; preserve them and use a new output directory.
+- Protect each canonical study output with a non-blocking OS process lock, released automatically after process exit. Publish the index and README atomically before the terminal checkpoint. Same-output contenders receive a structured CLI error; separate outputs remain independent.
+- Add pinned experimental VTMA preparation and full-delivery benchmarking/verification tools. On the same 12 measured frames (4,255 points), ordinary delivery plus independent complete verification falls from 21.34 s to 16.55 s (22.4%, 1.29x), retaining 196 artifacts and every PNG/SVG/PDF/ZIP output. Scientific tables and figure content agree; exact runtime provenance additions are explicitly verified. Full tests: 738 passed; comparator repairs: 12 focused tests passed. Conditions, recovery/reuse evidence and limits are recorded in `docs/performance_20261013.md`; the unavailable Ti15 workload is not covered.
+
 ## 2026-10-07 - Improve the desktop analysis workflow and UI consistency
 
 - Reused the four workspaces and action roles; added a searchable curve sidebar, current-data summary and project save state. Replaced overflowing action rows with wrapping layouts, scrollable forms and an adaptive plot/analysis workspace. The font-loaded baseline required 2422×1022; the updated UI supports 900×640 and was visually checked at 1440×900 and 1000×720.

@@ -17,6 +17,81 @@ from app.core.data_model import CurveData
 from app.core.metric_registry import applicable_method_ids
 
 
+def test_candidate_scan_is_shared_by_consensus_and_all_fallback_methods(tmp_path, monkeypatch):
+    import app.core.batch_consensus as consensus
+
+    _write_curve(tmp_path / "s_001.csv", 1)
+    calls = []
+
+    def detect(curve, q_range=None):
+        calls.append((curve.curve_id, q_range, curve.intensity.copy()))
+        # No consensus or candidate is still a valid detection result. All three
+        # missing-method audits must consume this same result, including empty rows.
+        return SimpleNamespace(results={"candidates": []})
+
+    monkeypatch.setattr(consensus, "detect_auto_regions", detect)
+    monkeypatch.setattr(auto_batch, "detect_auto_regions", detect)
+    config = AutoBatchConfig(batch_id="s", enable_sequence_analysis=False)
+    first = run_auto_batch(tmp_path, config, analysis_runner=_success_runner)
+    assert len(calls) == 1
+    assert len(first.range_audit) == len(applicable_method_ids(config))
+    assert sum(row["candidate_status"] == "not_detected" for row in first.range_audit) == 3
+
+    # A later invocation must not inherit a previous curve's result.
+    _write_curve(tmp_path / "s_001.csv", 2)
+    run_auto_batch(tmp_path, config, analysis_runner=_success_runner)
+    assert len(calls) == 2
+    np.testing.assert_array_equal(calls[1][2], calls[0][2] * 2)
+
+
+def test_job_cache_key_invalidates_when_runtime_dependencies_change(monkeypatch):
+    curve = CurveData.create(name="runtime", q=[0.01, 0.02], intensity=[2.0, 1.0])
+    config = AutoBatchConfig(batch_id="runtime")
+    before = job_cache_key(curve, "guinier", config, (0.01, 0.02))
+    monkeypatch.setattr(batch_cache, "RUNTIME_DEPENDENCIES", {"python": "changed"})
+    assert job_cache_key(curve, "guinier", config, (0.01, 0.02)) != before
+
+
+def test_temporary_detection_reuse_invalidates_for_changed_curve_or_q_bounds(monkeypatch):
+    curve = CurveData.create(name="mutable", q=[0.01, 0.02], intensity=[2.0, 1.0])
+    detections = {}
+    calls = []
+
+    def scan(curve, q_range=None):
+        calls.append(q_range)
+        return SimpleNamespace(results={"candidates": []})
+
+    monkeypatch.setattr(auto_batch, "detect_auto_regions", scan)
+    for method in ("guinier", "power_law", "porod"):
+        auto_batch._candidate_range_from_curve(curve, method, (0.01, 0.02), detections)
+    assert len(calls) == 1
+    curve.intensity *= 2
+    auto_batch._candidate_range_from_curve(curve, "porod", (0.01, 0.02), detections)
+    auto_batch._candidate_range_from_curve(curve, "porod", (0.01, 0.03), detections)
+    assert len(calls) == 3
+    curve.name = "renamed"
+    auto_batch._candidate_range_from_curve(curve, "porod", (0.01, 0.03), detections)
+    curve.curve_id = "changed-id"
+    auto_batch._candidate_range_from_curve(curve, "porod", (0.01, 0.03), detections)
+    assert len(calls) == 5
+
+
+def test_failed_detection_is_not_repeated_for_each_missing_method(monkeypatch):
+    curve = CurveData.create(name="failed-scan", q=[0.01, 0.02], intensity=[2.0, 1.0])
+    detections = {}
+    calls = []
+
+    def scan(*args, **kwargs):
+        calls.append(True)
+        raise ValueError("scan failed")
+
+    monkeypatch.setattr(auto_batch, "detect_auto_regions", scan)
+    for method in ("guinier", "power_law", "porod"):
+        result = auto_batch._candidate_range_from_curve(curve, method, (0.01, 0.02), detections)
+        assert result[1:3] == ("invalid_input", ("candidate_scan_failed",))
+    assert len(calls) == 1
+
+
 def _write_curve(path: Path, scale: float) -> None:
     path.write_text(
         f"q,I\n0.01,{10 * scale}\n0.02,{5 * scale}\n0.03,{2 * scale}\n",
@@ -73,7 +148,7 @@ def test_overlapping_shoulder_and_crossover_are_linked_and_not_reported_independ
 def test_one_method_failure_does_not_abort_batch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
     _write_curve(tmp_path / "s_002.csv", 2)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def runner(curve, method_id, q_range, config):
         if curve.name == "s_001" and method_id == "power_law":
@@ -149,7 +224,7 @@ def test_cancellation_after_consensus_skips_all_runner_work(
     cancel_values = iter([False, False, True])
     consensus_calls = []
 
-    def consensus(curves, config):
+    def consensus(curves, config, **_kwargs):
         consensus_calls.append((curves, config))
         return {}
 
@@ -180,7 +255,7 @@ def test_cancellation_before_second_job_preserves_first_result_and_skips_next_ru
     runner_calls: list[str] = []
 
     monkeypatch.setattr(auto_batch, "collect_batch_inputs", lambda input_dir, config: collection)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def runner(curve, method_id, q_range, config):
         runner_calls.append(method_id)
@@ -208,7 +283,7 @@ def test_missing_method_consensus_only_blocks_shared_fit_methods(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
     q_ranges: dict[str, tuple[float, float] | None] = {}
 
     def runner(curve, method_id, q_range, config):
@@ -231,7 +306,7 @@ def test_missing_method_consensus_only_blocks_shared_fit_methods(
 
 def test_multiple_runner_envelopes_are_preserved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def runner(curve, method_id, q_range, config):
         if method_id == "shape_models":
@@ -262,7 +337,7 @@ def test_feature_methods_use_effective_boundary_not_peak_consensus_range(
         median_score=0.9,
         supporting_curve_ids=("curve",),
     )
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {"peak": peak_region})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {"peak": peak_region})
     q_ranges: dict[str, tuple[float, float] | None] = {}
 
     def runner(curve, method_id, q_range, config):
@@ -295,7 +370,7 @@ def test_per_frame_fallback_uses_only_the_method_specific_candidate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def fake_detection(curve, q_range=None):
         return SimpleNamespace(
@@ -364,7 +439,7 @@ def test_consensus_resolution_failure_isolated_and_marks_partial_success(
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
 
-    def fail_consensus(curves, config):
+    def fail_consensus(curves, config, **_kwargs):
         raise RuntimeError("synthetic consensus failure")
 
     monkeypatch.setattr(auto_batch, "resolve_consensus_regions", fail_consensus)
@@ -393,7 +468,7 @@ def test_invalid_runner_contract_is_isolated_per_method(
     expected_fragment: str,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def runner(curve, method_id, q_range, config):
         if method_id == "guinier":
@@ -411,7 +486,7 @@ def test_invalid_runner_contract_is_isolated_per_method(
 
 def test_failed_method_keeps_registered_parameter_columns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def runner(curve, method_id, q_range, config):
         if method_id == "guinier":
@@ -441,7 +516,7 @@ def test_runner_envelope_identity_mismatch_is_isolated_per_method(
     expected_fragment: str,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
     foreign_curve = CurveData.create(name="foreign", q=[0.01, 0.02], intensity=[3.0, 2.0])
 
     def runner(curve, method_id, q_range, config):
@@ -469,7 +544,7 @@ def test_any_identity_mismatch_in_multi_envelope_runner_output_is_one_fit_failur
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
     foreign_curve = CurveData.create(name="foreign", q=[0.01, 0.02], intensity=[3.0, 2.0])
 
     def runner(curve, method_id, q_range, config):
@@ -499,7 +574,7 @@ def test_invalid_runner_envelope_status_is_isolated_per_method(
     invalid_status,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def runner(curve, method_id, q_range, config):
         envelope = _success_envelope(curve, method_id, q_range)
@@ -532,7 +607,7 @@ def test_valid_string_runner_status_is_normalized(
     expected_run_status: str,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def runner(curve, method_id, q_range, config):
         envelope = _success_envelope(curve, method_id, q_range)
@@ -552,7 +627,7 @@ def test_empty_runner_list_is_isolated_as_one_fit_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def runner(curve, method_id, q_range, config):
         if method_id == "guinier":
@@ -579,7 +654,7 @@ def test_returned_non_success_envelope_makes_run_partial(
     returned_status: AnalysisStatus,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def runner(curve, method_id, q_range, config):
         envelope = _success_envelope(curve, method_id, q_range)
@@ -599,7 +674,7 @@ def test_progress_callback_failure_is_recorded_without_aborting_batch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
     attempted_events = []
 
     def fail_progress(event):
@@ -632,7 +707,7 @@ def test_full_range_uses_only_finite_q_and_empty_q_is_passed_as_none(
     empty_curve = CurveData.create(name="empty", q=[], intensity=[])
     collection = BatchInputCollection(curves=[finite_curve, empty_curve], manifest=[])
     monkeypatch.setattr(auto_batch, "collect_batch_inputs", lambda input_dir, config: collection)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
     q_ranges: dict[tuple[str, str], tuple[float, float] | None] = {}
 
     def runner(curve, method_id, q_range, config):
@@ -659,7 +734,7 @@ def test_effective_q_range_limits_full_method_ranges_without_changing_curve_data
     )
     collection = BatchInputCollection(curves=[curve], manifest=[])
     monkeypatch.setattr(auto_batch, "collect_batch_inputs", lambda input_dir, config: collection)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
     q_ranges: dict[str, tuple[float, float] | None] = {}
 
     def runner(curve, method_id, q_range, config):
@@ -686,7 +761,7 @@ def test_failed_input_rows_make_an_otherwise_successful_run_partial(
         failed_inputs=[{"file": "broken.csv", "error": "synthetic input failure"}],
     )
     monkeypatch.setattr(auto_batch, "collect_batch_inputs", lambda input_dir, config: collection)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     run = run_auto_batch("unused", AutoBatchConfig(batch_id="s"), analysis_runner=_success_runner)
 
@@ -699,7 +774,7 @@ def test_cancel_callback_error_safely_cancels_and_records_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def fail_cancel_check():
         raise RuntimeError("synthetic cancellation failure")
@@ -721,7 +796,7 @@ def test_cancel_during_last_runner_marks_run_and_remaining_contract_cancelled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
     config = AutoBatchConfig(batch_id="s")
     methods = applicable_method_ids(config)
     cancel = False
@@ -748,7 +823,7 @@ def test_cancel_before_first_job_materializes_all_unexecuted_envelopes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
     checks = iter([False, False, False, True])
     config = AutoBatchConfig(batch_id="s")
 
@@ -771,7 +846,7 @@ def test_default_runner_uses_production_registry_runner_and_records_model_summar
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     config = AutoBatchConfig(batch_id="s")
     run = run_auto_batch(tmp_path, config)
@@ -793,7 +868,7 @@ def test_run_auto_batch_passes_explicit_paths_and_trusted_identity_to_collection
     source.parent.mkdir()
     _write_curve(source, 1.0)
     monkeypatch.setattr(auto_batch, "applicable_method_ids", lambda config: ["guinier"])
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     identity = {
         "nested/sample_0001.csv": {
@@ -851,7 +926,7 @@ def test_completed_batch_keeps_one_main_model_and_records_three_frame_transition
         for index in range(7)
     ]
     monkeypatch.setattr(auto_batch, "collect_batch_inputs", lambda input_dir, config: BatchInputCollection(curves=curves, manifest=[]))
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def model_envelope(curve: CurveData, model_name: str, aicc: float) -> AnalysisEnvelope:
         return AnalysisEnvelope(
@@ -891,7 +966,7 @@ def test_missing_prerequisite_with_success_marks_completed_with_limitations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def runner(curve, method_id, q_range, config):
         envelope = _success_envelope(curve, method_id, q_range)
@@ -911,7 +986,7 @@ def test_all_missing_prerequisite_marks_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def runner(curve, method_id, q_range, config):
         envelope = _success_envelope(curve, method_id, q_range)
@@ -930,7 +1005,7 @@ def test_assumption_dependent_only_marks_completed_with_limitations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def runner(curve, method_id, q_range, config):
         envelope = _success_envelope(curve, method_id, q_range)
@@ -947,7 +1022,7 @@ def test_all_hard_failures_mark_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def runner(curve, method_id, q_range, config):
         envelope = _success_envelope(curve, method_id, q_range)
@@ -964,7 +1039,7 @@ def test_hard_failure_with_success_remains_partial_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
 
     def runner(curve, method_id, q_range, config):
         envelope = _success_envelope(curve, method_id, q_range)
@@ -982,7 +1057,7 @@ def test_job_cache_resumes_without_rerunning_methods(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_curve(tmp_path / "s_001.csv", 1)
-    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config: {})
+    monkeypatch.setattr(auto_batch, "resolve_consensus_regions", lambda curves, config, **_kwargs: {})
     calls: list[str] = []
 
     def runner(curve, method_id, q_range, config):
