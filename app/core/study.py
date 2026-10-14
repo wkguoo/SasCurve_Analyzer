@@ -17,13 +17,14 @@ from app.core.auto_batch import run_auto_batch
 from app.core.auto_batch_schema import AutoBatchConfig, ProgressEvent
 from app.core.batch_import import natural_sort_key, parse_sequence_metadata, import_in_situ_series
 from app.core.batch_inputs import SUPPORTED_CURVE_EXTENSIONS, sha256_file
-from app.core.batch_cache import ANALYSIS_ALGORITHM_VERSION, CACHE_SCHEMA_VERSION, SOFTWARE_VERSION
+from app.core.batch_cache import ANALYSIS_ALGORITHM_VERSION, CACHE_SCHEMA_VERSION, SOFTWARE_VERSION, RUNTIME_DEPENDENCIES
 from app.core.analysis_preflight import check_analysis_preflight
 from app.core.data_model import utc_now_iso
 from app.core.shape_models import MODEL_SPECS
 from app.core.transforms import normalize_q_unit
 from app.core.unit_checks import validate_compatible_curve_units
 from app.core.io import TableReadCache
+from app.core.study_lock import study_lock
 
 
 @dataclass(frozen=True)
@@ -234,7 +235,8 @@ def _snapshot(samples: list[SampleInput], root: Path, config: dict[str, Any]) ->
     metadata = [{"path": path, "sha256": sha256_file(path)} for path in sidecars]
     return {"input_root": str(root), "config": config, "inputs": inputs, "metadata": metadata,
             "software_version": SOFTWARE_VERSION, "algorithm_version": ANALYSIS_ALGORITHM_VERSION,
-            "cache_schema_version": CACHE_SCHEMA_VERSION, "study_algorithm_version": 2}
+            "cache_schema_version": CACHE_SCHEMA_VERSION, "study_algorithm_version": 2,
+            "runtime_dependencies": dict(RUNTIME_DEPENDENCIES)}
 
 
 def _output_inventory(root: Path) -> list[dict[str, Any]]:
@@ -347,12 +349,24 @@ def run_study(
     cancel_requested: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """Run isolated samples and publish verifiable packages without GUI imports."""
-    from app.core.publication_bundle import export_publication_bundle
-
     settings = validate_study_config(config)
     root, target = Path(input_dir).resolve(strict=True), Path(output_dir).resolve()
     if target.is_relative_to(root) or root.is_relative_to(target):
         raise ValueError("Output must be disjoint from the input tree")
+    with study_lock(target):
+        return _run_study_locked(
+            root, target, settings, resume=resume, retry_failed=retry_failed,
+            progress_callback=progress_callback, cancel_requested=cancel_requested,
+        )
+
+
+def _run_study_locked(
+    root: Path, target: Path, settings: dict[str, Any], *, resume: bool,
+    retry_failed: bool, progress_callback: Callable[[dict[str, Any]], None] | None,
+    cancel_requested: Callable[[], bool] | None,
+) -> dict[str, Any]:
+    from app.core.publication_bundle import export_publication_bundle
+
     samples = discover_study(root, settings)
     snapshot = _snapshot(samples, root, settings)
     fingerprint = sha256(json.dumps(snapshot, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -442,8 +456,21 @@ def run_study(
         state["status"] = "partial_success" if good and bad else "failed" if not good else "completed_with_limitations" if "completed_with_limitations" in statuses else "completed"
     state["finished_at"] = utc_now_iso()
     state["software"] = {"python": __import__("sys").version.split()[0], "numpy": np.__version__, "pandas": pd.__version__}
-    write_json_atomic(checkpoint, state)
     rows = [{key: record.get(key) for key in ("sample_id", "status", "package", "curve_count", "failed_inputs", "error")} for record in state["samples"].values()]
-    pd.DataFrame(rows).to_csv(target / "sample_index.csv", index=False, encoding="utf-8-sig")
-    (target / "README.md").write_text("# Agent SAS study\n\nOpen `sample_index.csv` and `study.json` first, then each sample package.\nEach sample has independent q consensus, fits, reference comparisons and evolution.\nOriginal inputs are read only. Failed imports and unavailable metrics remain auditable.\nCompletion describes software execution, not scientific acceptance.\n", encoding="utf-8")
+    index_path = target / "sample_index.csv"
+    index_temporary = target / f".sample_index.{uuid4().hex[:8]}.tmp"
+    try:
+        pd.DataFrame(rows).to_csv(index_temporary, index=False, encoding="utf-8-sig")
+        index_temporary.replace(index_path)
+    finally:
+        index_temporary.unlink(missing_ok=True)
+    readme_path = target / "README.md"
+    readme_temporary = target / f".README.{uuid4().hex[:8]}.tmp"
+    try:
+        readme_temporary.write_text("# Agent SAS study\n\nOpen `sample_index.csv` and `study.json` first, then each sample package.\nEach sample has independent q consensus, fits, reference comparisons and evolution.\nOriginal inputs are read only. Failed imports and unavailable metrics remain auditable.\nCompletion describes software execution, not scientific acceptance.\n", encoding="utf-8")
+        readme_temporary.replace(readme_path)
+    finally:
+        readme_temporary.unlink(missing_ok=True)
+    # The terminal checkpoint is the commit marker for the fully published index and README.
+    write_json_atomic(checkpoint, state)
     return state

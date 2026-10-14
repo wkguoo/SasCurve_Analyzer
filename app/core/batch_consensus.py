@@ -8,11 +8,14 @@ from statistics import median
 from typing import Any, Mapping
 
 from app.core.auto_batch_schema import AutoBatchConfig
+from app.core.batch_cache import curve_content_fingerprint
 from app.core.auto_regions import detect_auto_regions
-from app.core.data_model import CurveData
+from app.core.data_model import AnalysisResult, CurveData
 
 
 LOG_Q_CENTER_CLUSTER_THRESHOLD = 0.35
+
+DetectionResults = dict[tuple[int, str, str, str, tuple[float, float]], AnalysisResult | None]
 
 _AUTO_REGION_TYPE_TO_CONSENSUS_TYPE = {
     "guinier_candidate": "guinier",
@@ -181,7 +184,10 @@ def candidate_consensus(
     )
 
 
-def resolve_consensus_regions(curves: list[CurveData], config: AutoBatchConfig) -> dict[str, ConsensusRegion]:
+def resolve_consensus_regions(
+    curves: list[CurveData], config: AutoBatchConfig, *,
+    detections: DetectionResults | None = None,
+) -> dict[str, ConsensusRegion]:
     """Resolve supported batch q ranges from existing per-curve candidates.
 
     ``detect_auto_regions`` is called only to read temporary candidate data; this
@@ -193,7 +199,17 @@ def resolve_consensus_regions(curves: list[CurveData], config: AutoBatchConfig) 
     }
     curve_ids = {str(curve.curve_id) for curve in curves}
     for curve in curves:
-        detection = detect_auto_regions(curve, q_range=config.effective_q_range)
+        key = None
+        try:
+            if detections is not None:
+                key = (id(curve), curve.curve_id, curve.name, curve_content_fingerprint(curve), tuple(config.effective_q_range))
+            detection = detect_auto_regions(curve, q_range=config.effective_q_range)
+        except Exception:
+            if detections is not None and key is not None:
+                detections[key] = None
+            raise
+        if detections is not None and key is not None:
+            detections[key] = detection
         candidates = detection.results.get("candidates", [])
         if not isinstance(candidates, list):
             continue

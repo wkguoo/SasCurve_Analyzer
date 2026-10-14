@@ -12,6 +12,7 @@ import pytest
 import app.core.study as study
 from app.core.auto_batch_schema import AutoBatchRun
 from app.core.study import discover_study, run_study, validate_study_config
+from app.core.study_lock import StudyLockError, study_lock
 
 
 def _curve(path: Path, scale: float = 1.0, unit: str = "A") -> None:
@@ -316,6 +317,78 @@ def test_no_input_overlap_or_overwrite(tmp_path, monkeypatch):
     out.mkdir()
     with pytest.raises(FileExistsError):
         run_study(root, out)
+
+
+def test_locked_study_output_fails_before_discovery_or_checkpoint_write(tmp_path, monkeypatch):
+    root, output = tmp_path / "input", tmp_path / "out"
+    _curve(root / "sample_1.csv")
+
+    def unexpected_discovery(*_args, **_kwargs):
+        raise AssertionError("a busy output must fail before discovery")
+
+    monkeypatch.setattr(study, "discover_study", unexpected_discovery)
+    with study_lock(output):
+        with pytest.raises(StudyLockError, match="Study output is busy"):
+            run_study(root, output)
+        assert not output.exists()
+        assert not (output / "study.json").exists()
+
+
+def test_busy_cli_returns_structured_error_without_starting_a_study(tmp_path):
+    from app.cli import main
+
+    root, output = tmp_path / "input", tmp_path / "out"
+    _curve(root / "sample_1.csv")
+    with study_lock(output):
+        assert main(["run", "--input", str(root), "--output", str(output), "--quiet"]) == 3
+    assert not output.exists()
+
+
+def test_resume_rejects_changed_runtime_dependencies_before_checkpoint_write(tmp_path, monkeypatch):
+    root, output = tmp_path / "input", tmp_path / "out"
+    _curve(root / "sample_1.csv")
+    monkeypatch.setattr(study, "run_auto_batch", lambda _, config, **kw: AutoBatchRun(batch_id=config.batch_id, status="completed"))
+    _fake_package(monkeypatch)
+    run_study(root, output)
+    before = (output / "study.json").read_bytes()
+    monkeypatch.setattr(study, "RUNTIME_DEPENDENCIES", {"python": "changed"})
+    with pytest.raises(ValueError, match="fingerprint differs"):
+        run_study(root, output, resume=True)
+    assert (output / "study.json").read_bytes() == before
+
+
+def test_index_publish_failure_leaves_running_checkpoint_and_resume_repairs(tmp_path, monkeypatch):
+    root, output = tmp_path / "input", tmp_path / "out"
+    _curve(root / "sample_1.csv")
+    monkeypatch.setattr(study, "run_auto_batch", lambda _, config, **kw: AutoBatchRun(batch_id=config.batch_id, status="completed"))
+    _fake_package(monkeypatch)
+    first = run_study(root, output)
+    package = first["samples"]["sample"]["package"]
+    (output / "sample_index.csv").unlink()
+
+    original_replace = Path.replace
+
+    def fail_index_publish(path, destination):
+        if Path(destination).name == "sample_index.csv":
+            raise OSError("simulated sample index publish failure")
+        return original_replace(path, destination)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(Path, "replace", fail_index_publish)
+        with pytest.raises(OSError, match="sample index publish failure"):
+            run_study(root, output, resume=True)
+
+    checkpoint = json.loads((output / "study.json").read_text(encoding="utf-8"))
+    assert checkpoint["status"] == "running"
+    assert checkpoint["finished_at"] is None
+    assert not (output / "sample_index.csv").exists()
+    assert not list(output.glob(".sample_index.*.tmp"))
+
+    repaired = run_study(root, output, resume=True)
+    assert repaired["status"] == "completed"
+    assert repaired["samples"]["sample"]["package"] == package
+    assert (output / "sample_index.csv").is_file()
+    assert (output / "README.md").is_file()
 
 
 def test_changed_source_during_run_never_publishes(tmp_path, monkeypatch):

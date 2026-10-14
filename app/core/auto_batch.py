@@ -19,8 +19,8 @@ from app.core.auto_batch_schema import (
     ParameterValue,
     ProgressEvent,
 )
-from app.core.batch_cache import job_cache_key, load_job_envelopes, save_job_envelopes, save_run_checkpoint
-from app.core.batch_consensus import resolve_consensus_regions
+from app.core.batch_cache import curve_content_fingerprint, job_cache_key, load_job_envelopes, save_job_envelopes, save_run_checkpoint
+from app.core.batch_consensus import DetectionResults, resolve_consensus_regions
 from app.core.batch_inputs import collect_batch_inputs
 from app.core.io import TableReadCache
 from app.core.auto_regions import detect_auto_regions
@@ -441,12 +441,25 @@ def _candidate_range_from_curve(
     curve: CurveData,
     region_type: str,
     effective_q_range: tuple[float, float],
+    detections: DetectionResults | None = None,
 ) -> tuple[tuple[float, float] | None, str, tuple[str, ...], int, int, dict[str, Any]]:
     """Inspect one method's candidates without treating a candidate as a fit."""
 
+    key = None
     try:
-        detection = detect_auto_regions(curve, q_range=effective_q_range)
+        if detections is not None:
+            key = (id(curve), curve.curve_id, curve.name, curve_content_fingerprint(curve), tuple(effective_q_range))
+        if detections is not None and key in detections:
+            detection = detections[key]
+        else:
+            detection = detect_auto_regions(curve, q_range=effective_q_range)
+            if detections is not None and key is not None:
+                detections[key] = detection
+        if detection is None:
+            raise ValueError("candidate_scan_failed")
     except Exception:
+        if detections is not None and key is not None:
+            detections[key] = None
         return None, "invalid_input", ("candidate_scan_failed",), 0, 0, {
             "candidate_count": 0,
             "fit_ready_candidate_count": 0,
@@ -536,6 +549,7 @@ def _range_decision_for_method(
     run: AutoBatchRun,
     curve: CurveData,
     method_id: str,
+    detections: DetectionResults | None = None,
 ) -> MethodRangeDecision:
     effective_q_range = _configured_effective_q_range(run)
     spec = METHOD_REGISTRY.get(method_id)
@@ -603,7 +617,7 @@ def _range_decision_for_method(
         candidate_count,
         ready_count,
         candidate_evidence,
-    ) = _candidate_range_from_curve(curve, region_type or method_id, effective_q_range)
+    ) = _candidate_range_from_curve(curve, region_type or method_id, effective_q_range, detections)
     consensus_codes = ("method_consensus_not_available",)
     if candidate_range is not None and _configured_per_frame_fallback(run):
         reason_codes = (*consensus_codes, *candidate_codes, "per_frame_fallback_used")
@@ -1098,8 +1112,12 @@ def run_auto_batch(
             save_run_checkpoint(cache_root, run)
         return run
 
+    # Keep temporary detections only for this call, keyed by object, content and
+    # q bounds. A callback changing a curve cannot reuse its previous scan.
+    # Missing/failed scans are reused too, preserving the existing audit gates.
+    detections: DetectionResults = {}
     try:
-        raw_consensus = resolve_consensus_regions(run.curves, config)
+        raw_consensus = resolve_consensus_regions(run.curves, config, detections=detections)
         run.consensus_regions, consensus_problem = _consensus_q_ranges(raw_consensus, run)
         had_failure = had_failure or consensus_problem
     except Exception as exc:
@@ -1129,7 +1147,7 @@ def run_auto_batch(
                 save_run_checkpoint(cache_root, run)
             return run
 
-        decision = _range_decision_for_method(run, curve, method_id)
+        decision = _range_decision_for_method(run, curve, method_id, detections)
         q_range = decision.q_range
         run.range_audit.append(_range_audit_row(curve, decision))
         cache_key = job_cache_key(curve, method_id, config, q_range) if cache_root is not None else None

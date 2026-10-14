@@ -79,6 +79,20 @@ def _export(run: AutoBatchRun, destination: Path) -> Path:
     return export_publication_bundle(run, destination, formats=("png",), dpi=40, max_overlay_curves=2)
 
 
+def test_overview_source_indices_survive_sorting_invalid_points_and_error_propagation():
+    from app.core.publication_bundle_plots import _prepare_base_series
+
+    curve = _curve(1, q=[0.3, 0.0, 0.1, 0.2, float("nan")],
+                   intensity=[4.0, 8.0, 9.0, -1.0, 7.0], error=[0.4, 0.8, 0.9, 0.1, 0.7])
+    rows, x, y, yerr, warnings, _, _ = _prepare_base_series(curve, {}, "guinier")
+    assert [row["point_index"] for row in rows] == [2, 0]
+    np.testing.assert_array_equal(x, np.square([0.1, 0.3]))
+    np.testing.assert_array_equal(y, np.log([9.0, 4.0]))
+    np.testing.assert_array_equal(yerr, [0.1, 0.1])
+    assert [row["error"] for row in rows] == [0.9, 0.4]
+    assert any("I(q) <= 0" in warning for warning in warnings)
+
+
 def test_plot_source_matches_application_transformed_coordinates_and_keeps_error_absence(tmp_path: Path) -> None:
     curve = _curve(
         1,

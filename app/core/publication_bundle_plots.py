@@ -136,6 +136,7 @@ def _prepare_base_series(curve: CurveData, meta: dict[str, Any], plot_type: str)
     y_unit = derived.units.get(y_col, curve.intensity_unit)
     rows = []
     selected_indices = np.flatnonzero(mask)
+    source_rows = table["row_index"].to_numpy()
     for local_index, source_index in enumerate(selected_indices):
         rows.append({
             **meta,
@@ -146,7 +147,7 @@ def _prepare_base_series(curve: CurveData, meta: dict[str, Any], plot_type: str)
             "reliability_status": "not_applicable",
             "reporting_status": "not_applicable",
             "plot_type": plot_type,
-            "point_index": int(table.iloc[source_index]["row_index"]),
+            "point_index": int(source_rows[source_index]),
             "q": q_all[source_index],
             "I": i_all[source_index],
             "error": error_all[source_index],
@@ -266,6 +267,7 @@ def _plot_overview_pages(
                     else:
                         page_warnings.append(f"{curve.name}: error bars hidden because source errors are invalid.")
                 curve_rows = []
+                source_indices = table["row_index"].to_numpy()
                 for point, row_index in enumerate(np.flatnonzero(valid)):
                     row = {
                         **meta,
@@ -276,7 +278,7 @@ def _plot_overview_pages(
                         "reliability_status": prereq["reliability_status"],
                         "reporting_status": prereq["reporting_status"],
                         "plot_type": plot_type,
-                        "point_index": int(table.iloc[row_index]["row_index"]),
+                        "point_index": int(source_indices[row_index]),
                         "q": q[row_index],
                         "I": intensity[row_index],
                         "error": error[row_index],
