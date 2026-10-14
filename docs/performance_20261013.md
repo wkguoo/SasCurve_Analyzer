@@ -1,7 +1,8 @@
 # Study delivery performance: evidence and reproduction
 
-Status: full tests and the ordinary fresh-run comparison passed. Completed reuse,
-interrupted recovery and Git delivery are being finished using the same inputs.
+Status: full tests, ordinary fresh-run equivalence, completed reuse and real
+interrupted recovery passed for this bounded VTMA workload. Existing passed
+checks were reused for closeout rather than repeated.
 
 ## Measured input and starting evidence
 
@@ -21,7 +22,9 @@ fixtures. The previously referenced Ti15 measurement path is unavailable.
   sequence axis time_s, range sensitivity on; no guessed Dmax or resolution model.
 - Full delivery: PNG/SVG/PDF at 200 dpi, 24 curves per overview page, all data,
   diagnostics, source copies, manifests, indices and both ZIP bundles.
-- Starting code: `17a09c9`. Windows/Python 3.12.10, NumPy 2.1.2, SciPy 1.18.0,
+- Starting code: `17a09c94c86d8b9491100a75b86539f058ecd999`; optimized production:
+  `5d191a2c50f974ed2c83f3c0ba49ef4907bfdc25` (later closeout edits are records only).
+  Windows/Python 3.12.10, NumPy 2.1.2, SciPy 1.18.0,
   pandas 2.2.3, Matplotlib 3.11.1, sequential analyses, BLAS/OpenMP threads capped
   at one. Inputs and output roots are disjoint.
 
@@ -107,6 +110,64 @@ index-publication failure followed by repair using the valid package. The source
 and cross-run/publication hash checks remain in place. No scientific window,
 model, reporting gate, precision or export is reduced.
 
+## Completed reuse and real interrupted recovery
+
+The minimal closeout runs on 2026-10-14 retain the same twelve inputs, parameters,
+single analysis process, numerical thread caps of one and complete output scope.
+They ran on the shared host after the user requested immediate closeout; competing
+background work was not stopped. These timings are observations under shared
+load, not an isolated recovery/reuse speedup estimate. They are not compared
+against the previous day's fresh timings as if the work or resource conditions
+were identical.
+
+| Mode / elapsed seconds | Before | After |
+| --- | ---: | ---: |
+| Completed reuse, CLI | 7.330269 | 7.057952 |
+| Completed reuse, independent verification | 0.814332 | 0.708544 |
+| Completed reuse, combined | 8.144601 | 7.766496 |
+| Interrupted attempt, through exit after job five | 8.092396 | 7.198268 |
+| Recovery CLI, including remaining work and publication | 27.234354 | 22.014700 |
+| Recovery independent final verification | 0.704758 | 0.786524 |
+| Interrupted attempt + recovery + final verification | 36.031508 | 29.999492 |
+
+Completed-reuse sampled CLI CPU is 2.8438/3.2344 s and peak RSS is
+161.309/162.547 MiB before/after. The interrupted attempt plus recovery samples
+32.4531/26.7812 CPU seconds, with peak RSS 228.094/240.848 MiB. These do not
+establish a universal memory or reuse-CPU improvement. Short initial attempts can
+miss final I/O counter samples; no reduction in write volume is inferred from
+those counters. Full output verification, rather than the sampler, proves that
+all required files were delivered.
+
+Completed reuse preserves all 196 package files' sizes, SHA-backed inventories
+and modification times; no figures or analyses are regenerated. Each recovery
+worker exits abruptly with code 99 after the fifth `completed_units` progress
+event, after its atomic job-cache write. Both checkpoints remain `running`, with
+five cached jobs and no published sample package. The real CLI then resumes with
+`--resume --retry-failed`, reports five restored jobs, and preserves those five
+cache files' hashes and timestamps. Both finish with twelve curves, zero failed
+inputs, 196 verified artifacts and 207 verified ZIP members. The optimized output
+lock is released by the OS after the abrupt exit; no other process is signalled.
+The recovered pair also passes the full 137-CSV/eight-JSON/15-PNG/30-vector
+comparison with both timing receipts explicitly bound to their study snapshots.
+
+Receipts: `before-reuse.json`, `after-reuse.json`, the corresponding
+`*-reuse-case.json`, `before-fixed-interrupted.json`,
+`after-fixed-interrupted.json`, `before-fixed-recovery.json`,
+`after-fixed-recovery.json`, their `*-recovery-case.json` records and
+`recovery-comparison.json`. The local `measure_reuse_recovery.py` driver and its
+SHA-256 are preserved with the evidence. Its first baseline probe used the wrong
+progress field and therefore completed without interruption; that output and
+`before-interrupted.json` are retained as failed-driver evidence and excluded
+from recovery timings. Only the corrected two recovery cases were repeated.
+
+Reproduce using the preserved driver: run `reuse --label before/after`, with
+`--repo` set to the corresponding checkout and `--root` to the existing evidence
+root, then `recovery --label before/after --suffix=-fixed` on new destinations.
+Use `benchmark_study_delivery.py --compare` with the two recovered directories
+and their `--before-receipt`/`--after-receipt`. The driver refuses to replace
+existing receipts or fresh outputs. Process interruption is verified; abrupt
+power loss and storage-controller durability are outside this experiment.
+
 ## Reproduction
 
 Run each timed job separately on the same host/runtime, with no competing test or
@@ -160,9 +221,10 @@ work; their shorter time is never described as fresh computation speedup.
 
 ## Remaining scope and limits
 
-Completed-result reuse and paired interruption/recovery measurements remain to
-be recorded before Git delivery. Existing process tests already cover concurrent
-writers; repeating the full suite adds no evidence for unchanged code.
+Existing process tests cover concurrent writers, and real complete reuse and
+interrupted recovery now pass. No extra full suite, fresh study or broad audit was
+added at closeout. A stable reuse/recovery performance estimate under isolated
+load remains unverified; the raw observations above do not establish one.
 
 The remaining necessary costs are per-curve region scans, numerical analyses and
 multi-format figure layout/rendering/serialization. Profile timings identify

@@ -7,6 +7,7 @@
 - Bind study and job reuse to exact Python/NumPy/SciPy/pandas/Matplotlib versions. Older study snapshots without this dependency evidence fail closed before checkpoint writes; preserve them and use a new output directory.
 - Protect each canonical study output with a non-blocking OS process lock, released automatically after process exit. Publish the index and README atomically before the terminal checkpoint. Same-output contenders receive a structured CLI error; separate outputs remain independent.
 - Add pinned experimental VTMA preparation and full-delivery benchmarking/verification tools. On the same 12 measured frames (4,255 points), ordinary delivery plus independent complete verification falls from 21.34 s to 16.55 s (22.4%, 1.29x), retaining 196 artifacts and every PNG/SVG/PDF/ZIP output. Scientific tables and figure content agree; exact runtime provenance additions are explicitly verified. Full tests: 738 passed; comparator repairs: 12 focused tests passed. Conditions, recovery/reuse evidence and limits are recorded in `docs/performance_20261013.md`; the unavailable Ti15 workload is not covered.
+- Closeout on 2026-10-14 also verifies unchanged complete-package reuse and real recovery after abrupt process exit at five jobs. Both versions retain all cached work and deliver matching complete results. Shared-host reuse/recovery timings are reported separately without an isolated speedup claim; passed full tests and first-run comparisons are reused.
 
 ## 2026-10-07 - Improve the desktop analysis workflow and UI consistency
 
