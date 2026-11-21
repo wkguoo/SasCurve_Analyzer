@@ -1,5 +1,11 @@
 # Developer Notes
 
+## 2026-11-21 - Avoid the Qt 6.12.0 shutdown crash on Python 3.11
+
+The [PR job](https://github.com/wkguoo/SasCurve_Analyzer/actions/runs/38509258162) and the [main job](https://github.com/wkguoo/SasCurve_Analyzer/actions/runs/38509387973) both installed PySide6/Shiboken 6.12.0 on Python 3.11, reported 739 passed and one skipped, then aborted during interpreter finalization with `none_dealloc`. Linux and Windows Qt-free jobs finished normally. The [preceding green main run](https://github.com/wkguoo/SasCurve_Analyzer/actions/runs/37626040831) used Qt bindings 6.11.2. [PYSIDE-3474](https://qt-project.atlassian.net/browse/PYSIDE-3474) independently documents an object-reference regression on Python 3.10/3.11 in 6.12.0, involving True; it does not by itself identify the precise None-release path here.
+
+`requirements.txt` excludes only that release for Python below 3.12 and leaves later patches eligible. Both Python 3.11 GUI tests and the separate Qt-free jobs remain enabled. Verify with `QT_QPA_PLATFORM=offscreen MPLBACKEND=Agg python scripts/select_tests.py --full --run` on Linux; a passing pytest summary is insufficient unless the process exits with code 0.
+
 ## 2026-10-13 - Study delivery performance and recovery
 
 Measured starting evidence: at `17a09c9`, the pinned public APS VTMA 870 C series supplies 12 merged experimental frames (4,255 points, Q/I/Idev/Qdev retained at binary64 precision). The full PNG/SVG/PDF, 200 dpi study completed with limitations, zero failed inputs and 196 package artifacts. The archived cProfile run took 58.0508 s including process startup, but this instrumented time is only diagnostic evidence. It is not compared against an ordinary after-run as a speedup claim. The Ti15 path referenced by the repository is absent, so VTMA measurements do not establish Ti15 throughput.

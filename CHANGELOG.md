@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 2026-11-21 - Avoid the Qt 6.12.0 shutdown crash on Python 3.11
+
+On Python below 3.12, exclude the PySide6 6.12.0 desktop wheel after the Python 3.11 test process aborted at shutdown. The original GUI tests continue to run with normal exit-code checking; the headless environment and the numerical methods are unchanged.
+
 ## 2026-10-13 - Reduce repeated study work and protect complete delivery
 
 - Share automatic region detections between batch consensus and per-method fallbacks within one run. Reuse is bound to the curve object, numerical content, units/metadata and exact q bounds; changed inputs and later runs scan again. Missing/failed detections retain their audit gates without repeated scans.
