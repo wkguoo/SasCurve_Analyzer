@@ -2,5 +2,7 @@ numpy>=2.0,<3
 pandas>=2.0,<3
 scipy>=1.11,<2
 matplotlib>=3.8,<4
-PySide6>=6.6,<7
+# 6.12.0 aborts at shutdown in the Python 3.11 GUI suite (see developer notes).
+PySide6>=6.6,!=6.12.0,<7 ; python_version < "3.12"
+PySide6>=6.6,<7 ; python_version >= "3.12"
 pytest>=8,<10
