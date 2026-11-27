@@ -80,6 +80,10 @@ def _synthetic_case(model_name: str) -> tuple[np.ndarray, dict[str, float]]:
             np.linspace(0.01, 0.40, 72),
             {"q0": 0.07, "width": 0.006, "amplitude": 10.0, "decay": 2.0, "background": 0.1},
         ),
+        "teubner_strey": (
+            np.linspace(0.01, 0.40, 72),
+            {"d_period": 65.0, "correlation_length": 35.0, "scale": 12.0, "background": 0.1},
+        ),
     }
     return cases[model_name]
 

@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-11-27 - Add 1D metallic spinodal decomposition & Teubner-Strey analysis
+
+- Registered the unit-forward-normalized `teubner_strey` shape model (`app/core/shape_models.py`, `app/core/model_parameters.py`, `app/ui/help_texts.py`) with derived `amphiphilicity_fa`, `xi_over_d`, and `q_peak` metrics.
+- Added `app/core/spinodal_analysis.py` providing `fit_teubner_strey_1d`, scale- and contrast-invariant `spinodal_interface_and_topology` (`l_P = 4Q/(pi K_P)`, `q1*l_P`, Ruland `sigma_int`, and strictly calibrated/bg-gated `sigma_rho`), and non-mutating excess-scattering sequence analysis `analyze_spinodal_sequence` (LMK/Furukawa collapse and joint `(a, b, c, b/a)` kinetics).
+- Verification: `tests/test_spinodal_analysis.py` and full `pytest` suite via `scripts/select_tests.py --full --run` passed (**744 passed, 7 existing warnings** on Windows/Python 3.12 with `QT_QPA_PLATFORM=offscreen` and `MPLBACKEND=Agg`).
+
 ## 2026-11-21 - Avoid the Qt 6.12.0 shutdown crash on Python 3.11
 
 On Python below 3.12, exclude the PySide6 6.12.0 desktop wheel after the Python 3.11 test process aborted at shutdown. The original GUI tests continue to run with normal exit-code checking; the headless environment and the numerical methods are unchanged.

@@ -130,6 +130,25 @@ def lamellar_peak_stack_model(q: np.ndarray, q0: float, width: float, amplitude:
     return output
 
 
+def teubner_strey_model(
+    q: np.ndarray,
+    d_period: float,
+    correlation_length: float,
+    scale: float,
+    background: float,
+) -> np.ndarray:
+    """Teubner-Strey bicontinuous two-phase model normalized to unit forward value."""
+    q_arr = np.asarray(q, dtype=float)
+    d_val = max(float(d_period), 1e-12)
+    xi_val = max(float(correlation_length), 1e-12)
+    k2 = (2.0 * np.pi / d_val) ** 2
+    inv_xi2 = 1.0 / (xi_val ** 2)
+    a2 = (k2 + inv_xi2) ** 2
+    c1 = 2.0 * (inv_xi2 - k2)
+    denom = np.maximum(a2 + c1 * (q_arr ** 2) + (q_arr ** 4), 1e-30)
+    return scale * (a2 / denom) + background
+
+
 MODEL_FUNCTIONS: dict[str, Callable] = {
     "sphere": sphere_model,
     "core_shell_sphere": core_shell_sphere_model,
@@ -141,6 +160,7 @@ MODEL_FUNCTIONS: dict[str, Callable] = {
     "mass_fractal": mass_fractal_model,
     "surface_fractal": surface_fractal_model,
     "lamellar_peak_stack": lamellar_peak_stack_model,
+    "teubner_strey": teubner_strey_model,
 }
 
 
@@ -155,6 +175,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     "mass_fractal": ModelSpec("mass_fractal", ["dimension", "cutoff_length", "scale", "background"], [2.2, 100.0, 1.0, 0.0], [1.0, 1e-6, 0.0, -np.inf], [3.0, np.inf, np.inf, np.inf], {"dimension": "", "cutoff_length": "1/q"}, ["mass_fractal_assumption"], "Mass-fractal empirical model with cutoff."),
     "surface_fractal": ModelSpec("surface_fractal", ["surface_dimension", "scale", "background"], [2.5, 1.0, 0.0], [2.0, 0.0, -np.inf], [3.0, np.inf, np.inf], {"surface_dimension": ""}, ["surface_fractal_assumption"], "Surface-fractal power-law model."),
     "lamellar_peak_stack": ModelSpec("lamellar_peak_stack", ["q0", "width", "amplitude", "decay", "background"], [0.1, 0.01, 1.0, 2.0, 0.0], [1e-8, 1e-8, 0.0, 0.1, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf], {"q0": "q", "width": "q"}, ["lamellar_or_periodic_structure_required"], "Gaussian peak stack at integer q0 orders."),
+    "teubner_strey": ModelSpec("teubner_strey", ["d_period", "correlation_length", "scale", "background"], [60.0, 30.0, 1.0, 0.0], [1e-6, 1e-6, 0.0, -np.inf], [np.inf, np.inf, np.inf, np.inf], {"d_period": "1/q", "correlation_length": "1/q"}, ["two_phase_required", "teubner_strey_bicontinuous_assumption"], "Teubner-Strey bicontinuous microemulsion / spinodal correlation model."),
 }
 
 

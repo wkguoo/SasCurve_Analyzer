@@ -189,6 +189,28 @@ def _lamellar_peak_stack(parameters: Mapping[str, Any], q_unit: str) -> DerivedP
     }
 
 
+def _teubner_strey(parameters: Mapping[str, Any], q_unit: str) -> DerivedParameterRecords:
+    d_period, d_reason = _positive_parameter(parameters, "d_period")
+    xi, xi_reason = _positive_parameter(parameters, "correlation_length")
+    both_reason = d_reason or xi_reason
+    if both_reason is not None or d_period is None or xi is None:
+        return {
+            "amphiphilicity_fa": _record(None, "dimensionless", both_reason),
+            "xi_over_d": _record(None, "dimensionless", both_reason),
+            "q_peak": _record(None, str(q_unit), both_reason),
+        }
+    k2 = (2.0 * math.pi / d_period) ** 2
+    inv_xi2 = 1.0 / (xi ** 2)
+    fa = (inv_xi2 - k2) / (inv_xi2 + k2)
+    q_pk = math.sqrt(k2 - inv_xi2) if k2 > inv_xi2 else None
+    q_pk_reason = None if q_pk is not None else "lifshitz_or_disordered_no_peak"
+    return {
+        "amphiphilicity_fa": _record(fa, "dimensionless"),
+        "xi_over_d": _record(xi / d_period, "dimensionless"),
+        "q_peak": _record(q_pk, str(q_unit), q_pk_reason),
+    }
+
+
 DERIVED_PARAMETER_BUILDERS: dict[str, DerivedBuilder] = {
     "sphere": _sphere,
     "core_shell_sphere": _core_shell_sphere,
@@ -197,6 +219,7 @@ DERIVED_PARAMETER_BUILDERS: dict[str, DerivedBuilder] = {
     "disk": _disk,
     "surface_fractal": _surface_fractal,
     "lamellar_peak_stack": _lamellar_peak_stack,
+    "teubner_strey": _teubner_strey,
 }
 
 

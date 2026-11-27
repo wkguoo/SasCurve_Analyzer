@@ -1,5 +1,13 @@
 # Developer Notes
 
+## 2026-11-27 - 1D metallic spinodal decomposition & Teubner-Strey module
+
+Reason: extend `SasCurve_Analyzer` with standard metallic spinodal decomposition diagnostics required for multi-beamtime alloy datasets (Teubner-Strey Lifshitz crossover factor `f_a`, contrast/scale-invariant Porod chord length `l_P`, Ruland diffuse interface width `sigma_int`, strictly gated model-free `sigma_rho`, and excess-scattering sequence analysis) without mutating source `CurveData` objects.
+
+Implementation: added `teubner_strey_model` and `MODEL_SPECS["teubner_strey"]` in `app/core/shape_models.py`, derived parameter builder `_teubner_strey` in `app/core/model_parameters.py`, Chinese tooltip text in `app/ui/help_texts.py`, and `app/core/spinodal_analysis.py` (`fit_teubner_strey_1d`, `spinodal_interface_and_topology`, `analyze_spinodal_sequence`, `classify_lifshitz_regime`), covered by `tests/test_spinodal_analysis.py` and the shared `_synthetic_case` registry in `tests/test_complete_model_fitting.py`.
+
+Verification & limits: `scripts/select_tests.py --full --run` (Windows/Python 3.12, `QT_QPA_PLATFORM=offscreen`, `MPLBACKEND=Agg`) passed **744 tests in 100.94 s** (only the 7 pre-existing SciPy/CJK UI warnings). Limits: `sigma_rho_A_inv2` remains strictly withheld (`None`) unless both `absolute_intensity=True` and `background_subtracted=True`; experimental application remains conditional on valid background removal and two-phase boundary assumptions.
+
 ## 2026-11-21 - Avoid the Qt 6.12.0 shutdown crash on Python 3.11
 
 The [PR job](https://github.com/wkguoo/SasCurve_Analyzer/actions/runs/38509258162) and the [main job](https://github.com/wkguoo/SasCurve_Analyzer/actions/runs/38509387973) both installed PySide6/Shiboken 6.12.0 on Python 3.11, reported 739 passed and one skipped, then aborted during interpreter finalization with `none_dealloc`. Linux and Windows Qt-free jobs finished normally. The [preceding green main run](https://github.com/wkguoo/SasCurve_Analyzer/actions/runs/37626040831) used Qt bindings 6.11.2. [PYSIDE-3474](https://qt-project.atlassian.net/browse/PYSIDE-3474) independently documents an object-reference regression on Python 3.10/3.11 in 6.12.0, involving True; it does not by itself identify the precise None-release path here.
